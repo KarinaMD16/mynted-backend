@@ -25,6 +25,18 @@ export class User {
   @Column({ name: 'photo_url', nullable: true })
   photoUrl!: string;
 
+  @Exclude()
+  @Column({ name: 'reset_password_token_hash', nullable: true, type: 'text' })
+  resetPasswordTokenHash!: string | null;
+
+  @Exclude()
+  @Column({
+    name: 'reset_password_expires_at',
+    nullable: true,
+    type: 'timestamp with time zone',
+  })
+  resetPasswordExpiresAt!: Date | null;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamp with time zone' })
   createdAt!: Date;
 

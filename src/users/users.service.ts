@@ -49,4 +49,29 @@ export class UsersService {
   async findByEmail(email: string): Promise<User | null> {
     return this.usersRepository.findOne({ where: { email } });
   }
+
+  async findByResetTokenHash(tokenHash: string): Promise<User | null> {
+    return this.usersRepository.findOne({
+      where: { resetPasswordTokenHash: tokenHash },
+    });
+  }
+
+  async setPasswordResetToken(
+    userId: string,
+    tokenHash: string,
+    expiresAt: Date,
+  ): Promise<void> {
+    await this.usersRepository.update(userId, {
+      resetPasswordTokenHash: tokenHash,
+      resetPasswordExpiresAt: expiresAt,
+    });
+  }
+
+  async updatePassword(userId: string, passwordHash: string): Promise<void> {
+    await this.usersRepository.update(userId, {
+      passwordHash,
+      resetPasswordTokenHash: null,
+      resetPasswordExpiresAt: null,
+    });
+  }
 }
