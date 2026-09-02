@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseIntPipe,
@@ -13,17 +14,24 @@ import {
 } from '@nestjs/common';
 import { FileFieldsInterceptor } from '@nestjs/platform-express';
 import {
+  ApiBadRequestResponse,
   ApiBody,
+  ApiConflictResponse,
   ApiConsumes,
+  ApiCreatedResponse,
+  ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
+  ApiParam,
   ApiTags,
 } from '@nestjs/swagger';
 import { CommunityService } from './community.service';
 import { CreateCommunityDto } from './dto/create-community.dto';
+import { CreateCommunityRuleDto } from './dto/create-community-rule.dto';
 import { CreateTagDto } from './dto/create-tag.dto';
 import { GetTagsQueryDto } from './dto/get-tags-query.dto';
 import { UpdateCommunityDto } from './dto/update-community.dto';
+import { UpdateCommunityRuleDto } from './dto/update-community-rule.dto';
 
 interface CommunityFiles {
   image?: Express.Multer.File[];
@@ -178,6 +186,103 @@ export class CommunityController {
     query: GetTagsQueryDto,
   ) {
     return this.communityService.findAllTags(query);
+  }
+
+  @Get('communities/:communityId/rules')
+  @ApiOperation({ summary: 'Consultar las reglas de una comunidad' })
+  @ApiParam({ name: 'communityId', type: Number, example: 5 })
+  @ApiOkResponse({
+    schema: {
+      example: [
+        { communityRuleId: 10, description: 'No hacer spam' },
+        { communityRuleId: 11, description: 'Ser respetuoso' },
+      ],
+    },
+  })
+  @ApiBadRequestResponse({ description: 'communityId inválido' })
+  @ApiNotFoundResponse({ description: 'Comunidad no encontrada' })
+  findAllRules(@Param('communityId', ParseIntPipe) communityId: number) {
+    return this.communityService.findAllRules(communityId);
+  }
+
+  @Post('communities/:communityId/rules')
+  @ApiOperation({ summary: 'Crear una regla para una comunidad' })
+  @ApiParam({ name: 'communityId', type: Number, example: 5 })
+  @ApiCreatedResponse({
+    schema: {
+      example: [
+        {
+          communityRuleId: 13,
+          communityId: 5,
+          description: 'No realizar publicaciones ofensivas',
+        },
+        {
+          communityRuleId: 14,
+          communityId: 5,
+          description: 'No hacer spam',
+        },
+      ],
+    },
+  })
+  @ApiBadRequestResponse({ description: 'Descripción inválida' })
+  @ApiNotFoundResponse({ description: 'Comunidad no encontrada' })
+  @ApiConflictResponse({ description: 'La regla ya existe en la comunidad' })
+  createRule(
+    @Param('communityId', ParseIntPipe) communityId: number,
+    @Body(
+      new ValidationPipe({
+        transform: true,
+        whitelist: true,
+        forbidNonWhitelisted: true,
+      }),
+    )
+    dto: CreateCommunityRuleDto,
+  ) {
+    return this.communityService.createRule(communityId, dto);
+  }
+
+  @Patch('communities/:communityId/rules/:ruleId')
+  @ApiOperation({ summary: 'Actualizar una regla de una comunidad' })
+  @ApiParam({ name: 'communityId', type: Number, example: 5 })
+  @ApiParam({ name: 'ruleId', type: Number, example: 11 })
+  @ApiOkResponse({
+    schema: {
+      example: {
+        communityRuleId: 11,
+        communityId: 5,
+        description: 'Ser respetuoso con todos los miembros',
+      },
+    },
+  })
+  @ApiBadRequestResponse({ description: 'Descripción inválida' })
+  @ApiNotFoundResponse({
+    description: 'Comunidad o regla no encontrada en esa comunidad',
+  })
+  @ApiConflictResponse({ description: 'La regla ya existe en la comunidad' })
+  updateRule(
+    @Param('communityId', ParseIntPipe) communityId: number,
+    @Param('ruleId', ParseIntPipe) ruleId: number,
+    @Body() dto: UpdateCommunityRuleDto,
+  ) {
+    return this.communityService.updateRule(communityId, ruleId, dto);
+  }
+
+  @Delete('communities/:communityId/rules/:ruleId')
+  @ApiOperation({ summary: 'Eliminar una regla de una comunidad' })
+  @ApiParam({ name: 'communityId', type: Number, example: 5 })
+  @ApiParam({ name: 'ruleId', type: Number, example: 11 })
+  @ApiOkResponse({
+    schema: { example: { message: 'Regla eliminada exitosamente' } },
+  })
+  @ApiBadRequestResponse({ description: 'communityId o ruleId inválido' })
+  @ApiNotFoundResponse({
+    description: 'Comunidad o regla no encontrada en esa comunidad',
+  })
+  deleteRule(
+    @Param('communityId', ParseIntPipe) communityId: number,
+    @Param('ruleId', ParseIntPipe) ruleId: number,
+  ) {
+    return this.communityService.deleteRule(communityId, ruleId);
   }
 
   @Patch('communities/:id')

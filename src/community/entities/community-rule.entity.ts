@@ -4,10 +4,15 @@ import {
   JoinColumn,
   ManyToOne,
   PrimaryGeneratedColumn,
+  Unique,
 } from 'typeorm';
 import { Community } from './community.entity';
 
 @Entity('community_rule')
+@Unique('UQ_community_rule_community_id_description', [
+  'communityId',
+  'description',
+])
 export class CommunityRule {
   @PrimaryGeneratedColumn({ name: 'community_rule_id' })
   communityRuleId!: number;

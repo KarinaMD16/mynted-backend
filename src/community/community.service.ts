@@ -11,9 +11,11 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, QueryFailedError, Repository } from 'typeorm';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
 import { CreateCommunityDto } from './dto/create-community.dto';
+import { CreateCommunityRuleDto } from './dto/create-community-rule.dto';
 import { CreateTagDto } from './dto/create-tag.dto';
 import { GetTagsQueryDto } from './dto/get-tags-query.dto';
 import { UpdateCommunityDto } from './dto/update-community.dto';
+import { UpdateCommunityRuleDto } from './dto/update-community-rule.dto';
 import { Category } from './entities/category.entity';
 import { CommunityRule } from './entities/community-rule.entity';
 import { CommunityTag } from './entities/community-tag.entity';
@@ -25,6 +27,11 @@ interface PostgresError {
   constraint?: string;
 }
 
+type CommunityRuleSummary = Pick<
+  CommunityRule,
+  'communityRuleId' | 'description'
+>;
+
 @Injectable()
 export class CommunityService {
   constructor(
@@ -34,6 +41,8 @@ export class CommunityService {
     private readonly categoryRepository: Repository<Category>,
     @InjectRepository(Tag)
     private readonly tagRepository: Repository<Tag>,
+    @InjectRepository(CommunityRule)
+    private readonly communityRuleRepository: Repository<CommunityRule>,
     private readonly dataSource: DataSource,
     private readonly cloudinaryService: CloudinaryService,
   ) {}
@@ -197,6 +206,115 @@ export class CommunityService {
         totalPages: Math.ceil(total / limit),
       },
     };
+  }
+
+  async findAllRules(communityId: number): Promise<CommunityRuleSummary[]> {
+    await this.ensureCommunityExists(communityId);
+
+    return this.communityRuleRepository.find({
+      where: { communityId },
+      select: {
+        communityRuleId: true,
+        description: true,
+      },
+      order: { communityRuleId: 'ASC' },
+    });
+  }
+
+  async createRule(
+    communityId: number,
+    dto: CreateCommunityRuleDto,
+  ): Promise<CommunityRule[]> {
+    await this.ensureCommunityExists(communityId);
+
+    if (new Set(dto.description).size !== dto.description.length) {
+      throw new ConflictException(
+        'No puede repetir reglas en la misma petición',
+      );
+    }
+
+    const duplicateRules = await this.communityRuleRepository.find({
+      where: { communityId, description: In(dto.description) },
+    });
+
+    if (duplicateRules.length > 0) {
+      throw new ConflictException(
+        'La comunidad ya tiene una regla con esa descripción',
+      );
+    }
+
+    const rules = dto.description.map((description) =>
+      this.communityRuleRepository.create({
+        communityId,
+        description,
+      }),
+    );
+
+    try {
+      return await this.dataSource.transaction((manager) =>
+        manager.save(CommunityRule, rules),
+      );
+    } catch (error: unknown) {
+      this.handleCommunityRuleDatabaseError(error, 'crear');
+    }
+  }
+
+  async updateRule(
+    communityId: number,
+    ruleId: number,
+    dto: UpdateCommunityRuleDto,
+  ): Promise<CommunityRule> {
+    await this.ensureCommunityExists(communityId);
+
+    const rule = await this.communityRuleRepository.findOne({
+      where: { communityRuleId: ruleId, communityId },
+    });
+
+    if (!rule) {
+      throw new NotFoundException('Regla no encontrada en esta comunidad');
+    }
+
+    const duplicateRule = await this.communityRuleRepository.findOne({
+      where: { communityId, description: dto.description },
+    });
+
+    if (duplicateRule && duplicateRule.communityRuleId !== ruleId) {
+      throw new ConflictException(
+        'La comunidad ya tiene una regla con esa descripción',
+      );
+    }
+
+    rule.description = dto.description;
+
+    try {
+      return await this.communityRuleRepository.save(rule);
+    } catch (error: unknown) {
+      this.handleCommunityRuleDatabaseError(error, 'actualizar');
+    }
+  }
+
+  async deleteRule(
+    communityId: number,
+    ruleId: number,
+  ): Promise<{ message: string }> {
+    await this.ensureCommunityExists(communityId);
+
+    const rule = await this.communityRuleRepository.findOne({
+      where: { communityRuleId: ruleId, communityId },
+    });
+
+    if (!rule) {
+      throw new NotFoundException('Regla no encontrada en esta comunidad');
+    }
+
+    try {
+      await this.communityRuleRepository.remove(rule);
+      return { message: 'Regla eliminada exitosamente' };
+    } catch {
+      throw new InternalServerErrorException(
+        'Ocurrió un error al eliminar la regla',
+      );
+    }
   }
 
   async update(
@@ -459,6 +577,17 @@ export class CommunityService {
     }
   }
 
+  private async ensureCommunityExists(communityId: number): Promise<void> {
+    const community = await this.communityRepository.findOne({
+      where: { id: communityId },
+      select: { id: true },
+    });
+
+    if (!community) {
+      throw new NotFoundException('Comunidad no encontrada');
+    }
+  }
+
   private validateUpdateCollections(dto: UpdateCommunityDto): void {
     if (
       dto.tagIds !== undefined &&
@@ -559,6 +688,29 @@ export class CommunityService {
 
     throw new InternalServerErrorException(
       'Ocurrió un error al actualizar la comunidad',
+    );
+  }
+
+  private handleCommunityRuleDatabaseError(
+    error: unknown,
+    action: 'crear' | 'actualizar',
+  ): never {
+    if (error instanceof QueryFailedError) {
+      const databaseError = error.driverError as PostgresError;
+
+      if (
+        databaseError.code === '23505' &&
+        databaseError.constraint ===
+          'UQ_community_rule_community_id_description'
+      ) {
+        throw new ConflictException(
+          'La comunidad ya tiene una regla con esa descripción',
+        );
+      }
+    }
+
+    throw new InternalServerErrorException(
+      `Ocurrió un error al ${action} la regla`,
     );
   }
 }
