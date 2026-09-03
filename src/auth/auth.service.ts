@@ -7,8 +7,13 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'node:crypto';
+import { User } from '../users/entities/user.entity';
+import { OAuthProvider } from '../users/entities/user-oauth-account.entity';
 import { UsersService } from '../users/users.service';
 import { MailService } from '../mail/mail.service';
+import { GoogleAuthService } from './social/google-auth.service';
+import { FacebookAuthService } from './social/facebook-auth.service';
+import { SocialProfile } from './social/social-profile.interface';
 import { LoginDto } from './dto/login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
@@ -24,11 +29,13 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly mailService: MailService,
+    private readonly googleAuthService: GoogleAuthService,
+    private readonly facebookAuthService: FacebookAuthService,
   ) {}
 
   async login(dto: LoginDto) {
     const user = await this.usersService.findByEmail(dto.email);
-    if (!user) {
+    if (!user?.passwordHash) {
       throw new UnauthorizedException('Credenciales inválidas');
     }
 
@@ -40,9 +47,64 @@ export class AuthService {
       throw new UnauthorizedException('Credenciales inválidas');
     }
 
+    return this.buildSession(user);
+  }
+
+  async loginWithGoogle(idToken: string) {
+    const profile = await this.googleAuthService.verifyIdToken(idToken);
+    const user = await this.linkOrCreateSocialUser('google', profile);
+    return this.buildSession(user);
+  }
+
+  async loginWithFacebook(accessToken: string) {
+    const profile =
+      await this.facebookAuthService.verifyAccessToken(accessToken);
+    const user = await this.linkOrCreateSocialUser('facebook', profile);
+    return this.buildSession(user);
+  }
+
+  /**
+   * Une el flujo de las 3 vías de acceso: cuenta ya vinculada a ese proveedor,
+   * cuenta existente con el mismo correo (se vincula) o cuenta nueva.
+   */
+  private async linkOrCreateSocialUser(
+    provider: OAuthProvider,
+    profile: SocialProfile,
+  ): Promise<User> {
+    const existingLink = await this.usersService.findByOAuthAccount(
+      provider,
+      profile.providerUserId,
+    );
+    if (existingLink) {
+      return existingLink;
+    }
+
+    const existingByEmail = await this.usersService.findByEmail(profile.email);
+    if (existingByEmail) {
+      await this.usersService.linkOAuthAccount(
+        existingByEmail.id,
+        provider,
+        profile.providerUserId,
+      );
+      return existingByEmail;
+    }
+
+    const newUser = await this.usersService.createFromOAuth({
+      email: profile.email,
+      name: profile.name,
+      photoUrl: profile.photoUrl,
+    });
+    await this.usersService.linkOAuthAccount(
+      newUser.id,
+      provider,
+      profile.providerUserId,
+    );
+    return newUser;
+  }
+
+  private buildSession(user: User) {
     const payload = { sub: user.id, email: user.email };
     const accessToken = this.jwtService.sign(payload);
-
     return { accessToken, user };
   }
 
@@ -96,6 +158,12 @@ export class AuthService {
 
   async changePassword(userId: string, dto: ChangePasswordDto): Promise<void> {
     const user = await this.usersService.findById(userId);
+
+    if (!user.passwordHash) {
+      throw new UnauthorizedException(
+        'Esta cuenta inició sesión con Google/Facebook y no tiene contraseña. Usa "Recuperar contraseña" para crear una',
+      );
+    }
 
     const passwordMatches = await bcrypt.compare(
       dto.currentPassword,
