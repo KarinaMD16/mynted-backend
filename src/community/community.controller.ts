@@ -3,18 +3,22 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   ParseIntPipe,
   Patch,
   Post,
   Query,
   UploadedFiles,
+  UseGuards,
   UseInterceptors,
   ValidationPipe,
 } from '@nestjs/common';
 import { FileFieldsInterceptor } from '@nestjs/platform-express';
 import {
   ApiBadRequestResponse,
+  ApiBearerAuth,
   ApiBody,
   ApiConflictResponse,
   ApiConsumes,
@@ -32,6 +36,9 @@ import { CreateTagDto } from './dto/create-tag.dto';
 import { GetTagsQueryDto } from './dto/get-tags-query.dto';
 import { UpdateCommunityDto } from './dto/update-community.dto';
 import { UpdateCommunityRuleDto } from './dto/update-community-rule.dto';
+import { UpdateTagDto } from './dto/update-tag.dto';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { SuperAdminGuard } from '../auth/guards/super-admin.guard';
 
 interface CommunityFiles {
   image?: Express.Multer.File[];
@@ -63,8 +70,6 @@ export class CommunityController {
         'categoryId',
         'tagIds',
         'rules',
-        'image',
-        'banner',
       ],
       properties: {
         name: {
@@ -111,12 +116,12 @@ export class CommunityController {
         image: {
           type: 'string',
           format: 'binary',
-          description: 'Imagen principal de la comunidad',
+          description: 'Imagen principal de la comunidad (opcional)',
         },
         banner: {
           type: 'string',
           format: 'binary',
-          description: 'Imagen de portada de la comunidad',
+          description: 'Imagen de portada de la comunidad (opcional)',
         },
       },
     },
@@ -186,6 +191,32 @@ export class CommunityController {
     query: GetTagsQueryDto,
   ) {
     return this.communityService.findAllTags(query);
+  }
+
+  @Get('tags/:id')
+  @ApiOperation({ summary: 'Obtener un tag por id' })
+  findTagById(@Param('id', ParseIntPipe) id: number) {
+    return this.communityService.findTagById(id);
+  }
+
+  @Patch('tags/:id')
+  @UseGuards(JwtAuthGuard, SuperAdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary:
+      '[Superadmin] Editar un tag (renombrar, recategorizar o marcar/desmarcar como principal para el onboarding)',
+  })
+  updateTag(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateTagDto) {
+    return this.communityService.updateTag(id, dto);
+  }
+
+  @Delete('tags/:id')
+  @UseGuards(JwtAuthGuard, SuperAdminGuard)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: '[Superadmin] Eliminar un tag' })
+  async deleteTag(@Param('id', ParseIntPipe) id: number) {
+    await this.communityService.deleteTag(id);
   }
 
   @Get('communities/:communityId/rules')

@@ -6,7 +6,7 @@ import { AppService } from './app.service';
 import { UsersModule } from './users/users.module';
 import { AuthModule } from './auth/auth.module';
 import { CommunityModule } from './community/community.module';
-import { InterestsModule } from './interests/interests.module';
+import { UserTagsModule } from './user-tags/user-tags.module';
 
 @Module({
   imports: [
@@ -31,8 +31,8 @@ import { InterestsModule } from './interests/interests.module';
     }),
     UsersModule,
     AuthModule,
-    InterestsModule,
     CommunityModule,
+    UserTagsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -1,10 +1,11 @@
 import { ArrayMinSize, ArrayUnique, IsInt } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
-export class SaveInterestsDto {
+export class SaveUserTagsDto {
   @ApiProperty({
     example: [1, 2, 3],
-    description: 'IDs de intereses seleccionados en el onboarding, mínimo 3',
+    description:
+      'IDs de tags principales (isInterest = true) elegidos en el onboarding, mínimo 3',
     type: [Number],
   })
   @ArrayMinSize(3, {
@@ -12,5 +13,5 @@ export class SaveInterestsDto {
   })
   @ArrayUnique()
   @IsInt({ each: true })
-  interestIds!: number[];
+  tagIds!: number[];
 }

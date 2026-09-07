@@ -8,7 +8,13 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, In, QueryFailedError, Repository } from 'typeorm';
+import {
+  DataSource,
+  FindOptionsWhere,
+  In,
+  QueryFailedError,
+  Repository,
+} from 'typeorm';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
 import { CreateCommunityDto } from './dto/create-community.dto';
 import { CreateCommunityRuleDto } from './dto/create-community-rule.dto';
@@ -16,6 +22,7 @@ import { CreateTagDto } from './dto/create-tag.dto';
 import { GetTagsQueryDto } from './dto/get-tags-query.dto';
 import { UpdateCommunityDto } from './dto/update-community.dto';
 import { UpdateCommunityRuleDto } from './dto/update-community-rule.dto';
+import { UpdateTagDto } from './dto/update-tag.dto';
 import { Category } from './entities/category.entity';
 import { CommunityRule } from './entities/community-rule.entity';
 import { CommunityTag } from './entities/community-tag.entity';
@@ -87,16 +94,26 @@ export class CommunityService {
       );
     }
 
-    if (!image || !banner) {
-      throw new BadRequestException(
-        'Debe proporcionar la imagen y el banner de la comunidad',
-      );
-    }
+    let imageUrl: string | null = null;
+    let bannerUrl: string | null = null;
+    const filesToUpload: Express.Multer.File[] = [];
 
-    const [imageUpload, bannerUpload] = await this.uploadImages([
-      image,
-      banner,
-    ]);
+    if (image) filesToUpload.push(image);
+    if (banner) filesToUpload.push(banner);
+
+    if (filesToUpload.length > 0) {
+      const uploads = await this.uploadImages(filesToUpload);
+      let uploadIndex = 0;
+
+      if (image) {
+        imageUrl = uploads[uploadIndex].url;
+        uploadIndex += 1;
+      }
+
+      if (banner) {
+        bannerUrl = uploads[uploadIndex].url;
+      }
+    }
 
     try {
       return await this.dataSource.transaction(async (manager) => {
@@ -106,8 +123,8 @@ export class CommunityService {
           slug: dto.slug,
           isActive: true,
           isPrivate: dto.isPrivate,
-          imageUrl: imageUpload.url,
-          bannerUrl: bannerUpload.url,
+          imageUrl,
+          bannerUrl,
           categoryId: dto.categoryId,
         });
 
@@ -167,9 +184,21 @@ export class CommunityService {
       throw new ConflictException('Ya existe un tag con ese nombre');
     }
 
+    if (dto.categoryId !== undefined) {
+      const category = await this.categoryRepository.findOne({
+        where: { categoryId: dto.categoryId },
+      });
+      if (!category) {
+        throw new NotFoundException('La categoría seleccionada no existe');
+      }
+    }
+
     try {
       return await this.tagRepository.save(
-        this.tagRepository.create({ name: dto.name }),
+        this.tagRepository.create({
+          name: dto.name,
+          categoryId: dto.categoryId ?? null,
+        }),
       );
     } catch (error: unknown) {
       if (error instanceof QueryFailedError) {
@@ -190,8 +219,13 @@ export class CommunityService {
   }
 
   async findAllTags(query: GetTagsQueryDto) {
-    const { page, limit } = query;
+    const { page, limit, isInterest, categoryId } = query;
+    const where: FindOptionsWhere<Tag> = {};
+    if (isInterest !== undefined) where.isInterest = isInterest;
+    if (categoryId !== undefined) where.categoryId = categoryId;
+
     const [data, total] = await this.tagRepository.findAndCount({
+      where,
       order: { tagId: 'ASC' },
       skip: (page - 1) * limit,
       take: limit,
@@ -206,6 +240,81 @@ export class CommunityService {
         totalPages: Math.ceil(total / limit),
       },
     };
+  }
+
+  async findTagById(tagId: number): Promise<Tag> {
+    const tag = await this.tagRepository.findOne({ where: { tagId } });
+    if (!tag) {
+      throw new NotFoundException('Tag no encontrado');
+    }
+    return tag;
+  }
+
+  async updateTag(tagId: number, dto: UpdateTagDto): Promise<Tag> {
+    const tag = await this.findTagById(tagId);
+
+    if (dto.name && dto.name !== tag.name) {
+      const existingTag = await this.tagRepository.findOne({
+        where: { name: dto.name },
+      });
+      if (existingTag) {
+        throw new ConflictException('Ya existe un tag con ese nombre');
+      }
+      tag.name = dto.name;
+    }
+
+    if (dto.categoryId !== undefined) {
+      if (dto.categoryId !== null) {
+        const category = await this.categoryRepository.findOne({
+          where: { categoryId: dto.categoryId },
+        });
+        if (!category) {
+          throw new NotFoundException('La categoría seleccionada no existe');
+        }
+      }
+      tag.categoryId = dto.categoryId;
+    }
+
+    if (dto.isInterest !== undefined) {
+      tag.isInterest = dto.isInterest;
+    }
+
+    try {
+      return await this.tagRepository.save(tag);
+    } catch (error: unknown) {
+      if (error instanceof QueryFailedError) {
+        const databaseError = error.driverError as PostgresError;
+        if (
+          databaseError.code === '23505' &&
+          databaseError.constraint === 'UQ_tag_name'
+        ) {
+          throw new ConflictException('Ya existe un tag con ese nombre');
+        }
+      }
+      throw new InternalServerErrorException(
+        'Ocurrió un error al actualizar el tag',
+      );
+    }
+  }
+
+  async deleteTag(tagId: number): Promise<void> {
+    const tag = await this.findTagById(tagId);
+
+    try {
+      await this.tagRepository.remove(tag);
+    } catch (error: unknown) {
+      if (error instanceof QueryFailedError) {
+        const databaseError = error.driverError as PostgresError;
+        if (databaseError.code === '23001' || databaseError.code === '23503') {
+          throw new ConflictException(
+            'No se puede eliminar un tag que está siendo usado por una comunidad',
+          );
+        }
+      }
+      throw new InternalServerErrorException(
+        'Ocurrió un error al eliminar el tag',
+      );
+    }
   }
 
   async findAllRules(communityId: number): Promise<CommunityRuleSummary[]> {
