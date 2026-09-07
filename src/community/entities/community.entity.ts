@@ -37,11 +37,11 @@ export class Community {
   @CreateDateColumn({ name: 'created_at', type: 'timestamp with time zone' })
   createdAt!: Date;
 
-  @Column({ name: 'image_url' })
-  imageUrl!: string;
+  @Column({ name: 'image_url', type: 'text', nullable: true })
+  imageUrl!: string | null;
 
-  @Column({ name: 'banner_url' })
-  bannerUrl!: string;
+  @Column({ name: 'banner_url', type: 'text', nullable: true })
+  bannerUrl!: string | null;
 
   @Column({ name: 'category_id' })
   categoryId!: number;
