@@ -21,6 +21,7 @@ import { ChangePasswordDto } from './dto/change-password.dto';
 
 const RESET_TOKEN_BYTES = 32;
 const DEFAULT_RESET_TOKEN_EXPIRES_IN_MINUTES = 60;
+const DEFAULT_REFRESH_EXPIRES_IN_SECONDS = 60 * 60 * 24 * 7; // 7 días
 
 @Injectable()
 export class AuthService {
@@ -34,7 +35,7 @@ export class AuthService {
   ) {}
 
   async login(dto: LoginDto) {
-    const user = await this.usersService.findByEmail(dto.email);
+    const user = await this.usersService.findByEmailOrUsername(dto.identifier);
     if (!user?.passwordHash) {
       throw new UnauthorizedException('Credenciales inválidas');
     }
@@ -102,10 +103,47 @@ export class AuthService {
     return newUser;
   }
 
+  /**
+   * Emite un access_token (corto, payload {sub, email}) y un refresh_token
+   * (largo, payload {sub}, firmado con JWT_REFRESH_SECRET). JWT sin estado:
+   * no se persiste el refresh token en BD, solo se firma/valida.
+   */
   private buildSession(user: User) {
     const payload = { sub: user.id, email: user.email };
     const accessToken = this.jwtService.sign(payload);
-    return { accessToken, user };
+
+    const refreshToken = this.jwtService.sign(
+      { sub: user.id },
+      {
+        secret: this.configService.get<string>('JWT_REFRESH_SECRET'),
+        expiresIn: this.getRefreshExpiresInSeconds(),
+      },
+    );
+
+    return { accessToken, refreshToken, user };
+  }
+
+  /**
+   * POST /auth/refresh: el refresh_token ya fue validado por JwtRefreshGuard
+   * antes de llegar aquí. Reemitimos ambos tokens (rotación simple del
+   * refresh token en cada uso).
+   */
+  async refreshSession(userId: string) {
+    const user = await this.usersService.findById(userId).catch(() => null);
+
+    if (!user || !user.isActive) {
+      throw new UnauthorizedException('Sesión inválida');
+    }
+
+    return this.buildSession(user);
+  }
+
+  private getRefreshExpiresInSeconds(): number {
+    return parseInt(
+      this.configService.get<string>('JWT_REFRESH_EXPIRES_IN_SECONDS') ??
+        String(DEFAULT_REFRESH_EXPIRES_IN_SECONDS),
+      10,
+    );
   }
 
   async forgotPassword(dto: ForgotPasswordDto): Promise<void> {
