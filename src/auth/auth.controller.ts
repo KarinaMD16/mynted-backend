@@ -54,29 +54,33 @@ export class AuthController {
   }
 
   @Post('google')
-  @ApiOperation({ summary: 'Login/registro con Google' })
+  @ApiOperation({
+    summary:
+      'Login/registro con Google. isNewUser indica si se creó la cuenta ahora (dispara el onboarding)',
+  })
   async loginWithGoogle(
     @Body() dto: GoogleLoginDto,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const { user, ...tokens } = await this.authService.loginWithGoogle(
-      dto.idToken,
-    );
+    const { user, isNewUser, ...tokens } =
+      await this.authService.loginWithGoogle(dto.idToken);
     this.setAuthCookies(res, tokens);
-    return { user: this.toSafeUser(user) };
+    return { user: this.toSafeUser(user), isNewUser };
   }
 
   @Post('facebook')
-  @ApiOperation({ summary: 'Login/registro con Facebook' })
+  @ApiOperation({
+    summary:
+      'Login/registro con Facebook. isNewUser indica si se creó la cuenta ahora (dispara el onboarding)',
+  })
   async loginWithFacebook(
     @Body() dto: FacebookLoginDto,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const { user, ...tokens } = await this.authService.loginWithFacebook(
-      dto.accessToken,
-    );
+    const { user, isNewUser, ...tokens } =
+      await this.authService.loginWithFacebook(dto.accessToken);
     this.setAuthCookies(res, tokens);
-    return { user: this.toSafeUser(user) };
+    return { user: this.toSafeUser(user), isNewUser };
   }
 
   @Post('refresh')

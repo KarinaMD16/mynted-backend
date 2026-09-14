@@ -8,8 +8,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
-import * as crypto from 'node:crypto';
-import { User } from './entities/user.entity';
+import { SellerRequestStatus, User, UserRole } from './entities/user.entity';
 import {
   OAuthProvider,
   UserOAuthAccount,
@@ -222,11 +221,16 @@ export class UsersService {
       profile.name ?? profile.email.split('@')[0],
     );
 
+    // Defaults explícitos (no confiar solo en los defaults de columna): una
+    // cuenta creada por OAuth nunca tiene contraseña propia y arranca como
+    // usuario regular, sin ninguna solicitud de vendedor en curso.
     const user = this.usersRepository.create({
       email: profile.email,
       username,
       passwordHash: null,
       photoUrl: profile.photoUrl,
+      role: UserRole.USER,
+      sellerRequestStatus: SellerRequestStatus.NONE,
     });
 
     return this.usersRepository.save(user);
@@ -241,12 +245,18 @@ export class UsersService {
         .replace(/[^a-z0-9_]/g, '')
         .slice(0, 15) || 'user';
 
-    for (let attempt = 0; attempt < 5; attempt++) {
-      const candidate =
-        attempt === 0
-          ? base.padEnd(3, '0')
-          : `${base}${crypto.randomInt(1000, 9999)}`;
+    const firstCandidate = base.padEnd(3, '0');
+    if (
+      !(await this.usersRepository.findOne({
+        where: { username: firstCandidate },
+      }))
+    ) {
+      return firstCandidate;
+    }
 
+    // Sufijo numérico incremental (1, 2, 3, ...) hasta encontrar uno libre.
+    for (let suffix = 1; suffix <= 9999; suffix++) {
+      const candidate = `${base}${suffix}`;
       const taken = await this.usersRepository.findOne({
         where: { username: candidate },
       });
