@@ -36,8 +36,14 @@ export class AuthService {
 
   async login(dto: LoginDto) {
     const user = await this.usersService.findByEmailOrUsername(dto.identifier);
-    if (!user?.passwordHash) {
+    if (!user) {
       throw new UnauthorizedException('Credenciales inválidas');
+    }
+
+    if (!user.passwordHash) {
+      throw new UnauthorizedException(
+        'Esta cuenta inició sesión con Google o Facebook. Usa esa opción para acceder',
+      );
     }
 
     const passwordMatches = await bcrypt.compare(
@@ -53,31 +59,39 @@ export class AuthService {
 
   async loginWithGoogle(idToken: string) {
     const profile = await this.googleAuthService.verifyIdToken(idToken);
-    const user = await this.linkOrCreateSocialUser('google', profile);
-    return this.buildSession(user);
+    const { user, isNewUser } = await this.linkOrCreateSocialUser(
+      'google',
+      profile,
+    );
+    return { ...this.buildSession(user), isNewUser };
   }
 
   async loginWithFacebook(accessToken: string) {
     const profile =
       await this.facebookAuthService.verifyAccessToken(accessToken);
-    const user = await this.linkOrCreateSocialUser('facebook', profile);
-    return this.buildSession(user);
+    const { user, isNewUser } = await this.linkOrCreateSocialUser(
+      'facebook',
+      profile,
+    );
+    return { ...this.buildSession(user), isNewUser };
   }
 
   /**
    * Une el flujo de las 3 vías de acceso: cuenta ya vinculada a ese proveedor,
    * cuenta existente con el mismo correo (se vincula) o cuenta nueva.
+   * isNewUser solo es true en el tercer caso, y es lo que le indica al
+   * frontend si debe disparar el onboarding completo (tags + comunidades).
    */
   private async linkOrCreateSocialUser(
     provider: OAuthProvider,
     profile: SocialProfile,
-  ): Promise<User> {
+  ): Promise<{ user: User; isNewUser: boolean }> {
     const existingLink = await this.usersService.findByOAuthAccount(
       provider,
       profile.providerUserId,
     );
     if (existingLink) {
-      return existingLink;
+      return { user: existingLink, isNewUser: false };
     }
 
     const existingByEmail = await this.usersService.findByEmail(profile.email);
@@ -87,7 +101,7 @@ export class AuthService {
         provider,
         profile.providerUserId,
       );
-      return existingByEmail;
+      return { user: existingByEmail, isNewUser: false };
     }
 
     const newUser = await this.usersService.createFromOAuth({
@@ -100,7 +114,7 @@ export class AuthService {
       provider,
       profile.providerUserId,
     );
-    return newUser;
+    return { user: newUser, isNewUser: true };
   }
 
   /**
