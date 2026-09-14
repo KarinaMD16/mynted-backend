@@ -23,9 +23,10 @@ export class UserTagsController {
   @Post()
   @ApiOperation({
     summary:
-      'Guardar los intereses elegidos en el onboarding (mínimo 3 tags principales, reemplaza la selección anterior)',
+      'Guardar los intereses elegidos en el onboarding (0 para omitir, o mínimo 3 tags principales; reemplaza la selección anterior). ' +
+      'También guarda la aceptación de política de privacidad y, si se envían, locale/currency del navegador.',
   })
   setMine(@Req() req: AuthenticatedRequest, @Body() dto: SaveUserTagsDto) {
-    return this.userTagsService.setUserTags(req.user.userId, dto.tagIds);
+    return this.userTagsService.setUserTags(req.user.userId, dto);
   }
 }
