@@ -9,6 +9,7 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+import { ConfigService } from '@nestjs/config';
 import { Response } from 'express';
 import { AuthService } from './auth.service';
 import { User } from '../users/entities/user.entity';
@@ -19,21 +20,36 @@ import { ChangePasswordDto } from './dto/change-password.dto';
 import { GoogleLoginDto } from './dto/google-login.dto';
 import { FacebookLoginDto } from './dto/facebook-login.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
-import { AuthenticatedRequest } from './types/authenticated-request';
+import { JwtRefreshGuard } from './guards/jwt-refresh.guard';
+import {
+  AuthenticatedRequest,
+  RefreshAuthenticatedRequest,
+} from './types/authenticated-request';
+
+const DEFAULT_ACCESS_EXPIRES_IN_SECONDS = 900; // 15 min
+const DEFAULT_REFRESH_EXPIRES_IN_SECONDS = 60 * 60 * 24 * 7; // 7 días
+
+interface AuthTokens {
+  accessToken: string;
+  refreshToken: string;
+}
 
 @ApiTags('auth')
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly configService: ConfigService,
+  ) {}
 
   @Post('login')
-  @ApiOperation({ summary: 'Login de usuario' })
+  @ApiOperation({ summary: 'Login de usuario (con email o username)' })
   async login(
     @Body() dto: LoginDto,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const { accessToken, user } = await this.authService.login(dto);
-    this.setSessionCookie(res, accessToken);
+    const { user, ...tokens } = await this.authService.login(dto);
+    this.setAuthCookies(res, tokens);
     return { user: this.toSafeUser(user) };
   }
 
@@ -43,10 +59,10 @@ export class AuthController {
     @Body() dto: GoogleLoginDto,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const { accessToken, user } = await this.authService.loginWithGoogle(
+    const { user, ...tokens } = await this.authService.loginWithGoogle(
       dto.idToken,
     );
-    this.setSessionCookie(res, accessToken);
+    this.setAuthCookies(res, tokens);
     return { user: this.toSafeUser(user) };
   }
 
@@ -56,10 +72,28 @@ export class AuthController {
     @Body() dto: FacebookLoginDto,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const { accessToken, user } = await this.authService.loginWithFacebook(
+    const { user, ...tokens } = await this.authService.loginWithFacebook(
       dto.accessToken,
     );
-    this.setSessionCookie(res, accessToken);
+    this.setAuthCookies(res, tokens);
+    return { user: this.toSafeUser(user) };
+  }
+
+  @Post('refresh')
+  @UseGuards(JwtRefreshGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary:
+      'Renovar el access_token usando el refresh_token (rota ambos). 401 si el refresh_token es inválido o expiró',
+  })
+  async refresh(
+    @Req() req: RefreshAuthenticatedRequest,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const { user, ...tokens } = await this.authService.refreshSession(
+      req.user.userId,
+    );
+    this.setAuthCookies(res, tokens);
     return { user: this.toSafeUser(user) };
   }
 
@@ -67,6 +101,7 @@ export class AuthController {
   @ApiOperation({ summary: 'Cerrar sesión' })
   logout(@Res({ passthrough: true }) res: Response) {
     res.clearCookie('access_token');
+    res.clearCookie('refresh_token');
     return { message: 'Sesión cerrada' };
   }
 
@@ -102,13 +137,36 @@ export class AuthController {
     return { message: 'Contraseña actualizada correctamente' };
   }
 
-  private setSessionCookie(res: Response, accessToken: string): void {
-    res.cookie('access_token', accessToken, {
+  private setAuthCookies(res: Response, tokens: AuthTokens): void {
+    const cookieOptions = {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production', // en local (http) tiene que ir false
-      sameSite: 'lax',
-      maxAge: 24 * 60 * 60 * 1000, // 1 día, ajusta según JWT_EXPIRES_IN
+      sameSite: 'lax' as const,
+    };
+
+    res.cookie('access_token', tokens.accessToken, {
+      ...cookieOptions,
+      maxAge: this.getExpiresInMs(
+        'JWT_EXPIRES_IN_SECONDS',
+        DEFAULT_ACCESS_EXPIRES_IN_SECONDS,
+      ),
     });
+
+    res.cookie('refresh_token', tokens.refreshToken, {
+      ...cookieOptions,
+      maxAge: this.getExpiresInMs(
+        'JWT_REFRESH_EXPIRES_IN_SECONDS',
+        DEFAULT_REFRESH_EXPIRES_IN_SECONDS,
+      ),
+    });
+  }
+
+  private getExpiresInMs(envKey: string, defaultSeconds: number): number {
+    const seconds = parseInt(
+      this.configService.get<string>(envKey) ?? String(defaultSeconds),
+      10,
+    );
+    return seconds * 1000;
   }
 
   private toSafeUser(user: User) {

@@ -136,6 +136,12 @@ export class UsersService {
     return this.usersRepository.findOne({ where: { email } });
   }
 
+  async findByEmailOrUsername(identifier: string): Promise<User | null> {
+    return this.usersRepository.findOne({
+      where: [{ email: identifier }, { username: identifier }],
+    });
+  }
+
   async findByResetTokenHash(tokenHash: string): Promise<User | null> {
     return this.usersRepository.findOne({
       where: { resetPasswordTokenHash: tokenHash },
