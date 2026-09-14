@@ -10,6 +10,7 @@ import { CommunityRule } from './entities/community-rule.entity';
 import { CommunityTag } from './entities/community-tag.entity';
 import { Community } from './entities/community.entity';
 import { Tag } from './entities/tag.entity';
+import { CommunityProfile } from './entities/community-profile.entity';
 import { CategorySeed } from './seeds/category.seed';
 import { TagSeed } from './seeds/tag.seed';
 
@@ -21,6 +22,7 @@ import { TagSeed } from './seeds/tag.seed';
       Tag,
       CommunityTag,
       CommunityRule,
+      CommunityProfile,
     ]),
     CloudinaryModule,
     UsersModule,

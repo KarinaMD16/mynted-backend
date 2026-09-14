@@ -4,10 +4,15 @@ import { User } from './entities/user.entity';
 import { UserOAuthAccount } from './entities/user-oauth-account.entity';
 import { UsersService } from './users.service';
 import { UsersController } from './users.controller';
+import { CloudinaryModule } from '../cloudinary/cloudinary.module';
+import { SuperAdminGuard } from '../auth/guards/super-admin.guard';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([User, UserOAuthAccount])],
-  providers: [UsersService],
+  imports: [
+    TypeOrmModule.forFeature([User, UserOAuthAccount]),
+    CloudinaryModule,
+  ],
+  providers: [UsersService, SuperAdminGuard],
   controllers: [UsersController],
   exports: [UsersService], // lo vas a necesitar en el módulo de Auth (716)
 })

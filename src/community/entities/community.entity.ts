@@ -11,6 +11,7 @@ import {
 import { Category } from './category.entity';
 import { CommunityRule } from './community-rule.entity';
 import { CommunityTag } from './community-tag.entity';
+import { CommunityProfile } from './community-profile.entity';
 
 @Entity('community')
 @Unique('UQ_community_name', ['name'])
@@ -58,4 +59,7 @@ export class Community {
 
   @OneToMany(() => CommunityRule, (rule) => rule.community)
   rules!: CommunityRule[];
+
+  @OneToMany(() => CommunityProfile, (profile) => profile.community)
+  communityProfiles!: CommunityProfile[];
 }

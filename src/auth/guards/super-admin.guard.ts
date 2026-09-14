@@ -5,6 +5,7 @@ import {
   Injectable,
 } from '@nestjs/common';
 import { UsersService } from '../../users/users.service';
+import { UserRole } from '../../users/entities/user.entity';
 import { AuthenticatedRequest } from '../types/authenticated-request';
 
 /**
@@ -19,7 +20,7 @@ export class SuperAdminGuard implements CanActivate {
     const req = context.switchToHttp().getRequest<AuthenticatedRequest>();
     const user = await this.usersService.findById(req.user.userId);
 
-    if (!user.isSuperAdmin) {
+    if (user.role !== UserRole.SUPERADMIN) {
       throw new ForbiddenException('Requiere permisos de superadministrador');
     }
 

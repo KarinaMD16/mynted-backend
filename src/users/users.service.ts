@@ -1,6 +1,8 @@
 import {
+  BadRequestException,
   Injectable,
   ConflictException,
+  ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -13,6 +15,8 @@ import {
   UserOAuthAccount,
 } from './entities/user-oauth-account.entity';
 import { CreateUserDto } from './dto/create-user.dto';
+import { UpdateProfileDto } from './dto/update-profile.dto';
+import { CloudinaryService } from '../cloudinary/cloudinary.service';
 
 @Injectable()
 export class UsersService {
@@ -21,6 +25,7 @@ export class UsersService {
     private readonly usersRepository: Repository<User>,
     @InjectRepository(UserOAuthAccount)
     private readonly oauthAccountsRepository: Repository<UserOAuthAccount>,
+    private readonly cloudinaryService: CloudinaryService,
   ) {}
 
   async create(dto: CreateUserDto): Promise<User> {
@@ -53,6 +58,80 @@ export class UsersService {
     return user;
   }
 
+  async findAll(): Promise<User[]> {
+    return this.usersRepository.find({ order: { createdAt: 'DESC' } });
+  }
+
+  async updateProfile(
+    userId: string,
+    dto: UpdateProfileDto,
+    photo?: Express.Multer.File,
+  ): Promise<User> {
+    const hasFieldUpdate =
+      dto.username !== undefined ||
+      dto.bio !== undefined ||
+      dto.location !== undefined ||
+      dto.locale !== undefined ||
+      dto.currency !== undefined;
+
+    if (!hasFieldUpdate && !photo) {
+      throw new BadRequestException(
+        'Debe proporcionar al menos un campo o una foto para actualizar',
+      );
+    }
+
+    const user = await this.findById(userId);
+
+    if (dto.username !== undefined && dto.username !== user.username) {
+      const usernameOwner = await this.usersRepository.findOne({
+        where: { username: dto.username },
+      });
+
+      if (usernameOwner) {
+        throw new ConflictException('Ese username ya está en uso');
+      }
+
+      user.username = dto.username;
+    }
+
+    if (dto.bio !== undefined) user.bio = dto.bio;
+    if (dto.location !== undefined) user.location = dto.location;
+    if (dto.locale !== undefined) user.locale = dto.locale;
+    if (dto.currency !== undefined) user.currency = dto.currency;
+
+    if (photo) {
+      const uploadedPhoto = await this.cloudinaryService.uploadImage(photo);
+      user.photoUrl = uploadedPhoto.url;
+    }
+
+    try {
+      return await this.usersRepository.save(user);
+    } catch (error: unknown) {
+      if (this.isUniqueViolation(error)) {
+        throw new ConflictException('Ese username ya está en uso');
+      }
+      throw error;
+    }
+  }
+
+  async deactivate(userId: string, requestingUserId: string): Promise<User> {
+    if (userId === requestingUserId) {
+      throw new ForbiddenException(
+        'Un superadministrador no puede desactivar su propia cuenta',
+      );
+    }
+
+    const user = await this.findById(userId);
+    user.isActive = false;
+    return this.usersRepository.save(user);
+  }
+
+  async activate(userId: string): Promise<User> {
+    const user = await this.findById(userId);
+    user.isActive = true;
+    return this.usersRepository.save(user);
+  }
+
   async findByEmail(email: string): Promise<User | null> {
     return this.usersRepository.findOne({ where: { email } });
   }
@@ -80,6 +159,28 @@ export class UsersService {
       resetPasswordTokenHash: null,
       resetPasswordExpiresAt: null,
     });
+  }
+
+  async updateOnboardingMeta(
+    userId: string,
+    meta: {
+      privacyPolicyVersion?: string;
+      locale?: string;
+      currency?: string;
+    },
+  ): Promise<void> {
+    const update: Partial<User> = {};
+
+    if (meta.privacyPolicyVersion !== undefined) {
+      update.privacyPolicyVersion = meta.privacyPolicyVersion;
+      update.acceptedPrivacyPolicyAt = new Date();
+    }
+    if (meta.locale !== undefined) update.locale = meta.locale;
+    if (meta.currency !== undefined) update.currency = meta.currency;
+
+    if (Object.keys(update).length > 0) {
+      await this.usersRepository.update(userId, update);
+    }
   }
 
   async findByOAuthAccount(
@@ -148,6 +249,15 @@ export class UsersService {
 
     throw new ConflictException(
       'No se pudo generar un username único, intenta de nuevo',
+    );
+  }
+
+  private isUniqueViolation(error: unknown): boolean {
+    return (
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      error.code === '23505'
     );
   }
 }
