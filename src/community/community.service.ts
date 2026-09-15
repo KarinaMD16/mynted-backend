@@ -23,11 +23,16 @@ import { GetTagsQueryDto } from './dto/get-tags-query.dto';
 import { UpdateCommunityDto } from './dto/update-community.dto';
 import { UpdateCommunityRuleDto } from './dto/update-community-rule.dto';
 import { UpdateTagDto } from './dto/update-tag.dto';
+import {
+  CommunityProfile,
+  CommunityProfileRole,
+} from './entities/community-profile.entity';
 import { Category } from './entities/category.entity';
 import { CommunityRule } from './entities/community-rule.entity';
 import { CommunityTag } from './entities/community-tag.entity';
 import { Community } from './entities/community.entity';
 import { Tag } from './entities/tag.entity';
+import { UsersService } from '../users/users.service';
 
 interface PostgresError {
   code?: string;
@@ -52,12 +57,14 @@ export class CommunityService {
     private readonly communityRuleRepository: Repository<CommunityRule>,
     private readonly dataSource: DataSource,
     private readonly cloudinaryService: CloudinaryService,
+    private readonly usersService: UsersService,
   ) {}
 
   async create(
     dto: CreateCommunityDto,
     image: Express.Multer.File | undefined,
     banner: Express.Multer.File | undefined,
+    userId: string,
   ): Promise<Community> {
     this.validateCollections(dto);
 
@@ -115,6 +122,8 @@ export class CommunityService {
       }
     }
 
+    const user = await this.usersService.findById(userId);
+
     try {
       return await this.dataSource.transaction(async (manager) => {
         const community = manager.create(Community, {
@@ -129,6 +138,15 @@ export class CommunityService {
         });
 
         const savedCommunity = await manager.save(Community, community);
+
+        const creatorProfile = manager.create(CommunityProfile, {
+          displayName: user.username,
+          bio: '',
+          role: CommunityProfileRole.OWNER,
+          userId,
+          communityId: savedCommunity.id,
+        });
+        await manager.save(CommunityProfile, creatorProfile);
 
         const communityTags = dto.tagIds.map((tagId) =>
           manager.create(CommunityTag, {
