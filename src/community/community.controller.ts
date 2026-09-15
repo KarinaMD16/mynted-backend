@@ -10,6 +10,7 @@ import {
   Patch,
   Post,
   Query,
+  Req,
   UploadedFiles,
   UseGuards,
   UseInterceptors,
@@ -39,6 +40,7 @@ import { UpdateCommunityRuleDto } from './dto/update-community-rule.dto';
 import { UpdateTagDto } from './dto/update-tag.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { SuperAdminGuard } from '../auth/guards/super-admin.guard';
+import { AuthenticatedRequest } from '../auth/types/authenticated-request';
 
 interface CommunityFiles {
   image?: Express.Multer.File[];
@@ -51,6 +53,8 @@ export class CommunityController {
   constructor(private readonly communityService: CommunityService) {}
 
   @Post('communities')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Crear una comunidad' })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
@@ -142,11 +146,13 @@ export class CommunityController {
     )
     dto: CreateCommunityDto,
     @UploadedFiles() files: CommunityFiles,
+    @Req() request: AuthenticatedRequest,
   ) {
     return this.communityService.create(
       dto,
       files?.image?.[0],
       files?.banner?.[0],
+      request.user.userId,
     );
   }
 
