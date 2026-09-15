@@ -8,6 +8,7 @@ import { AuthModule } from './auth/auth.module';
 import { CommunityModule } from './community/community.module';
 import { UserTagsModule } from './user-tags/user-tags.module';
 import { UserCommunitiesModule } from './user-communities/user-communities.module';
+import { SellersModule } from './sellers/sellers.module';
 
 @Module({
   imports: [
@@ -35,6 +36,7 @@ import { UserCommunitiesModule } from './user-communities/user-communities.modul
     CommunityModule,
     UserTagsModule,
     UserCommunitiesModule,
+    SellersModule,
   ],
   controllers: [AppController],
   providers: [AppService],
