@@ -51,6 +51,8 @@ export class CommunityController {
   constructor(private readonly communityService: CommunityService) {}
 
   @Post('communities')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Crear una comunidad' })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
@@ -157,6 +159,8 @@ export class CommunityController {
   }
 
   @Post('tags')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Crear un tag reutilizable' })
   createTag(@Body() dto: CreateTagDto) {
     return this.communityService.createTag(dto);
@@ -237,6 +241,8 @@ export class CommunityController {
   }
 
   @Post('communities/:communityId/rules')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Crear una regla para una comunidad' })
   @ApiParam({ name: 'communityId', type: Number, example: 5 })
   @ApiCreatedResponse({
@@ -273,6 +279,8 @@ export class CommunityController {
   }
 
   @Patch('communities/:communityId/rules/:ruleId')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Actualizar una regla de una comunidad' })
   @ApiParam({ name: 'communityId', type: Number, example: 5 })
   @ApiParam({ name: 'ruleId', type: Number, example: 11 })
@@ -299,6 +307,8 @@ export class CommunityController {
   }
 
   @Delete('communities/:communityId/rules/:ruleId')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Eliminar una regla de una comunidad' })
   @ApiParam({ name: 'communityId', type: Number, example: 5 })
   @ApiParam({ name: 'ruleId', type: Number, example: 11 })
@@ -317,6 +327,8 @@ export class CommunityController {
   }
 
   @Patch('communities/:id')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Actualizar una comunidad' })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
@@ -402,6 +414,8 @@ export class CommunityController {
   }
 
   @Patch('communities/:id/deactivate')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Desactivar una comunidad' })
   @ApiOkResponse({
     schema: { example: { message: 'Comunidad desactivada exitosamente' } },
@@ -411,6 +425,8 @@ export class CommunityController {
   }
 
   @Patch('communities/:id/activate')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Activar nuevamente una comunidad' })
   @ApiOkResponse({
     schema: { example: { message: 'Comunidad activada exitosamente' } },
@@ -420,6 +436,8 @@ export class CommunityController {
   }
 
   @Patch('communities/:id/public')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Cambiar una comunidad a pública' })
   @ApiOkResponse({
     schema: {
@@ -431,6 +449,8 @@ export class CommunityController {
   }
 
   @Patch('communities/:id/private')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Cambiar una comunidad a privada' })
   @ApiOkResponse({
     schema: {

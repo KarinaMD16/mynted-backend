@@ -39,7 +39,9 @@ export class UsersController {
   }
 
   @Get()
-  @ApiOperation({ summary: 'Obtener todos los usuarios' })
+  @UseGuards(JwtAuthGuard, SuperAdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: '[Superadmin] Obtener todos los usuarios' })
   findAll() {
     return this.usersService.findAll();
   }
@@ -118,6 +120,8 @@ export class UsersController {
   }
 
   @Get(':id')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Obtener un usuario por id' })
   findOne(@Param('id', ParseUUIDPipe) id: string) {
     return this.usersService.findById(id);
