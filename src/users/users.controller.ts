@@ -56,7 +56,9 @@ export class UsersController {
 
   @Patch('me')
   @UseGuards(JwtAuthGuard)
-  @UseInterceptors(FileInterceptor('photo'))
+  @UseInterceptors(
+    FileInterceptor('photo', { limits: { fileSize: 5 * 1024 * 1024 } }),
+  )
   @ApiBearerAuth()
   @ApiOperation({
     summary:
