@@ -5,6 +5,7 @@ import { CommunityProfile } from '../community/entities/community-profile.entity
 import { UsersModule } from '../users/users.module';
 import { UserCommunitiesService } from './user-communities.service';
 import { UserCommunitiesController } from './user-communities.controller';
+import { CommunityMembershipController } from './community-membership.controller';
 
 @Module({
   imports: [
@@ -12,6 +13,6 @@ import { UserCommunitiesController } from './user-communities.controller';
     UsersModule,
   ],
   providers: [UserCommunitiesService],
-  controllers: [UserCommunitiesController],
+  controllers: [UserCommunitiesController, CommunityMembershipController],
 })
 export class UserCommunitiesModule {}

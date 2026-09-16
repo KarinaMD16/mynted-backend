@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, QueryFailedError, Repository } from 'typeorm';
 import { Community } from '../community/entities/community.entity';
@@ -83,5 +87,78 @@ export class UserCommunitiesService {
       }
       throw error;
     }
+  }
+
+  async joinCommunity(
+    userId: string,
+    communityId: number,
+  ): Promise<CommunityProfile> {
+    const communities = await this.communityRepository.findBy({
+      id: In([communityId]),
+    });
+
+    if (communities.length === 0) {
+      throw new NotFoundException('Comunidad no encontrada');
+    }
+
+    const existingProfile = await this.communityProfileRepository.findOne({
+      where: { userId, communityId },
+    });
+
+    if (existingProfile) {
+      throw new ConflictException('Ya perteneces a esta comunidad');
+    }
+
+    const user = await this.usersService.findById(userId);
+    const profile = this.communityProfileRepository.create({
+      userId,
+      communityId,
+      role: CommunityProfileRole.MEMBER,
+      displayName: user.username,
+      bio: '',
+    });
+
+    try {
+      return await this.communityProfileRepository.save(profile);
+    } catch (error: unknown) {
+      if (error instanceof QueryFailedError) {
+        const dbError = error.driverError as PostgresError;
+        if (dbError.code === '23505') {
+          throw new ConflictException('Ya perteneces a esta comunidad');
+        }
+      }
+      throw error;
+    }
+  }
+
+  async leaveCommunity(
+    userId: string,
+    communityId: number,
+  ): Promise<{ message: string }> {
+    const community = await this.communityRepository.findOne({
+      where: { id: communityId },
+    });
+
+    if (!community) {
+      throw new NotFoundException('Comunidad no encontrada');
+    }
+
+    const profile = await this.communityProfileRepository.findOne({
+      where: { userId, communityId },
+    });
+
+    if (!profile) {
+      throw new NotFoundException('No perteneces a esta comunidad');
+    }
+
+    if (profile.role === CommunityProfileRole.OWNER) {
+      throw new ConflictException(
+        'El propietario de la comunidad no puede abandonarla sin transferir la propiedad',
+      );
+    }
+
+    await this.communityProfileRepository.remove(profile);
+
+    return { message: 'Has abandonado la comunidad correctamente' };
   }
 }
