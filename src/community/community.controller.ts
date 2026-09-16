@@ -35,6 +35,7 @@ import { CreateCommunityDto } from './dto/create-community.dto';
 import { CreateCommunityRuleDto } from './dto/create-community-rule.dto';
 import { CreateTagDto } from './dto/create-tag.dto';
 import { GetTagsQueryDto } from './dto/get-tags-query.dto';
+import { GetCommunitiesQueryDto } from './dto/get-communities-query.dto';
 import { UpdateCommunityDto } from './dto/update-community.dto';
 import { UpdateCommunityRuleDto } from './dto/update-community-rule.dto';
 import { UpdateTagDto } from './dto/update-tag.dto';
@@ -160,6 +161,23 @@ export class CommunityController {
   @ApiOperation({ summary: 'Consultar las categorías de comunidades' })
   findAllCategories() {
     return this.communityService.findAllCategories();
+  }
+
+  @Get('communities')
+  @ApiOperation({
+    summary: 'Listar comunidades activas con búsqueda, filtros y paginación',
+  })
+  findAllCommunities(
+    @Query(
+      new ValidationPipe({
+        transform: true,
+        whitelist: true,
+        forbidNonWhitelisted: true,
+      }),
+    )
+    query: GetCommunitiesQueryDto,
+  ) {
+    return this.communityService.findAllCommunities(query);
   }
 
   @Post('tags')

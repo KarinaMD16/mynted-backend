@@ -31,5 +31,6 @@ import { TagSeed } from './seeds/tag.seed';
   ],
   controllers: [CommunityController],
   providers: [CommunityService, CategorySeed, TagSeed, SuperAdminGuard],
+  exports: [CommunityService],
 })
 export class CommunityModule {}

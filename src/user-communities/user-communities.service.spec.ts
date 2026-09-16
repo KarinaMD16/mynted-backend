@@ -7,6 +7,7 @@ import {
   CommunityProfileRole,
 } from '../community/entities/community-profile.entity';
 import { UserCommunitiesService } from './user-communities.service';
+import { CommunityService } from '../community/community.service';
 
 /* eslint-disable @typescript-eslint/no-unsafe-return */
 
@@ -25,11 +26,15 @@ describe('UserCommunitiesService', () => {
   const usersService = {
     findById: jest.fn(),
   };
+  const communityService = {
+    findUserCommunities: jest.fn(),
+  };
 
   const service = new UserCommunitiesService(
     communityRepository as unknown as Repository<Community>,
     communityProfileRepository as unknown as Repository<CommunityProfile>,
     usersService as unknown as UsersService,
+    communityService as unknown as CommunityService,
   );
 
   beforeEach(() => {

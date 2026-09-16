@@ -11,6 +11,8 @@ import {
   CommunityProfileRole,
 } from '../community/entities/community-profile.entity';
 import { UsersService } from '../users/users.service';
+import { CommunityService } from '../community/community.service';
+import { GetCommunitiesQueryDto } from '../community/dto/get-communities-query.dto';
 
 interface PostgresError {
   code?: string;
@@ -24,6 +26,7 @@ export class UserCommunitiesService {
     @InjectRepository(CommunityProfile)
     private readonly communityProfileRepository: Repository<CommunityProfile>,
     private readonly usersService: UsersService,
+    private readonly communityService: CommunityService,
   ) {}
 
   async joinCommunities(
@@ -129,6 +132,10 @@ export class UserCommunitiesService {
       }
       throw error;
     }
+  }
+
+  findMyCommunities(userId: string, query: GetCommunitiesQueryDto) {
+    return this.communityService.findUserCommunities(userId, query);
   }
 
   async leaveCommunity(
