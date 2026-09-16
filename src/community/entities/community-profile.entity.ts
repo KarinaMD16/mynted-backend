@@ -4,11 +4,13 @@ import {
   Entity,
   JoinColumn,
   ManyToOne,
+  OneToMany,
   PrimaryGeneratedColumn,
   Unique,
 } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
 import { Community } from './community.entity';
+import { Post } from './post.entity';
 
 export enum CommunityProfileRole {
   MEMBER = 'member',
@@ -54,4 +56,7 @@ export class CommunityProfile {
   })
   @JoinColumn({ name: 'community_id', referencedColumnName: 'id' })
   community!: Community;
+
+  @OneToMany(() => Post, (post) => post.communityProfile)
+  posts!: Post[];
 }
