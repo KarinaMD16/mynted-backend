@@ -11,6 +11,7 @@ import { CommunityTag } from './entities/community-tag.entity';
 import { Community } from './entities/community.entity';
 import { Tag } from './entities/tag.entity';
 import { CommunityProfile } from './entities/community-profile.entity';
+import { Post } from './entities/post.entity';
 import { CategorySeed } from './seeds/category.seed';
 import { TagSeed } from './seeds/tag.seed';
 
@@ -23,11 +24,13 @@ import { TagSeed } from './seeds/tag.seed';
       CommunityTag,
       CommunityRule,
       CommunityProfile,
+      Post,
     ]),
     CloudinaryModule,
     UsersModule,
   ],
   controllers: [CommunityController],
   providers: [CommunityService, CategorySeed, TagSeed, SuperAdminGuard],
+  exports: [CommunityService],
 })
 export class CommunityModule {}

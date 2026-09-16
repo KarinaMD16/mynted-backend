@@ -28,4 +28,12 @@ describe('CreateCommunityRuleDto', () => {
 
     expect(validateSync(dto)).not.toHaveLength(0);
   });
+
+  it('rejects an empty description', () => {
+    const dto = plainToInstance(CreateCommunityRuleDto, {
+      description: [''],
+    });
+
+    expect(validateSync(dto)).not.toHaveLength(0);
+  });
 });
