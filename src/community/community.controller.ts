@@ -180,6 +180,17 @@ export class CommunityController {
     return this.communityService.findAllCommunities(query);
   }
 
+  @Get('communities/:id')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Obtener el detalle de una comunidad' })
+  findCommunityDetail(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.communityService.findCommunityDetail(id, request.user.userId);
+  }
+
   @Post('tags')
   @ApiOperation({ summary: 'Crear un tag reutilizable' })
   createTag(@Body() dto: CreateTagDto) {

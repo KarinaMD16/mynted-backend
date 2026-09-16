@@ -62,6 +62,10 @@ export class CommunityService {
     private readonly dataSource: DataSource,
     private readonly cloudinaryService: CloudinaryService,
     private readonly usersService: UsersService,
+    @InjectRepository(CommunityProfile)
+    private readonly communityProfileRepository: Repository<CommunityProfile>,
+    @InjectRepository(Post)
+    private readonly postRepository: Repository<Post>,
   ) {}
 
   async create(
@@ -219,6 +223,105 @@ export class CommunityService {
       data: this.mapCommunityList(entities, raw, true),
       pagination: this.buildPagination(query.page, query.limit, total),
     };
+  }
+
+  async findCommunityDetail(communityId: number, userId: string) {
+    const community = await this.communityRepository.findOne({
+      where: { id: communityId, isActive: true },
+      relations: {
+        category: true,
+        communityTags: { tag: true },
+        rules: true,
+      },
+    });
+
+    if (!community) {
+      throw new NotFoundException('Comunidad no encontrada');
+    }
+
+    const [memberCount, recentPostCount, membership, forumPosts] =
+      await Promise.all([
+        this.communityProfileRepository.count({ where: { communityId } }),
+        this.countRecentPosts(communityId),
+        this.communityProfileRepository.findOne({
+          where: { userId, communityId },
+          select: { role: true },
+        }),
+        this.findRecentForumPosts(communityId),
+      ]);
+
+    return {
+      id: community.id,
+      name: community.name,
+      description: community.description,
+      slug: community.slug,
+      isPrivate: community.isPrivate,
+      imageUrl: community.imageUrl,
+      bannerUrl: community.bannerUrl,
+      createdAt: community.createdAt,
+      category: community.category,
+      tags: community.communityTags.map(({ tag }) => ({
+        tagId: tag.tagId,
+        name: tag.name,
+      })),
+      rules: community.rules
+        .sort((left, right) => left.communityRuleId - right.communityRuleId)
+        .map(({ communityRuleId, description }) => ({
+          communityRuleId,
+          description,
+        })),
+      memberCount,
+      recentPostCount,
+      popularityScore: this.calculatePopularityScore(
+        memberCount,
+        recentPostCount,
+      ),
+      isMember: membership !== null,
+      membershipRole: membership?.role ?? null,
+      forumPosts: forumPosts.map((post) => ({
+        id: post.id,
+        title: post.title,
+        body: post.body,
+        postedAt: post.postedAt,
+        upVotes: post.upVotes,
+        downVotes: post.downVotes,
+        timesSaved: post.timesSaved,
+        author: post.communityProfile
+          ? {
+              communityProfileId: post.communityProfile.communityProfileId,
+              displayName: post.communityProfile.displayName,
+              role: post.communityProfile.role,
+            }
+          : null,
+      })),
+    };
+  }
+
+  private countRecentPosts(communityId: number): Promise<number> {
+    return this.postRepository
+      .createQueryBuilder('post')
+      .innerJoin(
+        CommunityProfile,
+        'recent_post_profile',
+        'recent_post_profile.community_profile_id = post.community_profile_id',
+      )
+      .where('recent_post_profile.community_id = :communityId', {
+        communityId,
+      })
+      .andWhere(`post.posted_at >= NOW() - INTERVAL '${RECENT_POST_DAYS} days'`)
+      .getCount();
+  }
+
+  private findRecentForumPosts(communityId: number): Promise<Post[]> {
+    return this.postRepository
+      .createQueryBuilder('post')
+      .innerJoinAndSelect('post.communityProfile', 'communityProfile')
+      .where('communityProfile.community_id = :communityId', {
+        communityId,
+      })
+      .orderBy('post.posted_at', 'DESC')
+      .take(10)
+      .getMany();
   }
 
   private buildCommunityListQuery(

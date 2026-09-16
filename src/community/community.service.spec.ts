@@ -56,6 +56,8 @@ describe('CommunityService.create', () => {
       dataSource as never,
       cloudinaryService as unknown as CloudinaryService,
       usersService as unknown as UsersService,
+      {} as never,
+      {} as never,
     );
 
     await service.create(
@@ -119,6 +121,8 @@ describe('CommunityService.create', () => {
           .fn()
           .mockResolvedValue({ id: 'user-id', username: 'collector' }),
       } as unknown as UsersService,
+      {} as never,
+      {} as never,
     );
 
     await expect(

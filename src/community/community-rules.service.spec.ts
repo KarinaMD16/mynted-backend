@@ -38,6 +38,8 @@ describe('CommunityService rule CRUD', () => {
     dataSource as never,
     {} as CloudinaryService,
     {} as UsersService,
+    {} as never,
+    {} as never,
   );
 
   beforeEach(() => {
