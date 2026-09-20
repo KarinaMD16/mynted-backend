@@ -30,4 +30,25 @@ describe('CommunityController', () => {
       'user-id',
     );
   });
+
+  it('protects and passes the authenticated user to the slug detail endpoint', async () => {
+    const communityService = {
+      findCommunityDetailBySlug: jest.fn().mockResolvedValue({}),
+    };
+    const controller = new CommunityController(communityService as never);
+    const request = { user: { userId: 'user-id' } };
+    const method = Object.getOwnPropertyDescriptor(
+      CommunityController.prototype,
+      'findCommunityDetailBySlug',
+    )?.value as (...args: never[]) => unknown;
+    const guards = Reflect.getMetadata(GUARDS_METADATA, method) as unknown[];
+
+    await controller.findCommunityDetailBySlug('pokemon', request as never);
+
+    expect(guards).toEqual(expect.arrayContaining([JwtAuthGuard]));
+    expect(communityService.findCommunityDetailBySlug).toHaveBeenCalledWith(
+      'pokemon',
+      'user-id',
+    );
+  });
 });

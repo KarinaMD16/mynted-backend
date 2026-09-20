@@ -180,6 +180,20 @@ export class CommunityController {
     return this.communityService.findAllCommunities(query);
   }
 
+  @Get('communities/by-slug/:slug')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Obtener el detalle de una comunidad por slug' })
+  findCommunityDetailBySlug(
+    @Param('slug') slug: string,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.communityService.findCommunityDetailBySlug(
+      slug,
+      request.user.userId,
+    );
+  }
+
   @Get('communities/:id')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()

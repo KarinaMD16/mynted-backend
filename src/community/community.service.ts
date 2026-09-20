@@ -297,6 +297,80 @@ export class CommunityService {
     };
   }
 
+  async findCommunityDetailBySlug(slug: string, userId: string) {
+    const community = await this.communityRepository.findOne({
+      where: { slug, isActive: true },
+      relations: {
+        category: true,
+        communityTags: { tag: true },
+        rules: true,
+      },
+    });
+
+    if (!community) {
+      throw new NotFoundException('Comunidad no encontrada');
+    }
+
+    const [memberCount, recentPostCount, membership, forumPosts] =
+      await Promise.all([
+        this.communityProfileRepository.count({
+          where: { communityId: community.id },
+        }),
+        this.countRecentPosts(community.id),
+        this.communityProfileRepository.findOne({
+          where: { userId, communityId: community.id },
+          select: { role: true },
+        }),
+        this.findRecentForumPosts(community.id),
+      ]);
+
+    return {
+      id: community.id,
+      name: community.name,
+      description: community.description,
+      slug: community.slug,
+      isPrivate: community.isPrivate,
+      imageUrl: community.imageUrl,
+      bannerUrl: community.bannerUrl,
+      createdAt: community.createdAt,
+      category: community.category,
+      tags: community.communityTags.map(({ tag }) => ({
+        tagId: tag.tagId,
+        name: tag.name,
+      })),
+      rules: community.rules
+        .sort((left, right) => left.communityRuleId - right.communityRuleId)
+        .map(({ communityRuleId, description }) => ({
+          communityRuleId,
+          description,
+        })),
+      memberCount,
+      recentPostCount,
+      popularityScore: this.calculatePopularityScore(
+        memberCount,
+        recentPostCount,
+      ),
+      isMember: membership !== null,
+      membershipRole: membership?.role ?? null,
+      forumPosts: forumPosts.map((post) => ({
+        id: post.id,
+        title: post.title,
+        body: post.body,
+        postedAt: post.postedAt,
+        upVotes: post.upVotes,
+        downVotes: post.downVotes,
+        timesSaved: post.timesSaved,
+        author: post.communityProfile
+          ? {
+              communityProfileId: post.communityProfile.communityProfileId,
+              displayName: post.communityProfile.displayName,
+              role: post.communityProfile.role,
+            }
+          : null,
+      })),
+    };
+  }
+
   private countRecentPosts(communityId: number): Promise<number> {
     return this.postRepository
       .createQueryBuilder('post')

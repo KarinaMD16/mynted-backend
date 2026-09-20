@@ -133,6 +133,39 @@ describe('CommunityService.findCommunityDetail', () => {
     expect(result.membershipRole).toBeNull();
   });
 
+  it('returns the same detail shape when searching by an existing slug', async () => {
+    const byIdResult = await service.findCommunityDetail(7, 'user-id');
+    communityRepository.findOne.mockClear();
+    postRepository.createQueryBuilder
+      .mockReset()
+      .mockReturnValueOnce(countQueryBuilder)
+      .mockReturnValueOnce(postQueryBuilder);
+    const bySlugResult = await service.findCommunityDetailBySlug(
+      'developers-cr',
+      'user-id',
+    );
+
+    expect(communityRepository.findOne).toHaveBeenLastCalledWith({
+      where: { slug: 'developers-cr', isActive: true },
+      relations: {
+        category: true,
+        communityTags: { tag: true },
+        rules: true,
+      },
+    });
+    expect(bySlugResult).toEqual(byIdResult);
+  });
+
+  it('rejects a missing or inactive slug', async () => {
+    communityRepository.findOne.mockResolvedValue(null);
+
+    await expect(
+      service.findCommunityDetailBySlug('missing-slug', 'user-id'),
+    ).rejects.toThrow(NotFoundException);
+    expect(communityProfileRepository.count).not.toHaveBeenCalled();
+    expect(postRepository.createQueryBuilder).not.toHaveBeenCalled();
+  });
+
   it('rejects missing or inactive communities', async () => {
     communityRepository.findOne.mockResolvedValue(null);
 
