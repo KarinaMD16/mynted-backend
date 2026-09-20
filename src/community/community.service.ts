@@ -35,6 +35,7 @@ import { CommunityTag } from './entities/community-tag.entity';
 import { Community } from './entities/community.entity';
 import { Tag } from './entities/tag.entity';
 import { Post } from './entities/post.entity';
+import { UserTag } from '../user-tags/entities/user-tag.entity';
 import { UsersService } from '../users/users.service';
 
 interface PostgresError {
@@ -46,6 +47,8 @@ type CommunityRuleSummary = Pick<
   CommunityRule,
   'communityRuleId' | 'description'
 >;
+
+type RecommendationStage = 'interests' | 'categories' | 'popularity';
 
 const RECENT_POST_DAYS = 30;
 
@@ -224,6 +227,187 @@ export class CommunityService {
       data: this.mapCommunityList(entities, raw, true),
       pagination: this.buildPagination(query.page, query.limit, total),
     };
+  }
+
+  async findRecommendedCommunities(
+    userId: string,
+    query: GetCommunitiesQueryDto,
+  ) {
+    const stages: RecommendationStage[] = [
+      'interests',
+      'categories',
+      'popularity',
+    ];
+    const stageQueries = stages.map((stage) =>
+      this.buildRecommendationQuery(userId, stage),
+    );
+    const stageCounts = await Promise.all(
+      stageQueries.map((stageQuery) => stageQuery.clone().getCount()),
+    );
+    const total = stageCounts.reduce((sum, count) => sum + count, 0);
+    const offset = (query.page - 1) * query.limit;
+    let remainingOffset = offset;
+    let remainingLimit = query.limit;
+    const data: ReturnType<typeof this.mapRecommendedCommunities> = [];
+
+    for (let index = 0; index < stageQueries.length; index += 1) {
+      const stageCount = stageCounts[index];
+
+      if (remainingOffset >= stageCount) {
+        remainingOffset -= stageCount;
+        continue;
+      }
+
+      if (remainingLimit === 0) break;
+
+      const { entities, raw } = await stageQueries[index]
+        .skip(remainingOffset)
+        .take(remainingLimit)
+        .getRawAndEntities();
+      data.push(...this.mapRecommendedCommunities(entities, raw));
+      remainingLimit -= entities.length;
+      remainingOffset = 0;
+    }
+
+    return {
+      data,
+      pagination: this.buildPagination(query.page, query.limit, total),
+    };
+  }
+
+  private buildRecommendationQuery(userId: string, stage: RecommendationStage) {
+    const memberCountSubquery = this.communityRepository
+      .createQueryBuilder('recommended_member_count')
+      .subQuery()
+      .select('COUNT(*)')
+      .from(CommunityProfile, 'recommended_member_count_profile')
+      .where('recommended_member_count_profile.community_id = community.id')
+      .getQuery();
+
+    const recentPostCountSubquery = this.communityRepository
+      .createQueryBuilder('recommended_recent_posts')
+      .subQuery()
+      .select('COUNT(*)')
+      .from(Post, 'recommended_recent_post')
+      .innerJoin(
+        CommunityProfile,
+        'recommended_recent_post_profile',
+        'recommended_recent_post_profile.community_profile_id = recommended_recent_post.community_profile_id',
+      )
+      .where('recommended_recent_post_profile.community_id = community.id')
+      .andWhere(
+        `recommended_recent_post.posted_at >= NOW() - INTERVAL '${RECENT_POST_DAYS} days'`,
+      )
+      .getQuery();
+
+    const matchedInterestSubquery = this.communityRepository
+      .createQueryBuilder('recommended_interest_matches')
+      .subQuery()
+      .select('COUNT(DISTINCT recommended_community_tag.tag_id)')
+      .from(CommunityTag, 'recommended_community_tag')
+      .innerJoin(
+        UserTag,
+        'recommended_user_tag',
+        'recommended_user_tag.tag_id = recommended_community_tag.tag_id',
+      )
+      .where('recommended_community_tag.community_id = community.id')
+      .andWhere('recommended_user_tag.user_id = :userId', { userId })
+      .getQuery();
+
+    const categoryMatchSubquery = this.communityRepository
+      .createQueryBuilder('recommended_category_match')
+      .subQuery()
+      .select('1')
+      .from(CommunityProfile, 'recommended_category_profile')
+      .innerJoin(
+        Community,
+        'recommended_category_community',
+        'recommended_category_community.id = recommended_category_profile.community_id',
+      )
+      .where('recommended_category_profile.user_id = :userId', { userId })
+      .andWhere(
+        'recommended_category_community.category_id = community.category_id',
+      )
+      .andWhere('recommended_category_community.is_active = true')
+      .limit(1)
+      .getQuery();
+
+    const popularityExpression = `0.7 * LN(1 + (${memberCountSubquery})::numeric) + 0.3 * LN(1 + (${recentPostCountSubquery})::numeric)`;
+
+    const queryBuilder = this.communityRepository
+      .createQueryBuilder('community')
+      .leftJoinAndSelect('community.category', 'category')
+      .addSelect(memberCountSubquery, 'member_count')
+      .addSelect(recentPostCountSubquery, 'recent_post_count')
+      .addSelect(
+        `COALESCE(${matchedInterestSubquery}, 0)`,
+        'matched_interest_count',
+      )
+      .addSelect(
+        `CASE WHEN EXISTS (${categoryMatchSubquery}) THEN 1 ELSE 0 END`,
+        'category_match',
+      )
+      .addSelect(popularityExpression, 'recommendation_popularity_score')
+      .where('community.is_active = :isActive', { isActive: true })
+      .andWhere('community.is_private = :isPrivate', { isPrivate: false })
+      .andWhere(
+        `NOT EXISTS (
+          SELECT 1
+          FROM community_profile recommendation_membership
+          WHERE recommendation_membership.community_id = community.id
+            AND recommendation_membership.user_id = :userId
+        )`,
+        { userId },
+      );
+
+    if (stage === 'interests') {
+      queryBuilder
+        .andWhere(`${matchedInterestSubquery} > 0`)
+        .orderBy('matched_interest_count', 'DESC');
+    } else if (stage === 'categories') {
+      queryBuilder
+        .andWhere(`${matchedInterestSubquery} = 0`)
+        .andWhere(`EXISTS (${categoryMatchSubquery})`)
+        .orderBy('recommendation_popularity_score', 'DESC');
+    } else {
+      queryBuilder
+        .andWhere(`${matchedInterestSubquery} = 0`)
+        .andWhere(`NOT EXISTS (${categoryMatchSubquery})`)
+        .orderBy('recommendation_popularity_score', 'DESC');
+    }
+
+    return queryBuilder
+      .addOrderBy('community.created_at', 'DESC')
+      .addOrderBy('community.id', 'ASC');
+  }
+
+  private mapRecommendedCommunities(communities: Community[], raw: unknown[]) {
+    const rawRows = raw as Record<string, unknown>[];
+
+    return communities.map((community, index) => {
+      const row = rawRows[index] ?? {};
+      const memberCount = this.toNumber(row.member_count);
+      const recentPostCount = this.toNumber(row.recent_post_count);
+
+      return {
+        id: community.id,
+        name: community.name,
+        description: community.description,
+        slug: community.slug,
+        isPrivate: community.isPrivate,
+        imageUrl: community.imageUrl,
+        bannerUrl: community.bannerUrl,
+        createdAt: community.createdAt,
+        category: community.category,
+        memberCount,
+        recentPostCount,
+        popularityScore: this.calculatePopularityScore(
+          memberCount,
+          recentPostCount,
+        ),
+        matchedInterestCount: this.toNumber(row.matched_interest_count),
+      };
+    });
   }
 
   async findCommunityDetail(communityId: number, userId: string) {

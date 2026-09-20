@@ -138,6 +138,10 @@ export class UserCommunitiesService {
     return this.communityService.findUserCommunities(userId, query);
   }
 
+  findRecommendedCommunities(userId: string, query: GetCommunitiesQueryDto) {
+    return this.communityService.findRecommendedCommunities(userId, query);
+  }
+
   async leaveCommunity(
     userId: string,
     communityId: number,
