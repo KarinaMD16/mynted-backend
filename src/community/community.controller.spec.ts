@@ -51,4 +51,22 @@ describe('CommunityController', () => {
       'user-id',
     );
   });
+
+  it.each([
+    'update',
+    'deactivate',
+    'activate',
+    'makePublic',
+    'makePrivate',
+    'addModerator',
+    'removeModerator',
+  ])('protects administrative endpoint %s', (methodName) => {
+    const method = Object.getOwnPropertyDescriptor(
+      CommunityController.prototype,
+      methodName,
+    )?.value as (...args: never[]) => unknown;
+    const guards = Reflect.getMetadata(GUARDS_METADATA, method) as unknown[];
+
+    expect(guards).toEqual(expect.arrayContaining([JwtAuthGuard]));
+  });
 });

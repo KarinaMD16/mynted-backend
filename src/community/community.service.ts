@@ -2,6 +2,7 @@ import {
   BadGatewayException,
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   HttpException,
   Injectable,
   InternalServerErrorException,
@@ -371,6 +372,97 @@ export class CommunityService {
     };
   }
 
+  private async getCommunityMembership(
+    userId: string,
+    communityId: number,
+  ): Promise<CommunityProfile | null> {
+    return this.communityProfileRepository.findOne({
+      where: { userId, communityId },
+    });
+  }
+
+  private async assertCommunityRole(
+    userId: string,
+    communityId: number,
+    allowedRoles: CommunityProfileRole[],
+  ): Promise<CommunityProfile> {
+    const membership = await this.getCommunityMembership(userId, communityId);
+
+    if (!membership || !allowedRoles.includes(membership.role)) {
+      throw new ForbiddenException(
+        'No tienes permisos para administrar esta comunidad',
+      );
+    }
+
+    return membership;
+  }
+
+  async addModerator(
+    communityId: number,
+    profileId: number,
+    userId: string,
+  ): Promise<CommunityProfile> {
+    await this.ensureCommunityExists(communityId);
+    await this.assertCommunityRole(userId, communityId, [
+      CommunityProfileRole.OWNER,
+    ]);
+
+    const profile = await this.communityProfileRepository.findOne({
+      where: { communityProfileId: profileId, communityId },
+    });
+
+    if (!profile) {
+      throw new NotFoundException('El perfil no existe en esta comunidad');
+    }
+
+    if (profile.role === CommunityProfileRole.OWNER) {
+      throw new ConflictException(
+        'No se puede modificar el rol del propietario desde este endpoint',
+      );
+    }
+
+    if (profile.role === CommunityProfileRole.MODERATOR) {
+      throw new ConflictException(
+        'El perfil ya es moderador de esta comunidad',
+      );
+    }
+
+    profile.role = CommunityProfileRole.MODERATOR;
+    return this.communityProfileRepository.save(profile);
+  }
+
+  async removeModerator(
+    communityId: number,
+    profileId: number,
+    userId: string,
+  ): Promise<CommunityProfile> {
+    await this.ensureCommunityExists(communityId);
+    await this.assertCommunityRole(userId, communityId, [
+      CommunityProfileRole.OWNER,
+    ]);
+
+    const profile = await this.communityProfileRepository.findOne({
+      where: { communityProfileId: profileId, communityId },
+    });
+
+    if (!profile) {
+      throw new NotFoundException('El perfil no existe en esta comunidad');
+    }
+
+    if (profile.role === CommunityProfileRole.OWNER) {
+      throw new ConflictException(
+        'No se puede modificar el rol del propietario desde este endpoint',
+      );
+    }
+
+    if (profile.role === CommunityProfileRole.MEMBER) {
+      throw new ConflictException('No es moderador de esta comunidad');
+    }
+
+    profile.role = CommunityProfileRole.MEMBER;
+    return this.communityProfileRepository.save(profile);
+  }
+
   private countRecentPosts(communityId: number): Promise<number> {
     return this.postRepository
       .createQueryBuilder('post')
@@ -686,8 +778,13 @@ export class CommunityService {
   async createRule(
     communityId: number,
     dto: CreateCommunityRuleDto,
+    userId: string,
   ): Promise<CommunityRule[]> {
     await this.ensureCommunityExists(communityId);
+    await this.assertCommunityRole(userId, communityId, [
+      CommunityProfileRole.OWNER,
+      CommunityProfileRole.MODERATOR,
+    ]);
 
     if (new Set(dto.description).size !== dto.description.length) {
       throw new ConflictException(
@@ -725,8 +822,13 @@ export class CommunityService {
     communityId: number,
     ruleId: number,
     dto: UpdateCommunityRuleDto,
+    userId: string,
   ): Promise<CommunityRule> {
     await this.ensureCommunityExists(communityId);
+    await this.assertCommunityRole(userId, communityId, [
+      CommunityProfileRole.OWNER,
+      CommunityProfileRole.MODERATOR,
+    ]);
 
     const rule = await this.communityRuleRepository.findOne({
       where: { communityRuleId: ruleId, communityId },
@@ -758,8 +860,13 @@ export class CommunityService {
   async deleteRule(
     communityId: number,
     ruleId: number,
+    userId: string,
   ): Promise<{ message: string }> {
     await this.ensureCommunityExists(communityId);
+    await this.assertCommunityRole(userId, communityId, [
+      CommunityProfileRole.OWNER,
+      CommunityProfileRole.MODERATOR,
+    ]);
 
     const rule = await this.communityRuleRepository.findOne({
       where: { communityRuleId: ruleId, communityId },
@@ -784,6 +891,7 @@ export class CommunityService {
     dto: UpdateCommunityDto,
     image: Express.Multer.File | undefined,
     banner: Express.Multer.File | undefined,
+    userId: string,
   ): Promise<Community> {
     const community = await this.communityRepository.findOne({
       where: { id },
@@ -792,6 +900,11 @@ export class CommunityService {
     if (!community) {
       throw new NotFoundException('Comunidad no encontrada');
     }
+
+    await this.assertCommunityRole(userId, id, [
+      CommunityProfileRole.OWNER,
+      CommunityProfileRole.MODERATOR,
+    ]);
 
     this.validateUpdateCollections(dto);
 
@@ -923,7 +1036,7 @@ export class CommunityService {
     }
   }
 
-  async deactivate(id: number): Promise<{ message: string }> {
+  async deactivate(id: number, userId: string): Promise<{ message: string }> {
     const community = await this.communityRepository.findOne({
       where: { id },
     });
@@ -931,6 +1044,8 @@ export class CommunityService {
     if (!community) {
       throw new NotFoundException('Comunidad no encontrada');
     }
+
+    await this.assertCommunityRole(userId, id, [CommunityProfileRole.OWNER]);
 
     if (!community.isActive) {
       return { message: 'Comunidad desactivada exitosamente' };
@@ -948,7 +1063,7 @@ export class CommunityService {
     }
   }
 
-  async activate(id: number): Promise<{ message: string }> {
+  async activate(id: number, userId: string): Promise<{ message: string }> {
     const community = await this.communityRepository.findOne({
       where: { id },
     });
@@ -956,6 +1071,8 @@ export class CommunityService {
     if (!community) {
       throw new NotFoundException('Comunidad no encontrada');
     }
+
+    await this.assertCommunityRole(userId, id, [CommunityProfileRole.OWNER]);
 
     if (community.isActive) {
       return { message: 'Comunidad activada exitosamente' };
@@ -973,7 +1090,7 @@ export class CommunityService {
     }
   }
 
-  async makePublic(id: number): Promise<{ message: string }> {
+  async makePublic(id: number, userId: string): Promise<{ message: string }> {
     const community = await this.communityRepository.findOne({
       where: { id },
     });
@@ -981,6 +1098,8 @@ export class CommunityService {
     if (!community) {
       throw new NotFoundException('Comunidad no encontrada');
     }
+
+    await this.assertCommunityRole(userId, id, [CommunityProfileRole.OWNER]);
 
     if (!community.isPrivate) {
       return { message: 'Comunidad configurada como pública exitosamente' };
@@ -998,7 +1117,7 @@ export class CommunityService {
     }
   }
 
-  async makePrivate(id: number): Promise<{ message: string }> {
+  async makePrivate(id: number, userId: string): Promise<{ message: string }> {
     const community = await this.communityRepository.findOne({
       where: { id },
     });
@@ -1006,6 +1125,8 @@ export class CommunityService {
     if (!community) {
       throw new NotFoundException('Comunidad no encontrada');
     }
+
+    await this.assertCommunityRole(userId, id, [CommunityProfileRole.OWNER]);
 
     if (community.isPrivate) {
       return { message: 'Comunidad configurada como privada exitosamente' };
