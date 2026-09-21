@@ -52,6 +52,23 @@ describe('CommunityController', () => {
     );
   });
 
+  it('protects the community stats endpoint and passes the community id', async () => {
+    const communityService = {
+      getStats: jest.fn().mockResolvedValue({}),
+    };
+    const controller = new CommunityController(communityService as never);
+    const method = Object.getOwnPropertyDescriptor(
+      CommunityController.prototype,
+      'getCommunityStats',
+    )?.value as (...args: never[]) => unknown;
+    const guards = Reflect.getMetadata(GUARDS_METADATA, method) as unknown[];
+
+    await controller.getCommunityStats(7);
+
+    expect(guards).toEqual(expect.arrayContaining([JwtAuthGuard]));
+    expect(communityService.getStats).toHaveBeenCalledWith(7);
+  });
+
   it.each([
     'update',
     'deactivate',

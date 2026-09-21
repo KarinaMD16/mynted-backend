@@ -205,6 +205,14 @@ export class CommunityController {
     return this.communityService.findCommunityDetail(id, request.user.userId);
   }
 
+  @Get('communities/:id/stats')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Obtener estadísticas básicas de una comunidad' })
+  getCommunityStats(@Param('id', ParseIntPipe) id: number) {
+    return this.communityService.getStats(id);
+  }
+
   @Post('tags')
   @ApiOperation({ summary: 'Crear un tag reutilizable' })
   createTag(@Body() dto: CreateTagDto) {
