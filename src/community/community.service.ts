@@ -556,6 +556,23 @@ export class CommunityService {
     };
   }
 
+  async getStats(communityId: number) {
+    await this.ensureActiveCommunityExists(communityId);
+
+    const [memberCount, postCount, recentPostCount] = await Promise.all([
+      this.communityProfileRepository.count({ where: { communityId } }),
+      this.countAllPosts(communityId),
+      this.countRecentPosts(communityId),
+    ]);
+
+    return {
+      communityId,
+      memberCount,
+      postCount,
+      recentPostCount,
+    };
+  }
+
   private async getCommunityMembership(
     userId: string,
     communityId: number,
@@ -659,6 +676,20 @@ export class CommunityService {
         communityId,
       })
       .andWhere(`post.posted_at >= NOW() - INTERVAL '${RECENT_POST_DAYS} days'`)
+      .getCount();
+  }
+
+  private countAllPosts(communityId: number): Promise<number> {
+    return this.postRepository
+      .createQueryBuilder('post')
+      .innerJoin(
+        CommunityProfile,
+        'post_profile',
+        'post_profile.community_profile_id = post.community_profile_id',
+      )
+      .where('post_profile.community_id = :communityId', {
+        communityId,
+      })
       .getCount();
   }
 
@@ -1347,6 +1378,19 @@ export class CommunityService {
   private async ensureCommunityExists(communityId: number): Promise<void> {
     const community = await this.communityRepository.findOne({
       where: { id: communityId },
+      select: { id: true },
+    });
+
+    if (!community) {
+      throw new NotFoundException('Comunidad no encontrada');
+    }
+  }
+
+  private async ensureActiveCommunityExists(
+    communityId: number,
+  ): Promise<void> {
+    const community = await this.communityRepository.findOne({
+      where: { id: communityId, isActive: true },
       select: { id: true },
     });
 
