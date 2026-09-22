@@ -107,4 +107,20 @@ export class User {
     type: 'timestamp with time zone',
   })
   resetPasswordExpiresAt!: Date | null;
+
+  @Exclude()
+  @Column({ name: 'pending_email', nullable: true, type: 'varchar' })
+  pendingEmail!: string | null;
+
+  @Exclude()
+  @Column({ name: 'email_change_token_hash', nullable: true, type: 'text' })
+  emailChangeTokenHash!: string | null;
+
+  @Exclude()
+  @Column({
+    name: 'email_change_expires_at',
+    nullable: true,
+    type: 'timestamp with time zone',
+  })
+  emailChangeExpiresAt!: Date | null;
 }

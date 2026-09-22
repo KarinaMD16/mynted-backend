@@ -132,10 +132,13 @@ export class CommunityController {
     },
   })
   @UseInterceptors(
-    FileFieldsInterceptor([
-      { name: 'image', maxCount: 1 },
-      { name: 'banner', maxCount: 1 },
-    ]),
+    FileFieldsInterceptor(
+      [
+        { name: 'image', maxCount: 1 },
+        { name: 'banner', maxCount: 1 },
+      ],
+      { limits: { fileSize: 5 * 1024 * 1024 } },
+    ),
   )
   create(
     @Body(
@@ -214,6 +217,8 @@ export class CommunityController {
   }
 
   @Post('tags')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Crear un tag reutilizable' })
   createTag(@Body() dto: CreateTagDto) {
     return this.communityService.createTag(dto);
@@ -459,10 +464,13 @@ export class CommunityController {
     },
   })
   @UseInterceptors(
-    FileFieldsInterceptor([
-      { name: 'image', maxCount: 1 },
-      { name: 'banner', maxCount: 1 },
-    ]),
+    FileFieldsInterceptor(
+      [
+        { name: 'image', maxCount: 1 },
+        { name: 'banner', maxCount: 1 },
+      ],
+      { limits: { fileSize: 5 * 1024 * 1024 } },
+    ),
   )
   update(
     @Param('id', ParseIntPipe) id: number,

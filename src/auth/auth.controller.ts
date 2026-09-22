@@ -17,6 +17,8 @@ import { LoginDto } from './dto/login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
+import { RequestEmailChangeDto } from './dto/request-email-change.dto';
+import { ConfirmEmailChangeDto } from './dto/confirm-email-change.dto';
 import { GoogleLoginDto } from './dto/google-login.dto';
 import { FacebookLoginDto } from './dto/facebook-login.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
@@ -139,6 +141,35 @@ export class AuthController {
   ) {
     await this.authService.changePassword(req.user.userId, dto);
     return { message: 'Contraseña actualizada correctamente' };
+  }
+
+  @Post('request-email-change')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Solicitar cambio de email estando autenticado. Envía un enlace de confirmación al nuevo correo',
+  })
+  async requestEmailChange(
+    @Req() req: AuthenticatedRequest,
+    @Body() dto: RequestEmailChangeDto,
+  ) {
+    await this.authService.requestEmailChange(req.user.userId, dto);
+    return {
+      message: 'Se ha enviado un enlace de confirmación al nuevo correo',
+    };
+  }
+
+  @Post('confirm-email-change')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Confirmar el cambio de email con el token recibido en el nuevo correo',
+  })
+  async confirmEmailChange(@Body() dto: ConfirmEmailChangeDto) {
+    await this.authService.confirmEmailChange(dto);
+    return { message: 'Email actualizado correctamente' };
   }
 
   private setAuthCookies(res: Response, tokens: AuthTokens): void {

@@ -166,6 +166,41 @@ export class UsersService {
     });
   }
 
+  async findByEmailChangeTokenHash(tokenHash: string): Promise<User | null> {
+    return this.usersRepository.findOne({
+      where: { emailChangeTokenHash: tokenHash },
+    });
+  }
+
+  async setEmailChangeToken(
+    userId: string,
+    pendingEmail: string,
+    tokenHash: string,
+    expiresAt: Date,
+  ): Promise<void> {
+    await this.usersRepository.update(userId, {
+      pendingEmail,
+      emailChangeTokenHash: tokenHash,
+      emailChangeExpiresAt: expiresAt,
+    });
+  }
+
+  async completeEmailChange(userId: string, newEmail: string): Promise<void> {
+    try {
+      await this.usersRepository.update(userId, {
+        email: newEmail,
+        pendingEmail: null,
+        emailChangeTokenHash: null,
+        emailChangeExpiresAt: null,
+      });
+    } catch (error: unknown) {
+      if (this.isUniqueViolation(error)) {
+        throw new ConflictException('Ese email ya está en uso');
+      }
+      throw error;
+    }
+  }
+
   async updateOnboardingMeta(
     userId: string,
     meta: {
