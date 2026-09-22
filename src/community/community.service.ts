@@ -2,6 +2,7 @@ import {
   BadGatewayException,
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   HttpException,
   Injectable,
   InternalServerErrorException,
@@ -23,6 +24,7 @@ import { GetTagsQueryDto } from './dto/get-tags-query.dto';
 import { UpdateCommunityDto } from './dto/update-community.dto';
 import { UpdateCommunityRuleDto } from './dto/update-community-rule.dto';
 import { UpdateTagDto } from './dto/update-tag.dto';
+import { GetCommunitiesQueryDto } from './dto/get-communities-query.dto';
 import {
   CommunityProfile,
   CommunityProfileRole,
@@ -32,6 +34,8 @@ import { CommunityRule } from './entities/community-rule.entity';
 import { CommunityTag } from './entities/community-tag.entity';
 import { Community } from './entities/community.entity';
 import { Tag } from './entities/tag.entity';
+import { Post } from './entities/post.entity';
+import { UserTag } from '../user-tags/entities/user-tag.entity';
 import { UsersService } from '../users/users.service';
 
 interface PostgresError {
@@ -43,6 +47,10 @@ type CommunityRuleSummary = Pick<
   CommunityRule,
   'communityRuleId' | 'description'
 >;
+
+type RecommendationStage = 'interests' | 'categories' | 'popularity';
+
+const RECENT_POST_DAYS = 30;
 
 @Injectable()
 export class CommunityService {
@@ -58,6 +66,10 @@ export class CommunityService {
     private readonly dataSource: DataSource,
     private readonly cloudinaryService: CloudinaryService,
     private readonly usersService: UsersService,
+    @InjectRepository(CommunityProfile)
+    private readonly communityProfileRepository: Repository<CommunityProfile>,
+    @InjectRepository(Post)
+    private readonly postRepository: Repository<Post>,
   ) {}
 
   async create(
@@ -187,6 +199,636 @@ export class CommunityService {
     } catch (error: unknown) {
       this.handleDatabaseError(error);
     }
+  }
+
+  async findAllCommunities(query: GetCommunitiesQueryDto) {
+    const queryBuilder = this.buildCommunityListQuery(query);
+    const total = await queryBuilder.clone().getCount();
+    const { entities, raw } = await queryBuilder
+      .skip((query.page - 1) * query.limit)
+      .take(query.limit)
+      .getRawAndEntities();
+
+    return {
+      data: this.mapCommunityList(entities, raw),
+      pagination: this.buildPagination(query.page, query.limit, total),
+    };
+  }
+
+  async findUserCommunities(userId: string, query: GetCommunitiesQueryDto) {
+    const queryBuilder = this.buildCommunityListQuery(query, userId);
+    const total = await queryBuilder.clone().getCount();
+    const { entities, raw } = await queryBuilder
+      .skip((query.page - 1) * query.limit)
+      .take(query.limit)
+      .getRawAndEntities();
+
+    return {
+      data: this.mapCommunityList(entities, raw, true),
+      pagination: this.buildPagination(query.page, query.limit, total),
+    };
+  }
+
+  async findRecommendedCommunities(
+    userId: string,
+    query: GetCommunitiesQueryDto,
+  ) {
+    const stages: RecommendationStage[] = [
+      'interests',
+      'categories',
+      'popularity',
+    ];
+    const stageQueries = stages.map((stage) =>
+      this.buildRecommendationQuery(userId, stage),
+    );
+    const stageCounts = await Promise.all(
+      stageQueries.map((stageQuery) => stageQuery.clone().getCount()),
+    );
+    const total = stageCounts.reduce((sum, count) => sum + count, 0);
+    const offset = (query.page - 1) * query.limit;
+    let remainingOffset = offset;
+    let remainingLimit = query.limit;
+    const data: ReturnType<typeof this.mapRecommendedCommunities> = [];
+
+    for (let index = 0; index < stageQueries.length; index += 1) {
+      const stageCount = stageCounts[index];
+
+      if (remainingOffset >= stageCount) {
+        remainingOffset -= stageCount;
+        continue;
+      }
+
+      if (remainingLimit === 0) break;
+
+      const { entities, raw } = await stageQueries[index]
+        .skip(remainingOffset)
+        .take(remainingLimit)
+        .getRawAndEntities();
+      data.push(...this.mapRecommendedCommunities(entities, raw));
+      remainingLimit -= entities.length;
+      remainingOffset = 0;
+    }
+
+    return {
+      data,
+      pagination: this.buildPagination(query.page, query.limit, total),
+    };
+  }
+
+  private buildRecommendationQuery(userId: string, stage: RecommendationStage) {
+    const memberCountSubquery = this.communityRepository
+      .createQueryBuilder('recommended_member_count')
+      .subQuery()
+      .select('COUNT(*)')
+      .from(CommunityProfile, 'recommended_member_count_profile')
+      .where('recommended_member_count_profile.community_id = community.id')
+      .getQuery();
+
+    const recentPostCountSubquery = this.communityRepository
+      .createQueryBuilder('recommended_recent_posts')
+      .subQuery()
+      .select('COUNT(*)')
+      .from(Post, 'recommended_recent_post')
+      .innerJoin(
+        CommunityProfile,
+        'recommended_recent_post_profile',
+        'recommended_recent_post_profile.community_profile_id = recommended_recent_post.community_profile_id',
+      )
+      .where('recommended_recent_post_profile.community_id = community.id')
+      .andWhere(
+        `recommended_recent_post.posted_at >= NOW() - INTERVAL '${RECENT_POST_DAYS} days'`,
+      )
+      .getQuery();
+
+    const matchedInterestSubquery = this.communityRepository
+      .createQueryBuilder('recommended_interest_matches')
+      .subQuery()
+      .select('COUNT(DISTINCT recommended_community_tag.tag_id)')
+      .from(CommunityTag, 'recommended_community_tag')
+      .innerJoin(
+        UserTag,
+        'recommended_user_tag',
+        'recommended_user_tag.tag_id = recommended_community_tag.tag_id',
+      )
+      .where('recommended_community_tag.community_id = community.id')
+      .andWhere('recommended_user_tag.user_id = :userId', { userId })
+      .getQuery();
+
+    const categoryMatchSubquery = this.communityRepository
+      .createQueryBuilder('recommended_category_match')
+      .subQuery()
+      .select('1')
+      .from(CommunityProfile, 'recommended_category_profile')
+      .innerJoin(
+        Community,
+        'recommended_category_community',
+        'recommended_category_community.id = recommended_category_profile.community_id',
+      )
+      .where('recommended_category_profile.user_id = :userId', { userId })
+      .andWhere(
+        'recommended_category_community.category_id = community.category_id',
+      )
+      .andWhere('recommended_category_community.is_active = true')
+      .limit(1)
+      .getQuery();
+
+    const popularityExpression = `0.7 * LN(1 + (${memberCountSubquery})::numeric) + 0.3 * LN(1 + (${recentPostCountSubquery})::numeric)`;
+
+    const queryBuilder = this.communityRepository
+      .createQueryBuilder('community')
+      .leftJoinAndSelect('community.category', 'category')
+      .addSelect(memberCountSubquery, 'member_count')
+      .addSelect(recentPostCountSubquery, 'recent_post_count')
+      .addSelect(
+        `COALESCE(${matchedInterestSubquery}, 0)`,
+        'matched_interest_count',
+      )
+      .addSelect(
+        `CASE WHEN EXISTS (${categoryMatchSubquery}) THEN 1 ELSE 0 END`,
+        'category_match',
+      )
+      .addSelect(popularityExpression, 'recommendation_popularity_score')
+      .where('community.is_active = :isActive', { isActive: true })
+      .andWhere('community.is_private = :isPrivate', { isPrivate: false })
+      .andWhere(
+        `NOT EXISTS (
+          SELECT 1
+          FROM community_profile recommendation_membership
+          WHERE recommendation_membership.community_id = community.id
+            AND recommendation_membership.user_id = :userId
+        )`,
+        { userId },
+      );
+
+    if (stage === 'interests') {
+      queryBuilder
+        .andWhere(`${matchedInterestSubquery} > 0`)
+        .orderBy('matched_interest_count', 'DESC');
+    } else if (stage === 'categories') {
+      queryBuilder
+        .andWhere(`${matchedInterestSubquery} = 0`)
+        .andWhere(`EXISTS (${categoryMatchSubquery})`)
+        .orderBy('recommendation_popularity_score', 'DESC');
+    } else {
+      queryBuilder
+        .andWhere(`${matchedInterestSubquery} = 0`)
+        .andWhere(`NOT EXISTS (${categoryMatchSubquery})`)
+        .orderBy('recommendation_popularity_score', 'DESC');
+    }
+
+    return queryBuilder
+      .addOrderBy('community.created_at', 'DESC')
+      .addOrderBy('community.id', 'ASC');
+  }
+
+  private mapRecommendedCommunities(communities: Community[], raw: unknown[]) {
+    const rawRows = raw as Record<string, unknown>[];
+
+    return communities.map((community, index) => {
+      const row = rawRows[index] ?? {};
+      const memberCount = this.toNumber(row.member_count);
+      const recentPostCount = this.toNumber(row.recent_post_count);
+
+      return {
+        id: community.id,
+        name: community.name,
+        description: community.description,
+        slug: community.slug,
+        isPrivate: community.isPrivate,
+        imageUrl: community.imageUrl,
+        bannerUrl: community.bannerUrl,
+        createdAt: community.createdAt,
+        category: community.category,
+        memberCount,
+        recentPostCount,
+        popularityScore: this.calculatePopularityScore(
+          memberCount,
+          recentPostCount,
+        ),
+        matchedInterestCount: this.toNumber(row.matched_interest_count),
+      };
+    });
+  }
+
+  async findCommunityDetail(communityId: number, userId: string) {
+    const community = await this.communityRepository.findOne({
+      where: { id: communityId, isActive: true },
+      relations: {
+        category: true,
+        communityTags: { tag: true },
+        rules: true,
+      },
+    });
+
+    if (!community) {
+      throw new NotFoundException('Comunidad no encontrada');
+    }
+
+    const [memberCount, recentPostCount, membership, forumPosts] =
+      await Promise.all([
+        this.communityProfileRepository.count({ where: { communityId } }),
+        this.countRecentPosts(communityId),
+        this.communityProfileRepository.findOne({
+          where: { userId, communityId },
+          select: { role: true },
+        }),
+        this.findRecentForumPosts(communityId),
+      ]);
+
+    return {
+      id: community.id,
+      name: community.name,
+      description: community.description,
+      slug: community.slug,
+      isPrivate: community.isPrivate,
+      imageUrl: community.imageUrl,
+      bannerUrl: community.bannerUrl,
+      createdAt: community.createdAt,
+      category: community.category,
+      tags: community.communityTags.map(({ tag }) => ({
+        tagId: tag.tagId,
+        name: tag.name,
+      })),
+      rules: community.rules
+        .sort((left, right) => left.communityRuleId - right.communityRuleId)
+        .map(({ communityRuleId, description }) => ({
+          communityRuleId,
+          description,
+        })),
+      memberCount,
+      recentPostCount,
+      popularityScore: this.calculatePopularityScore(
+        memberCount,
+        recentPostCount,
+      ),
+      isMember: membership !== null,
+      membershipRole: membership?.role ?? null,
+      forumPosts: forumPosts.map((post) => ({
+        id: post.id,
+        title: post.title,
+        body: post.body,
+        postedAt: post.postedAt,
+        upVotes: post.upVotes,
+        downVotes: post.downVotes,
+        timesSaved: post.timesSaved,
+        author: post.communityProfile
+          ? {
+              communityProfileId: post.communityProfile.communityProfileId,
+              displayName: post.communityProfile.displayName,
+              role: post.communityProfile.role,
+            }
+          : null,
+      })),
+    };
+  }
+
+  async findCommunityDetailBySlug(slug: string, userId: string) {
+    const community = await this.communityRepository.findOne({
+      where: { slug, isActive: true },
+      relations: {
+        category: true,
+        communityTags: { tag: true },
+        rules: true,
+      },
+    });
+
+    if (!community) {
+      throw new NotFoundException('Comunidad no encontrada');
+    }
+
+    const [memberCount, recentPostCount, membership, forumPosts] =
+      await Promise.all([
+        this.communityProfileRepository.count({
+          where: { communityId: community.id },
+        }),
+        this.countRecentPosts(community.id),
+        this.communityProfileRepository.findOne({
+          where: { userId, communityId: community.id },
+          select: { role: true },
+        }),
+        this.findRecentForumPosts(community.id),
+      ]);
+
+    return {
+      id: community.id,
+      name: community.name,
+      description: community.description,
+      slug: community.slug,
+      isPrivate: community.isPrivate,
+      imageUrl: community.imageUrl,
+      bannerUrl: community.bannerUrl,
+      createdAt: community.createdAt,
+      category: community.category,
+      tags: community.communityTags.map(({ tag }) => ({
+        tagId: tag.tagId,
+        name: tag.name,
+      })),
+      rules: community.rules
+        .sort((left, right) => left.communityRuleId - right.communityRuleId)
+        .map(({ communityRuleId, description }) => ({
+          communityRuleId,
+          description,
+        })),
+      memberCount,
+      recentPostCount,
+      popularityScore: this.calculatePopularityScore(
+        memberCount,
+        recentPostCount,
+      ),
+      isMember: membership !== null,
+      membershipRole: membership?.role ?? null,
+      forumPosts: forumPosts.map((post) => ({
+        id: post.id,
+        title: post.title,
+        body: post.body,
+        postedAt: post.postedAt,
+        upVotes: post.upVotes,
+        downVotes: post.downVotes,
+        timesSaved: post.timesSaved,
+        author: post.communityProfile
+          ? {
+              communityProfileId: post.communityProfile.communityProfileId,
+              displayName: post.communityProfile.displayName,
+              role: post.communityProfile.role,
+            }
+          : null,
+      })),
+    };
+  }
+
+  async getStats(communityId: number) {
+    await this.ensureActiveCommunityExists(communityId);
+
+    const [memberCount, postCount, recentPostCount] = await Promise.all([
+      this.communityProfileRepository.count({ where: { communityId } }),
+      this.countAllPosts(communityId),
+      this.countRecentPosts(communityId),
+    ]);
+
+    return {
+      communityId,
+      memberCount,
+      postCount,
+      recentPostCount,
+    };
+  }
+
+  private async getCommunityMembership(
+    userId: string,
+    communityId: number,
+  ): Promise<CommunityProfile | null> {
+    return this.communityProfileRepository.findOne({
+      where: { userId, communityId },
+    });
+  }
+
+  private async assertCommunityRole(
+    userId: string,
+    communityId: number,
+    allowedRoles: CommunityProfileRole[],
+  ): Promise<CommunityProfile> {
+    const membership = await this.getCommunityMembership(userId, communityId);
+
+    if (!membership || !allowedRoles.includes(membership.role)) {
+      throw new ForbiddenException(
+        'No tienes permisos para administrar esta comunidad',
+      );
+    }
+
+    return membership;
+  }
+
+  async addModerator(
+    communityId: number,
+    profileId: number,
+    userId: string,
+  ): Promise<CommunityProfile> {
+    await this.ensureCommunityExists(communityId);
+    await this.assertCommunityRole(userId, communityId, [
+      CommunityProfileRole.OWNER,
+    ]);
+
+    const profile = await this.communityProfileRepository.findOne({
+      where: { communityProfileId: profileId, communityId },
+    });
+
+    if (!profile) {
+      throw new NotFoundException('El perfil no existe en esta comunidad');
+    }
+
+    if (profile.role === CommunityProfileRole.OWNER) {
+      throw new ConflictException(
+        'No se puede modificar el rol del propietario desde este endpoint',
+      );
+    }
+
+    if (profile.role === CommunityProfileRole.MODERATOR) {
+      throw new ConflictException(
+        'El perfil ya es moderador de esta comunidad',
+      );
+    }
+
+    profile.role = CommunityProfileRole.MODERATOR;
+    return this.communityProfileRepository.save(profile);
+  }
+
+  async removeModerator(
+    communityId: number,
+    profileId: number,
+    userId: string,
+  ): Promise<CommunityProfile> {
+    await this.ensureCommunityExists(communityId);
+    await this.assertCommunityRole(userId, communityId, [
+      CommunityProfileRole.OWNER,
+    ]);
+
+    const profile = await this.communityProfileRepository.findOne({
+      where: { communityProfileId: profileId, communityId },
+    });
+
+    if (!profile) {
+      throw new NotFoundException('El perfil no existe en esta comunidad');
+    }
+
+    if (profile.role === CommunityProfileRole.OWNER) {
+      throw new ConflictException(
+        'No se puede modificar el rol del propietario desde este endpoint',
+      );
+    }
+
+    if (profile.role === CommunityProfileRole.MEMBER) {
+      throw new ConflictException('No es moderador de esta comunidad');
+    }
+
+    profile.role = CommunityProfileRole.MEMBER;
+    return this.communityProfileRepository.save(profile);
+  }
+
+  private countRecentPosts(communityId: number): Promise<number> {
+    return this.postRepository
+      .createQueryBuilder('post')
+      .innerJoin(
+        CommunityProfile,
+        'recent_post_profile',
+        'recent_post_profile.community_profile_id = post.community_profile_id',
+      )
+      .where('recent_post_profile.community_id = :communityId', {
+        communityId,
+      })
+      .andWhere(`post.posted_at >= NOW() - INTERVAL '${RECENT_POST_DAYS} days'`)
+      .getCount();
+  }
+
+  private countAllPosts(communityId: number): Promise<number> {
+    return this.postRepository
+      .createQueryBuilder('post')
+      .innerJoin(
+        CommunityProfile,
+        'post_profile',
+        'post_profile.community_profile_id = post.community_profile_id',
+      )
+      .where('post_profile.community_id = :communityId', {
+        communityId,
+      })
+      .getCount();
+  }
+
+  private findRecentForumPosts(communityId: number): Promise<Post[]> {
+    return this.postRepository
+      .createQueryBuilder('post')
+      .innerJoinAndSelect('post.communityProfile', 'communityProfile')
+      .where('communityProfile.community_id = :communityId', {
+        communityId,
+      })
+      .orderBy('post.posted_at', 'DESC')
+      .take(10)
+      .getMany();
+  }
+
+  private buildCommunityListQuery(
+    query: GetCommunitiesQueryDto,
+    userId?: string,
+  ) {
+    const memberCountSubquery = this.communityRepository
+      .createQueryBuilder('member_count_profile')
+      .subQuery()
+      .select('COUNT(*)')
+      .from(CommunityProfile, 'member_count_profile')
+      .where('member_count_profile.community_id = community.id')
+      .getQuery();
+
+    const recentPostCountSubquery = this.communityRepository
+      .createQueryBuilder('recent_post')
+      .subQuery()
+      .select('COUNT(*)')
+      .from(Post, 'recent_post')
+      .innerJoin(
+        CommunityProfile,
+        'recent_post_profile',
+        'recent_post_profile.community_profile_id = recent_post.community_profile_id',
+      )
+      .where('recent_post_profile.community_id = community.id')
+      .andWhere(
+        `recent_post.posted_at >= NOW() - INTERVAL '${RECENT_POST_DAYS} days'`,
+      )
+      .getQuery();
+
+    const queryBuilder = this.communityRepository
+      .createQueryBuilder('community')
+      .leftJoinAndSelect('community.category', 'category')
+      .addSelect(memberCountSubquery, 'member_count')
+      .addSelect(recentPostCountSubquery, 'recent_post_count')
+      .where('community.is_active = :isActive', { isActive: true });
+
+    if (userId) {
+      queryBuilder.innerJoin(
+        'community.communityProfiles',
+        'membership',
+        'membership.user_id = :userId',
+        { userId },
+      );
+      queryBuilder.addSelect('membership.role', 'membership_role');
+    }
+
+    if (query.search) {
+      queryBuilder.andWhere('community.name ILIKE :search', {
+        search: `%${query.search}%`,
+      });
+    }
+
+    if (query.categoryId !== undefined) {
+      queryBuilder.andWhere('community.category_id = :categoryId', {
+        categoryId: query.categoryId,
+      });
+    }
+
+    if (query.sort === 'popularity') {
+      queryBuilder
+        .orderBy('member_count', 'DESC')
+        .addOrderBy('recent_post_count', 'DESC')
+        .addOrderBy('community.created_at', 'DESC')
+        .addOrderBy('community.id', 'ASC');
+    } else {
+      queryBuilder
+        .orderBy('community.created_at', 'DESC')
+        .addOrderBy('community.id', 'ASC');
+    }
+
+    return queryBuilder;
+  }
+
+  private mapCommunityList(
+    communities: Community[],
+    rawRows: Record<string, unknown>[],
+    includeMembershipRole = false,
+  ) {
+    return communities.map((community, index) => {
+      const raw = rawRows[index] ?? {};
+      const memberCount = this.toNumber(raw.member_count);
+      const recentPostCount = this.toNumber(raw.recent_post_count);
+
+      return {
+        id: community.id,
+        name: community.name,
+        description: community.description,
+        slug: community.slug,
+        isPrivate: community.isPrivate,
+        imageUrl: community.imageUrl,
+        bannerUrl: community.bannerUrl,
+        createdAt: community.createdAt,
+        category: community.category,
+        memberCount,
+        recentPostCount,
+        popularityScore: this.calculatePopularityScore(
+          memberCount,
+          recentPostCount,
+        ),
+        ...(includeMembershipRole
+          ? { membershipRole: raw.membership_role }
+          : {}),
+      };
+    });
+  }
+
+  private calculatePopularityScore(
+    memberCount: number,
+    recentPostCount: number,
+  ): number {
+    return 0.7 * Math.log1p(memberCount) + 0.3 * Math.log1p(recentPostCount);
+  }
+
+  private toNumber(value: unknown): number {
+    const parsed = Number(value ?? 0);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  private buildPagination(page: number, limit: number, total: number) {
+    return {
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+    };
   }
 
   findAllCategories(): Promise<Category[]> {
@@ -351,8 +993,13 @@ export class CommunityService {
   async createRule(
     communityId: number,
     dto: CreateCommunityRuleDto,
+    userId: string,
   ): Promise<CommunityRule[]> {
     await this.ensureCommunityExists(communityId);
+    await this.assertCommunityRole(userId, communityId, [
+      CommunityProfileRole.OWNER,
+      CommunityProfileRole.MODERATOR,
+    ]);
 
     if (new Set(dto.description).size !== dto.description.length) {
       throw new ConflictException(
@@ -390,8 +1037,13 @@ export class CommunityService {
     communityId: number,
     ruleId: number,
     dto: UpdateCommunityRuleDto,
+    userId: string,
   ): Promise<CommunityRule> {
     await this.ensureCommunityExists(communityId);
+    await this.assertCommunityRole(userId, communityId, [
+      CommunityProfileRole.OWNER,
+      CommunityProfileRole.MODERATOR,
+    ]);
 
     const rule = await this.communityRuleRepository.findOne({
       where: { communityRuleId: ruleId, communityId },
@@ -423,8 +1075,13 @@ export class CommunityService {
   async deleteRule(
     communityId: number,
     ruleId: number,
+    userId: string,
   ): Promise<{ message: string }> {
     await this.ensureCommunityExists(communityId);
+    await this.assertCommunityRole(userId, communityId, [
+      CommunityProfileRole.OWNER,
+      CommunityProfileRole.MODERATOR,
+    ]);
 
     const rule = await this.communityRuleRepository.findOne({
       where: { communityRuleId: ruleId, communityId },
@@ -449,6 +1106,7 @@ export class CommunityService {
     dto: UpdateCommunityDto,
     image: Express.Multer.File | undefined,
     banner: Express.Multer.File | undefined,
+    userId: string,
   ): Promise<Community> {
     const community = await this.communityRepository.findOne({
       where: { id },
@@ -457,6 +1115,11 @@ export class CommunityService {
     if (!community) {
       throw new NotFoundException('Comunidad no encontrada');
     }
+
+    await this.assertCommunityRole(userId, id, [
+      CommunityProfileRole.OWNER,
+      CommunityProfileRole.MODERATOR,
+    ]);
 
     this.validateUpdateCollections(dto);
 
@@ -588,7 +1251,7 @@ export class CommunityService {
     }
   }
 
-  async deactivate(id: number): Promise<{ message: string }> {
+  async deactivate(id: number, userId: string): Promise<{ message: string }> {
     const community = await this.communityRepository.findOne({
       where: { id },
     });
@@ -596,6 +1259,8 @@ export class CommunityService {
     if (!community) {
       throw new NotFoundException('Comunidad no encontrada');
     }
+
+    await this.assertCommunityRole(userId, id, [CommunityProfileRole.OWNER]);
 
     if (!community.isActive) {
       return { message: 'Comunidad desactivada exitosamente' };
@@ -613,7 +1278,7 @@ export class CommunityService {
     }
   }
 
-  async activate(id: number): Promise<{ message: string }> {
+  async activate(id: number, userId: string): Promise<{ message: string }> {
     const community = await this.communityRepository.findOne({
       where: { id },
     });
@@ -621,6 +1286,8 @@ export class CommunityService {
     if (!community) {
       throw new NotFoundException('Comunidad no encontrada');
     }
+
+    await this.assertCommunityRole(userId, id, [CommunityProfileRole.OWNER]);
 
     if (community.isActive) {
       return { message: 'Comunidad activada exitosamente' };
@@ -638,7 +1305,7 @@ export class CommunityService {
     }
   }
 
-  async makePublic(id: number): Promise<{ message: string }> {
+  async makePublic(id: number, userId: string): Promise<{ message: string }> {
     const community = await this.communityRepository.findOne({
       where: { id },
     });
@@ -646,6 +1313,8 @@ export class CommunityService {
     if (!community) {
       throw new NotFoundException('Comunidad no encontrada');
     }
+
+    await this.assertCommunityRole(userId, id, [CommunityProfileRole.OWNER]);
 
     if (!community.isPrivate) {
       return { message: 'Comunidad configurada como pública exitosamente' };
@@ -663,7 +1332,7 @@ export class CommunityService {
     }
   }
 
-  async makePrivate(id: number): Promise<{ message: string }> {
+  async makePrivate(id: number, userId: string): Promise<{ message: string }> {
     const community = await this.communityRepository.findOne({
       where: { id },
     });
@@ -671,6 +1340,8 @@ export class CommunityService {
     if (!community) {
       throw new NotFoundException('Comunidad no encontrada');
     }
+
+    await this.assertCommunityRole(userId, id, [CommunityProfileRole.OWNER]);
 
     if (community.isPrivate) {
       return { message: 'Comunidad configurada como privada exitosamente' };
@@ -707,6 +1378,19 @@ export class CommunityService {
   private async ensureCommunityExists(communityId: number): Promise<void> {
     const community = await this.communityRepository.findOne({
       where: { id: communityId },
+      select: { id: true },
+    });
+
+    if (!community) {
+      throw new NotFoundException('Comunidad no encontrada');
+    }
+  }
+
+  private async ensureActiveCommunityExists(
+    communityId: number,
+  ): Promise<void> {
+    const community = await this.communityRepository.findOne({
+      where: { id: communityId, isActive: true },
       select: { id: true },
     });
 
