@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -18,9 +19,12 @@ import { LoginDto } from './dto/login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
+import { RequestEmailChangeDto } from './dto/request-email-change.dto';
+import { ConfirmEmailChangeDto } from './dto/confirm-email-change.dto';
 
 const RESET_TOKEN_BYTES = 32;
 const DEFAULT_RESET_TOKEN_EXPIRES_IN_MINUTES = 60;
+const DEFAULT_EMAIL_CHANGE_TOKEN_EXPIRES_IN_MINUTES = 60;
 const DEFAULT_REFRESH_EXPIRES_IN_SECONDS = 60 * 60 * 24 * 7; // 7 días
 
 @Injectable()
@@ -35,7 +39,7 @@ export class AuthService {
   ) {}
 
   async login(dto: LoginDto) {
-    const user = await this.usersService.findByEmailOrUsername(dto.identifier);
+    const user = await this.usersService.findByEmailOrUsername(dto.email);
     if (!user) {
       throw new UnauthorizedException('Credenciales inválidas');
     }
@@ -227,6 +231,82 @@ export class AuthService {
 
     const passwordHash = await bcrypt.hash(dto.newPassword, 10);
     await this.usersService.updatePassword(user.id, passwordHash);
+  }
+
+  /**
+   * Paso 1 del cambio de email: el usuario ya está autenticado. Validamos el
+   * nuevo email y, si está libre, mandamos un token de confirmación al NUEVO
+   * correo (no al actual) para probar que el usuario tiene acceso a él. El
+   * email en la cuenta no cambia todavía.
+   */
+  async requestEmailChange(
+    userId: string,
+    dto: RequestEmailChangeDto,
+  ): Promise<void> {
+    const user = await this.usersService.findById(userId);
+    const newEmail = dto.newEmail.trim().toLowerCase();
+
+    if (newEmail === user.email.toLowerCase()) {
+      throw new BadRequestException(
+        'El nuevo email debe ser diferente al actual',
+      );
+    }
+
+    const existing = await this.usersService.findByEmail(newEmail);
+    if (existing) {
+      throw new ConflictException('Ese email ya está en uso');
+    }
+
+    const rawToken = crypto.randomBytes(RESET_TOKEN_BYTES).toString('hex');
+    const tokenHash = this.hashToken(rawToken);
+
+    const expiresInMinutes = parseInt(
+      this.configService.get<string>('EMAIL_CHANGE_TOKEN_EXPIRES_IN_MINUTES') ??
+        String(DEFAULT_EMAIL_CHANGE_TOKEN_EXPIRES_IN_MINUTES),
+      10,
+    );
+    const expiresAt = new Date(Date.now() + expiresInMinutes * 60 * 1000);
+
+    await this.usersService.setEmailChangeToken(
+      user.id,
+      newEmail,
+      tokenHash,
+      expiresAt,
+    );
+
+    const frontendUrl =
+      this.configService.get<string>('FRONTEND_URL') ?? 'http://localhost:5173';
+    const confirmLink = `${frontendUrl}/confirm-email-change?token=${rawToken}`;
+
+    await this.mailService.sendEmailChangeConfirmation(newEmail, confirmLink);
+  }
+
+  /**
+   * Paso 2: el link llega al NUEVO correo, así que el token por sí solo
+   * autentica la acción (igual que reset-password). Revalidamos que el email
+   * siga libre por si alguien lo tomó mientras el link estaba pendiente.
+   */
+  async confirmEmailChange(dto: ConfirmEmailChangeDto): Promise<void> {
+    const tokenHash = this.hashToken(dto.token);
+    const user = await this.usersService.findByEmailChangeTokenHash(tokenHash);
+
+    if (
+      !user ||
+      !user.pendingEmail ||
+      !user.emailChangeExpiresAt ||
+      user.emailChangeExpiresAt.getTime() < Date.now()
+    ) {
+      throw new BadRequestException(
+        'El enlace de confirmación es inválido o ha expirado',
+      );
+    }
+
+    const existing = await this.usersService.findByEmail(user.pendingEmail);
+    if (existing && existing.id !== user.id) {
+      throw new ConflictException('Ese email ya está en uso');
+    }
+
+    await this.usersService.completeEmailChange(user.id, user.pendingEmail);
   }
 
   private hashToken(token: string): string {

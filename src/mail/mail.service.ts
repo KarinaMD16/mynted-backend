@@ -55,4 +55,31 @@ export class MailService {
       html,
     });
   }
+
+  async sendEmailChangeConfirmation(
+    to: string,
+    confirmLink: string,
+  ): Promise<void> {
+    const subject = 'Confirma tu nuevo correo de Mynted';
+    const html = `
+      <p>Recibimos una solicitud para cambiar el correo de tu cuenta de Mynted a esta dirección.</p>
+      <p><a href="${confirmLink}">Haz clic aquí para confirmar este correo</a></p>
+      <p>Si no solicitaste esto, puedes ignorar este correo y tu correo actual seguirá sin cambios.</p>
+      <p>Este enlace expira en un tiempo limitado por seguridad.</p>
+    `;
+
+    if (!this.transporter) {
+      this.logger.log(
+        `[DEV] Enlace de confirmación de cambio de correo para ${to}: ${confirmLink}`,
+      );
+      return;
+    }
+
+    await this.transporter.sendMail({
+      from: this.from,
+      to,
+      subject,
+      html,
+    });
+  }
 }
