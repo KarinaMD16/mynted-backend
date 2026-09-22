@@ -6,6 +6,7 @@ import {
   CommunityProfile,
   CommunityProfileRole,
 } from '../community/entities/community-profile.entity';
+import { UserTag } from '../user-tags/entities/user-tag.entity';
 import { UserCommunitiesService } from './user-communities.service';
 import { CommunityService } from '../community/community.service';
 
@@ -23,6 +24,9 @@ describe('UserCommunitiesService', () => {
     save: jest.fn((value) => Promise.resolve(value)),
     remove: jest.fn().mockResolvedValue(undefined),
   };
+  const userTagRepository = {
+    find: jest.fn(),
+  };
   const usersService = {
     findById: jest.fn(),
   };
@@ -33,6 +37,7 @@ describe('UserCommunitiesService', () => {
   const service = new UserCommunitiesService(
     communityRepository as unknown as Repository<Community>,
     communityProfileRepository as unknown as Repository<CommunityProfile>,
+    userTagRepository as unknown as Repository<UserTag>,
     usersService as unknown as UsersService,
     communityService as unknown as CommunityService,
   );

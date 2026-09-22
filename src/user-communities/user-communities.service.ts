@@ -6,17 +6,24 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, QueryFailedError, Repository } from 'typeorm';
 import { Community } from '../community/entities/community.entity';
+import { CommunityTag } from '../community/entities/community-tag.entity';
 import {
   CommunityProfile,
   CommunityProfileRole,
 } from '../community/entities/community-profile.entity';
+import { Post } from '../community/entities/post.entity';
+import { UserTag } from '../user-tags/entities/user-tag.entity';
 import { UsersService } from '../users/users.service';
 import { CommunityService } from '../community/community.service';
 import { GetCommunitiesQueryDto } from '../community/dto/get-communities-query.dto';
+import { GetOnboardingRecommendedCommunitiesQueryDto } from './dto/get-onboarding-recommended-communities-query.dto';
 
 interface PostgresError {
   code?: string;
 }
+
+// Mismo criterio de "reciente" que usa CommunityService para popularidad.
+const RECENT_POST_DAYS = 30;
 
 @Injectable()
 export class UserCommunitiesService {
@@ -25,6 +32,8 @@ export class UserCommunitiesService {
     private readonly communityRepository: Repository<Community>,
     @InjectRepository(CommunityProfile)
     private readonly communityProfileRepository: Repository<CommunityProfile>,
+    @InjectRepository(UserTag)
+    private readonly userTagRepository: Repository<UserTag>,
     private readonly usersService: UsersService,
     private readonly communityService: CommunityService,
   ) {}
@@ -140,6 +149,105 @@ export class UserCommunitiesService {
 
   findRecommendedCommunities(userId: string, query: GetCommunitiesQueryDto) {
     return this.communityService.findRecommendedCommunities(userId, query);
+  }
+
+  /**
+   * Alimenta el paso de onboarding previo a POST /users/me/communities:
+   * coincidencia simple por tags (sin scoring de popularidad ni fallback a
+   * categoría, a diferencia de findRecommendedCommunities). El desempate usa
+   * el mismo criterio de popularidad (memberCount, recentPostCount) que ya
+   * usa sort=popularity en el listado general de comunidades.
+   */
+  async findOnboardingRecommendedCommunities(
+    userId: string,
+    query: GetOnboardingRecommendedCommunitiesQueryDto,
+  ): Promise<
+    Pick<
+      Community,
+      | 'id'
+      | 'name'
+      | 'slug'
+      | 'description'
+      | 'imageUrl'
+      | 'bannerUrl'
+      | 'isPrivate'
+    >[]
+  > {
+    const userTags = await this.userTagRepository.find({
+      where: { userId },
+      select: { tagId: true },
+    });
+    const tagIds = userTags.map((userTag) => userTag.tagId);
+
+    if (tagIds.length === 0) {
+      return [];
+    }
+
+    const matchedTagCountSubquery = this.communityRepository
+      .createQueryBuilder('onboarding_tag_match')
+      .subQuery()
+      .select('COUNT(DISTINCT onboarding_community_tag.tag_id)')
+      .from(CommunityTag, 'onboarding_community_tag')
+      .where('onboarding_community_tag.community_id = community.id')
+      .andWhere('onboarding_community_tag.tag_id IN (:...tagIds)')
+      .getQuery();
+
+    const memberCountSubquery = this.communityRepository
+      .createQueryBuilder('onboarding_member_count')
+      .subQuery()
+      .select('COUNT(*)')
+      .from(CommunityProfile, 'onboarding_member_count_profile')
+      .where('onboarding_member_count_profile.community_id = community.id')
+      .getQuery();
+
+    const recentPostCountSubquery = this.communityRepository
+      .createQueryBuilder('onboarding_recent_posts')
+      .subQuery()
+      .select('COUNT(*)')
+      .from(Post, 'onboarding_recent_post')
+      .innerJoin(
+        CommunityProfile,
+        'onboarding_recent_post_profile',
+        'onboarding_recent_post_profile.community_profile_id = onboarding_recent_post.community_profile_id',
+      )
+      .where('onboarding_recent_post_profile.community_id = community.id')
+      .andWhere(
+        `onboarding_recent_post.posted_at >= NOW() - INTERVAL '${RECENT_POST_DAYS} days'`,
+      )
+      .getQuery();
+
+    const communities = await this.communityRepository
+      .createQueryBuilder('community')
+      .addSelect(matchedTagCountSubquery, 'matched_tag_count')
+      .addSelect(memberCountSubquery, 'member_count')
+      .addSelect(recentPostCountSubquery, 'recent_post_count')
+      .where('community.is_active = :isActive', { isActive: true })
+      .andWhere(`(${matchedTagCountSubquery}) > 0`)
+      .andWhere(
+        `NOT EXISTS (
+          SELECT 1
+          FROM community_profile onboarding_membership
+          WHERE onboarding_membership.community_id = community.id
+            AND onboarding_membership.user_id = :userId
+        )`,
+      )
+      .setParameters({ tagIds, userId })
+      .orderBy('matched_tag_count', 'DESC')
+      .addOrderBy('member_count', 'DESC')
+      .addOrderBy('recent_post_count', 'DESC')
+      .addOrderBy('community.id', 'ASC')
+      .take(query.limit)
+      .getMany();
+
+    return communities.map((community) => ({
+      id: community.id,
+      name: community.name,
+      slug: community.slug,
+      description: community.description,
+      imageUrl: community.imageUrl,
+      bannerUrl: community.bannerUrl,
+      isPrivate: community.isPrivate,
+    }));
   }
 
   async leaveCommunity(

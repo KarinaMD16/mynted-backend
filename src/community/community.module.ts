@@ -5,6 +5,7 @@ import { UsersModule } from '../users/users.module';
 import { SuperAdminGuard } from '../auth/guards/super-admin.guard';
 import { CommunityController } from './community.controller';
 import { CommunityService } from './community.service';
+import { CommunityRoleGuard } from './guards/community-role.guard';
 import { Category } from './entities/category.entity';
 import { CommunityRule } from './entities/community-rule.entity';
 import { CommunityTag } from './entities/community-tag.entity';
@@ -30,7 +31,13 @@ import { TagSeed } from './seeds/tag.seed';
     UsersModule,
   ],
   controllers: [CommunityController],
-  providers: [CommunityService, CategorySeed, TagSeed, SuperAdminGuard],
+  providers: [
+    CommunityService,
+    CategorySeed,
+    TagSeed,
+    SuperAdminGuard,
+    CommunityRoleGuard,
+  ],
   exports: [CommunityService],
 })
 export class CommunityModule {}
