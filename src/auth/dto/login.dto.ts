@@ -9,7 +9,7 @@ export class LoginDto {
   @IsString()
   @IsNotEmpty({ message: 'El email o username es requerido' })
   @MaxLength(255)
-  email!: string;
+  identifier!: string;
 
   @ApiProperty({ example: 'Test1234' })
   @IsString()
