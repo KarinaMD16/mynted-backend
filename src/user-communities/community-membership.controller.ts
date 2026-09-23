@@ -22,7 +22,11 @@ export class CommunityMembershipController {
   ) {}
 
   @Post(':id/join')
-  @ApiOperation({ summary: 'Unirse a una comunidad' })
+  @ApiOperation({
+    summary:
+      'Unirse a una comunidad. Si es pública, crea el communityProfile directo; ' +
+      'si es privada, crea una solicitud pendiente que debe aprobar un owner/moderador',
+  })
   join(
     @Param('id', ParseIntPipe) communityId: number,
     @Req() request: AuthenticatedRequest,

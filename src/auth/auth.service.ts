@@ -124,9 +124,11 @@ export class AuthService {
   /**
    * Emite un access_token (corto, payload {sub, email}) y un refresh_token
    * (largo, payload {sub}, firmado con JWT_REFRESH_SECRET). JWT sin estado:
-   * no se persiste el refresh token en BD, solo se firma/valida.
+   * no se persiste el refresh token en BD, solo se firma/valida. Pública
+   * porque UsersController también la usa para loguear automáticamente al
+   * usuario recién registrado.
    */
-  private buildSession(user: User) {
+  buildSession(user: User) {
     const payload = { sub: user.id, email: user.email };
     const accessToken = this.jwtService.sign(payload);
 

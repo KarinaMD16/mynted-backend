@@ -1,11 +1,14 @@
 import {
+  IsBoolean,
   IsOptional,
   IsString,
   Matches,
   MaxLength,
   MinLength,
 } from 'class-validator';
+import { Transform, TransformFnParams } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
+import { parseBoolean } from '../../community/dto/create-community.dto';
 
 export class UpdateProfileDto {
   @ApiPropertyOptional({
@@ -56,4 +59,22 @@ export class UpdateProfileDto {
   @IsString()
   @MaxLength(10, { message: 'La moneda no puede superar 10 caracteres' })
   currency?: string;
+
+  @ApiPropertyOptional({
+    example: true,
+    description: 'Preferencia de notificaciones por email',
+  })
+  @IsOptional()
+  @Transform(({ value }: TransformFnParams) => parseBoolean(value as unknown))
+  @IsBoolean({ message: 'emailNotifications debe ser un booleano' })
+  emailNotifications?: boolean;
+
+  @ApiPropertyOptional({
+    example: true,
+    description: 'Preferencia de notificaciones push',
+  })
+  @IsOptional()
+  @Transform(({ value }: TransformFnParams) => parseBoolean(value as unknown))
+  @IsBoolean({ message: 'pushNotifications debe ser un booleano' })
+  pushNotifications?: boolean;
 }

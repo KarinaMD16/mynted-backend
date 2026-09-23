@@ -71,7 +71,9 @@ export class UsersService {
       dto.bio !== undefined ||
       dto.location !== undefined ||
       dto.locale !== undefined ||
-      dto.currency !== undefined;
+      dto.currency !== undefined ||
+      dto.emailNotifications !== undefined ||
+      dto.pushNotifications !== undefined;
 
     if (!hasFieldUpdate && !photo) {
       throw new BadRequestException(
@@ -97,6 +99,12 @@ export class UsersService {
     if (dto.location !== undefined) user.location = dto.location;
     if (dto.locale !== undefined) user.locale = dto.locale;
     if (dto.currency !== undefined) user.currency = dto.currency;
+    if (dto.emailNotifications !== undefined) {
+      user.emailNotifications = dto.emailNotifications;
+    }
+    if (dto.pushNotifications !== undefined) {
+      user.pushNotifications = dto.pushNotifications;
+    }
 
     if (photo) {
       const uploadedPhoto = await this.cloudinaryService.uploadImage(photo);

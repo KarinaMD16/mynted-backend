@@ -6,16 +6,19 @@ import { CommunityService } from './community.service';
 import { Category } from './entities/category.entity';
 import { Community } from './entities/community.entity';
 import { CommunityRule } from './entities/community-rule.entity';
-import {
-  CommunityProfile,
-  CommunityProfileRole,
-} from './entities/community-profile.entity';
+import { CommunityProfile } from './entities/community-profile.entity';
 import { Tag } from './entities/tag.entity';
 import { CreateCommunityRuleDto } from './dto/create-community-rule.dto';
 import { UpdateCommunityRuleDto } from './dto/update-community-rule.dto';
 
 /* eslint-disable @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/require-await */
 
+/**
+ * La autorización por rol (OWNER o MODERATOR) ya no vive aquí: la resuelve
+ * CommunityRoleGuard antes de llegar al controller (ver
+ * community-role.guard.spec.ts). Estos tests cubren solo lo que sigue siendo
+ * responsabilidad del service una vez que un actor ya fue autorizado.
+ */
 describe('CommunityService rule CRUD', () => {
   const communityRepository = {
     findOne: jest.fn(),
@@ -47,13 +50,11 @@ describe('CommunityService rule CRUD', () => {
     {} as UsersService,
     communityProfileRepository as unknown as Repository<CommunityProfile>,
     {} as never,
+    {} as never,
   );
 
   beforeEach(() => {
     jest.clearAllMocks();
-    communityProfileRepository.findOne.mockResolvedValue({
-      role: CommunityProfileRole.OWNER,
-    });
   });
 
   describe('GET rules', () => {
@@ -86,38 +87,6 @@ describe('CommunityService rule CRUD', () => {
   });
 
   describe('POST rules', () => {
-    it('allows MODERATOR and rejects MEMBER or non-members', async () => {
-      communityRepository.findOne.mockResolvedValue({ id: 4 });
-      communityRuleRepository.find.mockResolvedValue([]);
-      communityProfileRepository.findOne.mockResolvedValue({
-        role: CommunityProfileRole.MODERATOR,
-      });
-
-      await expect(
-        service.createRule(
-          4,
-          { description: ['Moderator rule'] },
-          'moderator-id',
-        ),
-      ).resolves.toHaveLength(1);
-
-      communityProfileRepository.findOne.mockResolvedValue({
-        role: CommunityProfileRole.MEMBER,
-      });
-      await expect(
-        service.createRule(4, { description: ['Member rule'] }, 'member-id'),
-      ).rejects.toThrow('No tienes permisos');
-
-      communityProfileRepository.findOne.mockResolvedValue(null);
-      await expect(
-        service.createRule(
-          4,
-          { description: ['Anonymous rule'] },
-          'unknown-id',
-        ),
-      ).rejects.toThrow('No tienes permisos');
-    });
-
     it('creates one or several rules in a transaction', async () => {
       communityRepository.findOne.mockResolvedValue({ id: 4 });
       communityRuleRepository.find.mockResolvedValue([]);
@@ -126,7 +95,7 @@ describe('CommunityService rule CRUD', () => {
         description: ['A', 'B'],
       };
 
-      await expect(service.createRule(4, dto, 'owner-id')).resolves.toEqual([
+      await expect(service.createRule(4, dto)).resolves.toEqual([
         { communityId: 4, description: 'A' },
         { communityId: 4, description: 'B' },
       ]);
@@ -154,14 +123,14 @@ describe('CommunityService rule CRUD', () => {
       communityRepository.findOne.mockResolvedValue({ id: 4 });
 
       await expect(
-        service.createRule(4, { description: ['A', 'A'] }, 'owner-id'),
+        service.createRule(4, { description: ['A', 'A'] }),
       ).rejects.toThrow('No puede repetir reglas');
 
       communityRuleRepository.find.mockResolvedValue([
         { communityRuleId: 8, communityId: 4, description: 'A' },
       ]);
       await expect(
-        service.createRule(4, { description: ['A'] }, 'owner-id'),
+        service.createRule(4, { description: ['A'] }),
       ).rejects.toThrow('La comunidad ya tiene una regla');
     });
   });
@@ -175,9 +144,7 @@ describe('CommunityService rule CRUD', () => {
         .mockResolvedValueOnce(null);
 
       const dto: UpdateCommunityRuleDto = { description: 'Updated' };
-      await expect(service.updateRule(4, 8, dto, 'owner-id')).resolves.toBe(
-        rule,
-      );
+      await expect(service.updateRule(4, 8, dto)).resolves.toBe(rule);
 
       expect(rule).toEqual({
         communityRuleId: 8,
@@ -192,7 +159,7 @@ describe('CommunityService rule CRUD', () => {
       communityRuleRepository.findOne.mockResolvedValue(null);
 
       await expect(
-        service.updateRule(4, 999, { description: 'Updated' }, 'owner-id'),
+        service.updateRule(4, 999, { description: 'Updated' }),
       ).rejects.toThrow(NotFoundException);
     });
 
@@ -211,7 +178,7 @@ describe('CommunityService rule CRUD', () => {
         });
 
       await expect(
-        service.updateRule(4, 8, { description: 'B' }, 'owner-id'),
+        service.updateRule(4, 8, { description: 'B' }),
       ).rejects.toThrow('La comunidad ya tiene una regla');
     });
   });
@@ -222,7 +189,7 @@ describe('CommunityService rule CRUD', () => {
       const rule = { communityRuleId: 9, communityId: 4, description: 'B' };
       communityRuleRepository.findOne.mockResolvedValue(rule);
 
-      await expect(service.deleteRule(4, 9, 'owner-id')).resolves.toEqual({
+      await expect(service.deleteRule(4, 9)).resolves.toEqual({
         message: 'Regla eliminada exitosamente',
       });
       expect(communityRuleRepository.remove).toHaveBeenCalledWith(rule);
@@ -232,7 +199,7 @@ describe('CommunityService rule CRUD', () => {
       communityRepository.findOne.mockResolvedValue({ id: 4 });
       communityRuleRepository.findOne.mockResolvedValue(null);
 
-      await expect(service.deleteRule(4, 999, 'owner-id')).rejects.toThrow(
+      await expect(service.deleteRule(4, 999)).rejects.toThrow(
         NotFoundException,
       );
       expect(communityRuleRepository.remove).not.toHaveBeenCalled();

@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { PassportModule } from '@nestjs/passport';
@@ -13,7 +13,7 @@ import { FacebookAuthService } from './social/facebook-auth.service';
 
 @Module({
   imports: [
-    UsersModule,
+    forwardRef(() => UsersModule),
     MailModule,
     PassportModule,
     JwtModule.registerAsync({
@@ -38,5 +38,6 @@ import { FacebookAuthService } from './social/facebook-auth.service';
     GoogleAuthService,
     FacebookAuthService,
   ],
+  exports: [AuthService],
 })
 export class AuthModule {}

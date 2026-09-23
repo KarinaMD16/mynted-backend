@@ -1,12 +1,15 @@
 import {
   Body,
   Controller,
+  forwardRef,
   Get,
+  Inject,
   Param,
   ParseUUIDPipe,
   Patch,
   Post,
   Req,
+  Res,
   UploadedFile,
   UseGuards,
   UseInterceptors,
@@ -20,22 +23,40 @@ import {
   ApiOperation,
   ApiTags,
 } from '@nestjs/swagger';
+import { ConfigService } from '@nestjs/config';
+import { Response } from 'express';
 import { UsersService } from './users.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { SuperAdminGuard } from '../auth/guards/super-admin.guard';
 import { AuthenticatedRequest } from '../auth/types/authenticated-request';
+import { AuthService } from '../auth/auth.service';
+import { setAuthCookies } from '../auth/auth-cookies.util';
 
 @ApiTags('users')
 @Controller('users')
 export class UsersController {
-  constructor(private readonly usersService: UsersService) {}
+  constructor(
+    private readonly usersService: UsersService,
+    @Inject(forwardRef(() => AuthService))
+    private readonly authService: AuthService,
+    private readonly configService: ConfigService,
+  ) {}
 
   @Post()
-  @ApiOperation({ summary: 'Registrar un nuevo usuario' })
-  create(@Body() dto: CreateUserDto) {
-    return this.usersService.create(dto);
+  @ApiOperation({
+    summary:
+      'Registrar un nuevo usuario. Inicia sesión automáticamente (setea access_token/refresh_token)',
+  })
+  async create(
+    @Body() dto: CreateUserDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const user = await this.usersService.create(dto);
+    const { accessToken, refreshToken } = this.authService.buildSession(user);
+    setAuthCookies(res, { accessToken, refreshToken }, this.configService);
+    return user;
   }
 
   @Get()
@@ -62,7 +83,8 @@ export class UsersController {
   @ApiBearerAuth()
   @ApiOperation({
     summary:
-      'Actualizar el perfil del usuario autenticado (username, bio, location, locale, currency y/o foto)',
+      'Actualizar el perfil del usuario autenticado (username, bio, location, locale, currency, ' +
+      'preferencias de notificación y/o foto)',
   })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
@@ -78,6 +100,8 @@ export class UsersController {
         location: { type: 'string', example: 'San José, Costa Rica' },
         locale: { type: 'string', example: 'es-CR' },
         currency: { type: 'string', example: 'CRC' },
+        emailNotifications: { type: 'boolean', example: true },
+        pushNotifications: { type: 'boolean', example: true },
         photo: {
           type: 'string',
           format: 'binary',

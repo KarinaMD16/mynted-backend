@@ -6,6 +6,11 @@ import {
   CommunityProfile,
   CommunityProfileRole,
 } from '../community/entities/community-profile.entity';
+import {
+  CommunityJoinRequest,
+  CommunityJoinRequestStatus,
+} from '../community/entities/community-join-request.entity';
+import { UserTag } from '../user-tags/entities/user-tag.entity';
 import { UserCommunitiesService } from './user-communities.service';
 import { CommunityService } from '../community/community.service';
 
@@ -23,6 +28,15 @@ describe('UserCommunitiesService', () => {
     save: jest.fn((value) => Promise.resolve(value)),
     remove: jest.fn().mockResolvedValue(undefined),
   };
+  const communityJoinRequestRepository = {
+    findOne: jest.fn(),
+    create: jest.fn((values) => values),
+    save: jest.fn((value) => Promise.resolve(value)),
+    remove: jest.fn().mockResolvedValue(undefined),
+  };
+  const userTagRepository = {
+    find: jest.fn(),
+  };
   const usersService = {
     findById: jest.fn(),
   };
@@ -33,6 +47,8 @@ describe('UserCommunitiesService', () => {
   const service = new UserCommunitiesService(
     communityRepository as unknown as Repository<Community>,
     communityProfileRepository as unknown as Repository<CommunityProfile>,
+    communityJoinRequestRepository as unknown as Repository<CommunityJoinRequest>,
+    userTagRepository as unknown as Repository<UserTag>,
     usersService as unknown as UsersService,
     communityService as unknown as CommunityService,
   );
@@ -41,25 +57,32 @@ describe('UserCommunitiesService', () => {
     jest.clearAllMocks();
   });
 
-  describe('joinCommunity', () => {
+  describe('joinCommunity — public community', () => {
     it('creates a MEMBER profile with the authenticated user data', async () => {
-      communityRepository.findBy.mockResolvedValue([{ id: 5 }]);
+      communityRepository.findOne.mockResolvedValue({
+        id: 5,
+        isPrivate: false,
+      });
       communityProfileRepository.findOne.mockResolvedValue(null);
       usersService.findById.mockResolvedValue({
         id: 'user-id',
         username: 'collector',
       });
 
-      const profile = await service.joinCommunity('user-id', 5);
-
-      expect(profile).toMatchObject({
-        userId: 'user-id',
+      await expect(service.joinCommunity('user-id', 5)).resolves.toEqual({
         communityId: 5,
-        displayName: 'collector',
-        bio: '',
-        role: CommunityProfileRole.MEMBER,
+        result: 'joined',
       });
-      expect(communityProfileRepository.save).toHaveBeenCalledWith(profile);
+
+      expect(communityProfileRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 'user-id',
+          communityId: 5,
+          displayName: 'collector',
+          bio: '',
+          role: CommunityProfileRole.MEMBER,
+        }),
+      );
     });
 
     it.each([
@@ -67,7 +90,7 @@ describe('UserCommunitiesService', () => {
       CommunityProfileRole.MODERATOR,
       CommunityProfileRole.OWNER,
     ])(
-      'rejects a repeated join for an existing %s profile without changing it',
+      'returns already_member for a repeated join with an existing %s profile, without changing it',
       async (role) => {
         const existingProfile = {
           communityProfileId: 10,
@@ -75,17 +98,16 @@ describe('UserCommunitiesService', () => {
           communityId: 5,
           role,
         } as CommunityProfile;
-        communityRepository.findBy.mockResolvedValue([{ id: 5 }]);
+        communityRepository.findOne.mockResolvedValue({
+          id: 5,
+          isPrivate: false,
+        });
         communityProfileRepository.findOne.mockResolvedValue(existingProfile);
 
-        await expect(service.joinCommunity('user-id', 5)).rejects.toMatchObject(
-          {
-            response: {
-              statusCode: 409,
-              message: 'Ya perteneces a esta comunidad',
-            },
-          },
-        );
+        await expect(service.joinCommunity('user-id', 5)).resolves.toEqual({
+          communityId: 5,
+          result: 'already_member',
+        });
 
         expect(communityProfileRepository.save).not.toHaveBeenCalled();
         expect(communityProfileRepository.create).not.toHaveBeenCalled();
@@ -101,19 +123,24 @@ describe('UserCommunitiesService', () => {
         communityId: 5,
         role: CommunityProfileRole.MEMBER,
       } as CommunityProfile;
-      communityRepository.findBy.mockResolvedValue([{ id: 5 }]);
-      communityProfileRepository.find.mockResolvedValue([existingProfile]);
+      communityRepository.findBy.mockResolvedValue([
+        { id: 5, isPrivate: false },
+      ]);
+      communityProfileRepository.findOne.mockResolvedValue(existingProfile);
 
       await expect(service.joinCommunities('user-id', [5])).resolves.toEqual([
-        existingProfile,
+        { communityId: 5, result: 'already_member' },
       ]);
 
       expect(communityProfileRepository.save).not.toHaveBeenCalled();
       expect(existingProfile.role).toBe(CommunityProfileRole.MEMBER);
     });
 
-    it('converts a concurrent unique violation to ConflictException', async () => {
-      communityRepository.findBy.mockResolvedValue([{ id: 5 }]);
+    it('returns already_member on a concurrent unique violation', async () => {
+      communityRepository.findOne.mockResolvedValue({
+        id: 5,
+        isPrivate: false,
+      });
       communityProfileRepository.findOne.mockResolvedValue(null);
       usersService.findById.mockResolvedValue({
         id: 'user-id',
@@ -123,21 +150,90 @@ describe('UserCommunitiesService', () => {
         new QueryFailedError('INSERT', [], { code: '23505' }),
       );
 
-      await expect(service.joinCommunity('user-id', 5)).rejects.toMatchObject({
-        response: {
-          statusCode: 409,
-          message: 'Ya perteneces a esta comunidad',
-        },
+      await expect(service.joinCommunity('user-id', 5)).resolves.toEqual({
+        communityId: 5,
+        result: 'already_member',
       });
     });
 
     it('rejects when the community does not exist', async () => {
-      communityRepository.findBy.mockResolvedValue([]);
+      communityRepository.findOne.mockResolvedValue(null);
 
       await expect(service.joinCommunity('user-id', 999)).rejects.toThrow(
         NotFoundException,
       );
       expect(communityProfileRepository.save).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('joinCommunity — private community', () => {
+    it('creates a pending communityJoinRequest instead of a profile', async () => {
+      communityRepository.findOne.mockResolvedValue({ id: 6, isPrivate: true });
+      communityProfileRepository.findOne.mockResolvedValue(null);
+      communityJoinRequestRepository.findOne.mockResolvedValue(null);
+
+      await expect(service.joinCommunity('user-id', 6)).resolves.toEqual({
+        communityId: 6,
+        result: 'requested',
+      });
+
+      expect(communityJoinRequestRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 'user-id',
+          communityId: 6,
+          status: CommunityJoinRequestStatus.PENDING,
+        }),
+      );
+      expect(communityProfileRepository.save).not.toHaveBeenCalled();
+    });
+
+    it('returns already_requested for a repeated pending request', async () => {
+      communityRepository.findOne.mockResolvedValue({ id: 6, isPrivate: true });
+      communityProfileRepository.findOne.mockResolvedValue(null);
+      communityJoinRequestRepository.findOne.mockResolvedValue({
+        id: 1,
+        userId: 'user-id',
+        communityId: 6,
+        status: CommunityJoinRequestStatus.PENDING,
+      });
+
+      await expect(service.joinCommunity('user-id', 6)).resolves.toEqual({
+        communityId: 6,
+        result: 'already_requested',
+      });
+
+      expect(communityJoinRequestRepository.save).not.toHaveBeenCalled();
+    });
+
+    it('returns already_requested on a concurrent unique violation', async () => {
+      communityRepository.findOne.mockResolvedValue({ id: 6, isPrivate: true });
+      communityProfileRepository.findOne.mockResolvedValue(null);
+      communityJoinRequestRepository.findOne.mockResolvedValue(null);
+      communityJoinRequestRepository.save.mockRejectedValueOnce(
+        new QueryFailedError('INSERT', [], { code: '23505' }),
+      );
+
+      await expect(service.joinCommunity('user-id', 6)).resolves.toEqual({
+        communityId: 6,
+        result: 'already_requested',
+      });
+    });
+
+    it('prefers already_member over creating a request if a profile already exists', async () => {
+      communityRepository.findOne.mockResolvedValue({ id: 6, isPrivate: true });
+      communityProfileRepository.findOne.mockResolvedValue({
+        communityProfileId: 1,
+        userId: 'user-id',
+        communityId: 6,
+        role: CommunityProfileRole.MEMBER,
+      });
+
+      await expect(service.joinCommunity('user-id', 6)).resolves.toEqual({
+        communityId: 6,
+        result: 'already_member',
+      });
+
+      expect(communityJoinRequestRepository.save).not.toHaveBeenCalled();
     });
   });
 
@@ -191,7 +287,26 @@ describe('UserCommunitiesService', () => {
       expect(communityProfileRepository.remove).not.toHaveBeenCalled();
     });
 
-    it('rejects a missing community or membership', async () => {
+    it('cancels a pending join request when there is no profile', async () => {
+      const pendingRequest = {
+        id: 1,
+        userId: 'user-id',
+        communityId: 6,
+        status: CommunityJoinRequestStatus.PENDING,
+      };
+      communityRepository.findOne.mockResolvedValue({ id: 6 });
+      communityProfileRepository.findOne.mockResolvedValue(null);
+      communityJoinRequestRepository.findOne.mockResolvedValue(pendingRequest);
+
+      await expect(service.leaveCommunity('user-id', 6)).resolves.toEqual({
+        message: 'Solicitud de unión cancelada correctamente',
+      });
+      expect(communityJoinRequestRepository.remove).toHaveBeenCalledWith(
+        pendingRequest,
+      );
+    });
+
+    it('rejects a missing community, membership or pending request', async () => {
       communityRepository.findOne.mockResolvedValue(null);
       await expect(service.leaveCommunity('user-id', 999)).rejects.toThrow(
         NotFoundException,
@@ -199,6 +314,7 @@ describe('UserCommunitiesService', () => {
 
       communityRepository.findOne.mockResolvedValue({ id: 5 });
       communityProfileRepository.findOne.mockResolvedValue(null);
+      communityJoinRequestRepository.findOne.mockResolvedValue(null);
       await expect(service.leaveCommunity('user-id', 5)).rejects.toThrow(
         'No perteneces a esta comunidad',
       );

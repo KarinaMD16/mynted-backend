@@ -9,6 +9,7 @@ import { CommunityModule } from './community/community.module';
 import { UserTagsModule } from './user-tags/user-tags.module';
 import { UserCommunitiesModule } from './user-communities/user-communities.module';
 import { SellersModule } from './sellers/sellers.module';
+import { ProductsModule } from './products/products.module';
 
 @Module({
   imports: [
@@ -37,6 +38,7 @@ import { SellersModule } from './sellers/sellers.module';
     UserTagsModule,
     UserCommunitiesModule,
     SellersModule,
+    ProductsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

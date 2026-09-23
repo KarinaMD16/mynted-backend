@@ -13,3 +13,12 @@ export interface RefreshAuthenticatedRequest extends Request {
     userId: string;
   };
 }
+
+// Para endpoints con OptionalJwtAuthGuard: user puede venir undefined si no
+// hay sesión.
+export interface OptionalAuthenticatedRequest extends Request {
+  user?: {
+    userId: string;
+    email: string;
+  };
+}
