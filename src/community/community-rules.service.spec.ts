@@ -50,6 +50,7 @@ describe('CommunityService rule CRUD', () => {
     {} as UsersService,
     communityProfileRepository as unknown as Repository<CommunityProfile>,
     {} as never,
+    {} as never,
   );
 
   beforeEach(() => {

@@ -19,6 +19,18 @@ export enum ProductStatus {
   INACTIVE = 'inactive',
 }
 
+export enum ProductType {
+  SALE = 'sale',
+  EXCHANGE = 'exchange',
+}
+
+export enum ProductCondition {
+  NEW = 'new',
+  LIKE_NEW = 'like_new',
+  GOOD_CONDITION = 'good_condition',
+  USED_WITH_DETAILS = 'used_with_details',
+}
+
 @Entity('product')
 export class Product {
   @PrimaryGeneratedColumn()
@@ -53,6 +65,12 @@ export class Product {
     default: ProductStatus.ACTIVE,
   })
   status!: ProductStatus;
+
+  @Column({ type: 'enum', enum: ProductType })
+  type!: ProductType;
+
+  @Column({ type: 'enum', enum: ProductCondition })
+  condition!: ProductCondition;
 
   @Column({ name: 'seller_id' })
   sellerId!: number;

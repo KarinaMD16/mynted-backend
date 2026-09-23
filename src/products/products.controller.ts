@@ -26,11 +26,15 @@ import { ProductsService } from './products.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { UpdateProductStatusDto } from './dto/update-product-status.dto';
-import { GetCommunityProductsQueryDto } from './dto/get-community-products-query.dto';
-import { ExploreProductsQueryDto } from './dto/explore-products-query.dto';
+import { GetProductsQueryDto } from './dto/get-products-query.dto';
+import { GetRecommendedProductsQueryDto } from './dto/get-recommended-products-query.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
 import { SellerGuard } from '../auth/guards/seller.guard';
-import { AuthenticatedRequest } from '../auth/types/authenticated-request';
+import {
+  AuthenticatedRequest,
+  OptionalAuthenticatedRequest,
+} from '../auth/types/authenticated-request';
 
 const IMAGE_FILE_SIZE_LIMIT = 5 * 1024 * 1024;
 const MAX_GALLERY_IMAGES = 6;
@@ -54,7 +58,15 @@ export class ProductsController {
   @ApiBody({
     schema: {
       type: 'object',
-      required: ['title', 'description', 'price', 'tagIds', 'image'],
+      required: [
+        'title',
+        'description',
+        'price',
+        'type',
+        'condition',
+        'tagIds',
+        'image',
+      ],
       properties: {
         title: {
           type: 'string',
@@ -65,6 +77,16 @@ export class ProductsController {
           example: 'Figura original, caja sellada, sin abrir',
         },
         price: { type: 'number', example: 25.99 },
+        type: {
+          type: 'string',
+          enum: ['sale', 'exchange'],
+          example: 'sale',
+        },
+        condition: {
+          type: 'string',
+          enum: ['new', 'like_new', 'good_condition', 'used_with_details'],
+          example: 'new',
+        },
         tagIds: {
           type: 'array',
           items: { type: 'integer' },
@@ -119,16 +141,20 @@ export class ProductsController {
     );
   }
 
-  @Get('communities/:communityId/products')
-  @UseGuards(JwtAuthGuard)
+  @Get('products/recommended')
+  @UseGuards(OptionalJwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Listar productos activos de una comunidad' })
-  @ApiParam({ name: 'communityId', type: Number, example: 5 })
-  findAllByCommunity(
-    @Param('communityId', ParseIntPipe) communityId: number,
-    @Query() query: GetCommunityProductsQueryDto,
+  @ApiOperation({
+    summary:
+      'Productos recomendados: combina los tags que sigue el usuario autenticado (si hay uno) ' +
+      'y/o los tags y comunidad de currentProductId (si se pasa). Sin ninguna señal, ' +
+      'devuelve los productos activos más recientes',
+  })
+  findRecommended(
+    @Req() request: OptionalAuthenticatedRequest,
+    @Query() query: GetRecommendedProductsQueryDto,
   ) {
-    return this.productsService.findAllByCommunity(communityId, query);
+    return this.productsService.findRecommended(request.user?.userId, query);
   }
 
   @Get('products')
@@ -136,10 +162,10 @@ export class ProductsController {
   @ApiBearerAuth()
   @ApiOperation({
     summary:
-      'Explorar productos activos de todas las comunidades que usan un tag',
+      'Listar/buscar productos activos con filtros combinables (comunidad, tag, categoría, type, condition, rango de precio)',
   })
-  findByTag(@Query() query: ExploreProductsQueryDto) {
-    return this.productsService.findByTag(query);
+  findAll(@Query() query: GetProductsQueryDto) {
+    return this.productsService.findAll(query);
   }
 
   @Get('products/:id')
@@ -179,12 +205,24 @@ export class ProductsController {
           example: 'Figura original, caja sellada, sin abrir',
         },
         price: { type: 'number', example: 22.5 },
+        type: {
+          type: 'string',
+          enum: ['sale', 'exchange'],
+          example: 'sale',
+        },
+        condition: {
+          type: 'string',
+          enum: ['new', 'like_new', 'good_condition', 'used_with_details'],
+          example: 'like_new',
+        },
         tagIds: {
           type: 'array',
           items: { type: 'integer' },
-          example: [1, 3],
+          example: [1, 3, 5],
+          minItems: 3,
+          maxItems: 3,
           description:
-            'Reemplaza por completo los tags. En multipart/form-data puede enviarse como arreglo JSON',
+            'Reemplaza por completo los tags. Debe traer exactamente 3 si se incluye. En multipart/form-data puede enviarse como arreglo JSON',
         },
         image: {
           type: 'string',

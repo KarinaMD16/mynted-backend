@@ -22,6 +22,7 @@ describe('CommunityService.findRecommendedCommunities', () => {
     {} as CloudinaryService,
     {} as UsersService,
     {} as Repository<CommunityProfile>,
+    {} as never,
     {} as Repository<Post>,
   );
 

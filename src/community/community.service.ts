@@ -2,6 +2,7 @@ import {
   BadGatewayException,
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   HttpException,
   Injectable,
   InternalServerErrorException,
@@ -28,6 +29,10 @@ import {
   CommunityProfile,
   CommunityProfileRole,
 } from './entities/community-profile.entity';
+import {
+  CommunityJoinRequest,
+  CommunityJoinRequestStatus,
+} from './entities/community-join-request.entity';
 import { Category } from './entities/category.entity';
 import { CommunityRule } from './entities/community-rule.entity';
 import { CommunityTag } from './entities/community-tag.entity';
@@ -67,6 +72,8 @@ export class CommunityService {
     private readonly usersService: UsersService,
     @InjectRepository(CommunityProfile)
     private readonly communityProfileRepository: Repository<CommunityProfile>,
+    @InjectRepository(CommunityJoinRequest)
+    private readonly communityJoinRequestRepository: Repository<CommunityJoinRequest>,
     @InjectRepository(Post)
     private readonly postRepository: Repository<Post>,
   ) {}
@@ -628,6 +635,105 @@ export class CommunityService {
 
     profile.role = CommunityProfileRole.MEMBER;
     return this.communityProfileRepository.save(profile);
+  }
+
+  async findJoinRequests(communityId: number): Promise<CommunityJoinRequest[]> {
+    await this.ensureCommunityExists(communityId);
+
+    return this.communityJoinRequestRepository.find({
+      where: { communityId, status: CommunityJoinRequestStatus.PENDING },
+      relations: { user: true },
+      select: {
+        user: { id: true, username: true, photoUrl: true },
+      },
+      order: { createdAt: 'ASC' },
+    });
+  }
+
+  async acceptJoinRequest(
+    communityId: number,
+    requestId: number,
+    actingUserId: string,
+  ): Promise<CommunityProfile> {
+    const { request, actingProfile } = await this.resolveJoinRequest(
+      communityId,
+      requestId,
+      actingUserId,
+    );
+
+    return this.dataSource.transaction(async (manager) => {
+      const user = await this.usersService.findById(request.userId);
+      const profile = manager.create(CommunityProfile, {
+        userId: request.userId,
+        communityId,
+        role: CommunityProfileRole.MEMBER,
+        displayName: user.username,
+        bio: '',
+      });
+      const savedProfile = await manager.save(CommunityProfile, profile);
+
+      request.status = CommunityJoinRequestStatus.ACCEPTED;
+      request.resolvedAt = new Date();
+      request.resolvedByProfileId = actingProfile.communityProfileId;
+      await manager.save(CommunityJoinRequest, request);
+
+      return savedProfile;
+    });
+  }
+
+  async rejectJoinRequest(
+    communityId: number,
+    requestId: number,
+    actingUserId: string,
+  ): Promise<CommunityJoinRequest> {
+    const { request, actingProfile } = await this.resolveJoinRequest(
+      communityId,
+      requestId,
+      actingUserId,
+    );
+
+    request.status = CommunityJoinRequestStatus.REJECTED;
+    request.resolvedAt = new Date();
+    request.resolvedByProfileId = actingProfile.communityProfileId;
+    return this.communityJoinRequestRepository.save(request);
+  }
+
+  private async resolveJoinRequest(
+    communityId: number,
+    requestId: number,
+    actingUserId: string,
+  ): Promise<{
+    request: CommunityJoinRequest;
+    actingProfile: CommunityProfile;
+  }> {
+    await this.ensureCommunityExists(communityId);
+
+    const request = await this.communityJoinRequestRepository.findOne({
+      where: { id: requestId, communityId },
+    });
+
+    if (!request) {
+      throw new NotFoundException('La solicitud no existe en esta comunidad');
+    }
+
+    if (request.status !== CommunityJoinRequestStatus.PENDING) {
+      throw new ConflictException('La solicitud ya fue resuelta');
+    }
+
+    // El guard ya exige owner/moderador para llegar hasta acá; se vuelve a
+    // resolver el perfil del que actúa porque necesitamos su id para
+    // resolvedByProfileId, no solo su rol.
+    const actingProfile = await this.communityProfileRepository.findOne({
+      where: { userId: actingUserId, communityId },
+    });
+
+    if (!actingProfile) {
+      throw new ForbiddenException(
+        'No tienes permisos para administrar esta comunidad',
+      );
+    }
+
+    return { request, actingProfile };
   }
 
   private countRecentPosts(communityId: number): Promise<number> {

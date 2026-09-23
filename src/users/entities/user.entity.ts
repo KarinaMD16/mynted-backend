@@ -123,4 +123,14 @@ export class User {
     type: 'timestamp with time zone',
   })
   emailChangeExpiresAt!: Date | null;
+
+  // Preferencias de notificación. Todavía no hay ningún envío real de email
+  // ni push (el único flujo de correo hoy es el cambio de email); el primer
+  // caso de uso real será notificar al aceptar/rechazar una
+  // communityJoinRequest. Por ahora solo se guarda la preferencia.
+  @Column({ name: 'email_notifications', type: 'boolean', default: true })
+  emailNotifications!: boolean;
+
+  @Column({ name: 'push_notifications', type: 'boolean', default: true })
+  pushNotifications!: boolean;
 }

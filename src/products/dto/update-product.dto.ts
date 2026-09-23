@@ -1,7 +1,10 @@
 import { Transform, TransformFnParams, Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  ArrayMinSize,
   ArrayUnique,
   IsArray,
+  IsEnum,
   IsInt,
   IsNotEmpty,
   IsNumber,
@@ -12,6 +15,9 @@ import {
 } from 'class-validator';
 import { ApiHideProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { parseIntegerArray } from '../../community/dto/create-community.dto';
+import { ProductCondition, ProductType } from '../entities/product.entity';
+
+const REQUIRED_PRODUCT_TAG_COUNT = 3;
 
 export class UpdateProductDto {
   @ApiPropertyOptional({ example: 'Figura de Charizard Funko Pop #123' })
@@ -33,17 +39,41 @@ export class UpdateProductDto {
   @IsPositive()
   price?: number;
 
+  @ApiPropertyOptional({ enum: ProductType, example: ProductType.SALE })
+  @IsOptional()
+  @IsEnum(ProductType, { message: 'type debe ser sale o exchange' })
+  type?: ProductType;
+
+  @ApiPropertyOptional({
+    enum: ProductCondition,
+    example: ProductCondition.NEW,
+  })
+  @IsOptional()
+  @IsEnum(ProductCondition, {
+    message:
+      'condition debe ser new, like_new, good_condition o used_with_details',
+  })
+  condition?: ProductCondition;
+
   @ApiPropertyOptional({
     type: [Number],
-    example: [1, 3],
+    example: [1, 3, 5],
+    minItems: REQUIRED_PRODUCT_TAG_COUNT,
+    maxItems: REQUIRED_PRODUCT_TAG_COUNT,
     description:
-      'Reemplaza por completo los tags del producto. En multipart/form-data puede enviarse como arreglo JSON',
+      'Reemplaza por completo los tags del producto. Debe traer exactamente 3 si se incluye. En multipart/form-data puede enviarse como arreglo JSON',
   })
   @Transform(({ value }: TransformFnParams) =>
     parseIntegerArray(value as unknown),
   )
   @IsOptional()
   @IsArray()
+  @ArrayMinSize(REQUIRED_PRODUCT_TAG_COUNT, {
+    message: `Debe seleccionar exactamente ${REQUIRED_PRODUCT_TAG_COUNT} tags`,
+  })
+  @ArrayMaxSize(REQUIRED_PRODUCT_TAG_COUNT, {
+    message: `Debe seleccionar exactamente ${REQUIRED_PRODUCT_TAG_COUNT} tags`,
+  })
   @ArrayUnique({ message: 'No puede repetir tags en el mismo producto' })
   @IsInt({ each: true, message: 'Cada tagId debe ser un número entero' })
   @Min(1, { each: true })

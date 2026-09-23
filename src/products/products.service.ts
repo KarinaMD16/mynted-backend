@@ -5,17 +5,26 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, In, Repository } from 'typeorm';
+import {
+  And,
+  DataSource,
+  FindOptionsWhere,
+  In,
+  LessThanOrEqual,
+  MoreThanOrEqual,
+  Repository,
+} from 'typeorm';
 import { Community } from '../community/entities/community.entity';
 import { Tag } from '../community/entities/tag.entity';
 import { Seller } from '../sellers/entities/seller.entity';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
 import { UsersService } from '../users/users.service';
+import { UserTag } from '../user-tags/entities/user-tag.entity';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { UpdateProductStatusDto } from './dto/update-product-status.dto';
-import { GetCommunityProductsQueryDto } from './dto/get-community-products-query.dto';
-import { ExploreProductsQueryDto } from './dto/explore-products-query.dto';
+import { GetProductsQueryDto } from './dto/get-products-query.dto';
+import { GetRecommendedProductsQueryDto } from './dto/get-recommended-products-query.dto';
 import { Product, ProductStatus } from './entities/product.entity';
 import { ProductTag } from './entities/product-tag.entity';
 import { ProductImage } from './entities/product-image.entity';
@@ -60,6 +69,8 @@ export class ProductsService {
     private readonly communityRepository: Repository<Community>,
     @InjectRepository(Tag)
     private readonly tagRepository: Repository<Tag>,
+    @InjectRepository(UserTag)
+    private readonly userTagRepository: Repository<UserTag>,
     private readonly usersService: UsersService,
     private readonly cloudinaryService: CloudinaryService,
     private readonly dataSource: DataSource,
@@ -105,6 +116,8 @@ export class ProductsService {
         currency,
         imageUrl: coverUpload.url,
         status: ProductStatus.ACTIVE,
+        type: dto.type,
+        condition: dto.condition,
         sellerId: seller.sellerId,
         communityId,
       });
@@ -142,14 +155,37 @@ export class ProductsService {
     });
   }
 
-  async findAllByCommunity(
-    communityId: number,
-    query: GetCommunityProductsQueryDto,
-  ): Promise<Paginated<Product>> {
-    await this.ensureCommunityExists(communityId);
+  async findAll(query: GetProductsQueryDto): Promise<Paginated<Product>> {
+    // Usa la API de repository (no QueryBuilder) a propósito: con relaciones
+    // "to-many" (productTags), TypeORM pagina correctamente los productos
+    // raíz primero y luego hidrata las relaciones, evitando que un producto
+    // con varios tags rompa el skip/take.
+    const where: FindOptionsWhere<Product> = {
+      status: ProductStatus.ACTIVE,
+    };
+
+    if (query.communityId !== undefined) where.communityId = query.communityId;
+    if (query.type !== undefined) where.type = query.type;
+    if (query.condition !== undefined) where.condition = query.condition;
+    if (query.category !== undefined) {
+      where.community = { categoryId: query.category };
+    }
+    if (query.tag !== undefined) {
+      where.productTags = { tagId: query.tag };
+    }
+    if (query.priceMin !== undefined && query.priceMax !== undefined) {
+      where.price = And(
+        MoreThanOrEqual(query.priceMin),
+        LessThanOrEqual(query.priceMax),
+      );
+    } else if (query.priceMin !== undefined) {
+      where.price = MoreThanOrEqual(query.priceMin);
+    } else if (query.priceMax !== undefined) {
+      where.price = LessThanOrEqual(query.priceMax);
+    }
 
     const [data, total] = await this.productRepository.findAndCount({
-      where: { communityId, status: ProductStatus.ACTIVE },
+      where,
       relations: { productTags: { tag: true } },
       order: { createdAt: 'DESC' },
       skip: (query.page - 1) * query.limit,
@@ -241,6 +277,8 @@ export class ProductsService {
     if (dto.title !== undefined) product.title = dto.title;
     if (dto.description !== undefined) product.description = dto.description;
     if (dto.price !== undefined) product.price = dto.price;
+    if (dto.type !== undefined) product.type = dto.type;
+    if (dto.condition !== undefined) product.condition = dto.condition;
     if (coverUpload) product.imageUrl = coverUpload.url;
 
     return this.dataSource.transaction(async (manager) => {
@@ -314,23 +352,81 @@ export class ProductsService {
     return this.findOne(id);
   }
 
-  async findByTag(query: ExploreProductsQueryDto): Promise<Paginated<Product>> {
-    const [data, total] = await this.productRepository
-      .createQueryBuilder('product')
-      .leftJoinAndSelect('product.productTags', 'productTag')
-      .leftJoinAndSelect('productTag.tag', 'tag')
-      .innerJoin('product.productTags', 'matchingTag')
-      .where('matchingTag.tagId = :tagId', { tagId: query.tagId })
-      .andWhere('product.status = :status', { status: ProductStatus.ACTIVE })
-      .orderBy('product.createdAt', 'DESC')
-      .skip((query.page - 1) * query.limit)
-      .take(query.limit)
-      .getManyAndCount();
+  /**
+   * Coincidencia simple (no scoring): combina los tags que sigue el usuario
+   * autenticado (si hay uno) con los tags/comunidad del producto que se
+   * está viendo (si se pasa currentProductId). Sin ninguna de las dos
+   * señales, cae a los productos activos más recientes.
+   */
+  async findRecommended(
+    userId: string | undefined,
+    query: GetRecommendedProductsQueryDto,
+  ): Promise<Product[]> {
+    const tagIds = new Set<number>();
+    let communityId: number | undefined;
+    let excludeId: number | undefined;
 
-    return {
-      data,
-      pagination: this.buildPagination(query.page, query.limit, total),
-    };
+    if (userId) {
+      const userTags = await this.userTagRepository.find({
+        where: { userId },
+        select: { tagId: true },
+      });
+      userTags.forEach((userTag) => tagIds.add(userTag.tagId));
+    }
+
+    if (query.currentProductId !== undefined) {
+      const currentProduct = await this.productRepository.findOne({
+        where: { id: query.currentProductId },
+        relations: { productTags: true },
+      });
+
+      if (currentProduct) {
+        excludeId = currentProduct.id;
+        communityId = currentProduct.communityId;
+        currentProduct.productTags.forEach((productTag) =>
+          tagIds.add(productTag.tagId),
+        );
+      }
+    }
+
+    if (tagIds.size === 0 && communityId === undefined) {
+      return this.productRepository.find({
+        where: { status: ProductStatus.ACTIVE },
+        relations: { productTags: { tag: true } },
+        order: { createdAt: 'DESC' },
+        take: query.limit,
+      });
+    }
+
+    const queryBuilder = this.productRepository
+      .createQueryBuilder('product')
+      .leftJoinAndSelect('product.productTags', 'allProductTags')
+      .leftJoinAndSelect('allProductTags.tag', 'tag')
+      .where('product.status = :status', { status: ProductStatus.ACTIVE });
+
+    if (excludeId !== undefined) {
+      queryBuilder.andWhere('product.id != :excludeId', { excludeId });
+    }
+
+    const matchConditions: string[] = [];
+    if (tagIds.size > 0) {
+      queryBuilder.leftJoin('product.productTags', 'matchTag');
+      matchConditions.push('matchTag.tagId IN (:...tagIds)');
+    }
+    if (communityId !== undefined) {
+      matchConditions.push('product.communityId = :communityId');
+    }
+
+    queryBuilder.andWhere(`(${matchConditions.join(' OR ')})`, {
+      tagIds: [...tagIds],
+      communityId,
+    });
+
+    return queryBuilder
+      .distinct(true)
+      .orderBy('product.createdAt', 'DESC')
+      .take(query.limit)
+      .getMany();
   }
 
   private async ensureCommunityExists(communityId: number): Promise<void> {

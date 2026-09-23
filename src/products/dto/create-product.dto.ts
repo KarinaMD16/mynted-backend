@@ -4,6 +4,7 @@ import {
   ArrayMinSize,
   ArrayUnique,
   IsArray,
+  IsEnum,
   IsInt,
   IsNotEmpty,
   IsNumber,
@@ -14,6 +15,7 @@ import {
 } from 'class-validator';
 import { ApiHideProperty, ApiProperty } from '@nestjs/swagger';
 import { parseIntegerArray } from '../../community/dto/create-community.dto';
+import { ProductCondition, ProductType } from '../entities/product.entity';
 
 const REQUIRED_PRODUCT_TAG_COUNT = 3;
 
@@ -33,6 +35,20 @@ export class CreateProductDto {
   @IsNumber({ maxDecimalPlaces: 2 })
   @IsPositive()
   price!: number;
+
+  @ApiProperty({ enum: ProductType, example: ProductType.SALE })
+  @IsEnum(ProductType, { message: 'type debe ser sale o exchange' })
+  type!: ProductType;
+
+  @ApiProperty({
+    enum: ProductCondition,
+    example: ProductCondition.NEW,
+  })
+  @IsEnum(ProductCondition, {
+    message:
+      'condition debe ser new, like_new, good_condition o used_with_details',
+  })
+  condition!: ProductCondition;
 
   @ApiProperty({
     type: [Number],

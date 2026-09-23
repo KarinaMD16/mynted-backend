@@ -19,6 +19,7 @@ describe('CommunityService community listings', () => {
     {} as UsersService,
     {} as never,
     {} as never,
+    {} as never,
   );
 
   const query: GetCommunitiesQueryDto = {

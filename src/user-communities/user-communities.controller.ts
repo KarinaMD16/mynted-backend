@@ -80,7 +80,8 @@ export class UserCommunitiesController {
   @ApiOperation({
     summary:
       'Unirse a las comunidades recomendadas en el onboarding (0 para omitir). ' +
-      'Crea un communityProfile con rol member por cada una; no duplica si ya pertenece.',
+      'Por cada una: si es pública crea un communityProfile (member); si es privada crea ' +
+      'una solicitud pendiente. No duplica si ya es miembro o ya tiene una solicitud pendiente.',
   })
   joinCommunities(
     @Req() req: AuthenticatedRequest,

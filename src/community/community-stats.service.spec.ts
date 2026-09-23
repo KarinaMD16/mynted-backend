@@ -42,6 +42,7 @@ describe('CommunityService.getStats', () => {
     {} as CloudinaryService,
     {} as UsersService,
     communityProfileRepository as unknown as Repository<CommunityProfile>,
+    {} as never,
     postRepository as unknown as Repository<Post>,
   );
 

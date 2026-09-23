@@ -34,6 +34,7 @@ describe('CommunityService moderator management', () => {
     {} as UsersService,
     communityProfileRepository as unknown as Repository<CommunityProfile>,
     {} as never,
+    {} as never,
   );
 
   beforeEach(() => {

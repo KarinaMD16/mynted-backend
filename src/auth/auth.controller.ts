@@ -27,14 +27,7 @@ import {
   AuthenticatedRequest,
   RefreshAuthenticatedRequest,
 } from './types/authenticated-request';
-
-const DEFAULT_ACCESS_EXPIRES_IN_SECONDS = 900; // 15 min
-const DEFAULT_REFRESH_EXPIRES_IN_SECONDS = 60 * 60 * 24 * 7; // 7 días
-
-interface AuthTokens {
-  accessToken: string;
-  refreshToken: string;
-}
+import { setAuthCookies } from './auth-cookies.util';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -51,7 +44,7 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response,
   ) {
     const { user, ...tokens } = await this.authService.login(dto);
-    this.setAuthCookies(res, tokens);
+    setAuthCookies(res, tokens, this.configService);
     return { user: this.toSafeUser(user) };
   }
 
@@ -66,7 +59,7 @@ export class AuthController {
   ) {
     const { user, isNewUser, ...tokens } =
       await this.authService.loginWithGoogle(dto.idToken);
-    this.setAuthCookies(res, tokens);
+    setAuthCookies(res, tokens, this.configService);
     return { user: this.toSafeUser(user), isNewUser };
   }
 
@@ -81,7 +74,7 @@ export class AuthController {
   ) {
     const { user, isNewUser, ...tokens } =
       await this.authService.loginWithFacebook(dto.accessToken);
-    this.setAuthCookies(res, tokens);
+    setAuthCookies(res, tokens, this.configService);
     return { user: this.toSafeUser(user), isNewUser };
   }
 
@@ -99,7 +92,7 @@ export class AuthController {
     const { user, ...tokens } = await this.authService.refreshSession(
       req.user.userId,
     );
-    this.setAuthCookies(res, tokens);
+    setAuthCookies(res, tokens, this.configService);
     return { user: this.toSafeUser(user) };
   }
 
@@ -170,38 +163,6 @@ export class AuthController {
   async confirmEmailChange(@Body() dto: ConfirmEmailChangeDto) {
     await this.authService.confirmEmailChange(dto);
     return { message: 'Email actualizado correctamente' };
-  }
-
-  private setAuthCookies(res: Response, tokens: AuthTokens): void {
-    const cookieOptions = {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production', // en local (http) tiene que ir false
-      sameSite: 'lax' as const,
-    };
-
-    res.cookie('access_token', tokens.accessToken, {
-      ...cookieOptions,
-      maxAge: this.getExpiresInMs(
-        'JWT_EXPIRES_IN_SECONDS',
-        DEFAULT_ACCESS_EXPIRES_IN_SECONDS,
-      ),
-    });
-
-    res.cookie('refresh_token', tokens.refreshToken, {
-      ...cookieOptions,
-      maxAge: this.getExpiresInMs(
-        'JWT_REFRESH_EXPIRES_IN_SECONDS',
-        DEFAULT_REFRESH_EXPIRES_IN_SECONDS,
-      ),
-    });
-  }
-
-  private getExpiresInMs(envKey: string, defaultSeconds: number): number {
-    const seconds = parseInt(
-      this.configService.get<string>(envKey) ?? String(defaultSeconds),
-      10,
-    );
-    return seconds * 1000;
   }
 
   private toSafeUser(user: User) {

@@ -58,6 +58,7 @@ describe('CommunityService.create', () => {
       usersService as unknown as UsersService,
       {} as never,
       {} as never,
+      {} as never,
     );
 
     await service.create(

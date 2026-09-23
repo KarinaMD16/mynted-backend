@@ -573,4 +573,62 @@ export class CommunityController {
   ) {
     return this.communityService.removeModerator(communityId, profileId);
   }
+
+  @Get('communities/:communityId/join-requests')
+  @UseGuards(JwtAuthGuard, CommunityRoleGuard)
+  @RequireCommunityRole(
+    CommunityProfileRole.OWNER,
+    CommunityProfileRole.MODERATOR,
+  )
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary:
+      'Listar las solicitudes pendientes para unirse a una comunidad privada',
+  })
+  findJoinRequests(@Param('communityId', ParseIntPipe) communityId: number) {
+    return this.communityService.findJoinRequests(communityId);
+  }
+
+  @Patch('communities/:communityId/join-requests/:requestId/accept')
+  @UseGuards(JwtAuthGuard, CommunityRoleGuard)
+  @RequireCommunityRole(
+    CommunityProfileRole.OWNER,
+    CommunityProfileRole.MODERATOR,
+  )
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary:
+      'Aceptar una solicitud de unión: crea el communityProfile (member)',
+  })
+  acceptJoinRequest(
+    @Param('communityId', ParseIntPipe) communityId: number,
+    @Param('requestId', ParseIntPipe) requestId: number,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.communityService.acceptJoinRequest(
+      communityId,
+      requestId,
+      request.user.userId,
+    );
+  }
+
+  @Patch('communities/:communityId/join-requests/:requestId/reject')
+  @UseGuards(JwtAuthGuard, CommunityRoleGuard)
+  @RequireCommunityRole(
+    CommunityProfileRole.OWNER,
+    CommunityProfileRole.MODERATOR,
+  )
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Rechazar una solicitud de unión' })
+  rejectJoinRequest(
+    @Param('communityId', ParseIntPipe) communityId: number,
+    @Param('requestId', ParseIntPipe) requestId: number,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.communityService.rejectJoinRequest(
+      communityId,
+      requestId,
+      request.user.userId,
+    );
+  }
 }
