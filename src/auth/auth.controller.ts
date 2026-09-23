@@ -9,6 +9,7 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+import { ConfigService } from '@nestjs/config';
 import { Response } from 'express';
 import { AuthService } from './auth.service';
 import { User } from '../users/entities/user.entity';
@@ -16,50 +17,82 @@ import { LoginDto } from './dto/login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
+import { RequestEmailChangeDto } from './dto/request-email-change.dto';
+import { ConfirmEmailChangeDto } from './dto/confirm-email-change.dto';
 import { GoogleLoginDto } from './dto/google-login.dto';
 import { FacebookLoginDto } from './dto/facebook-login.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
-import { AuthenticatedRequest } from './types/authenticated-request';
+import { JwtRefreshGuard } from './guards/jwt-refresh.guard';
+import {
+  AuthenticatedRequest,
+  RefreshAuthenticatedRequest,
+} from './types/authenticated-request';
+import { setAuthCookies } from './auth-cookies.util';
 
 @ApiTags('auth')
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly configService: ConfigService,
+  ) {}
 
   @Post('login')
-  @ApiOperation({ summary: 'Login de usuario' })
+  @ApiOperation({ summary: 'Login de usuario (con email o username)' })
   async login(
     @Body() dto: LoginDto,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const { accessToken, user } = await this.authService.login(dto);
-    this.setSessionCookie(res, accessToken);
+    const { user, ...tokens } = await this.authService.login(dto);
+    setAuthCookies(res, tokens, this.configService);
     return { user: this.toSafeUser(user) };
   }
 
   @Post('google')
-  @ApiOperation({ summary: 'Login/registro con Google' })
+  @ApiOperation({
+    summary:
+      'Login/registro con Google. isNewUser indica si se creó la cuenta ahora (dispara el onboarding)',
+  })
   async loginWithGoogle(
     @Body() dto: GoogleLoginDto,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const { accessToken, user } = await this.authService.loginWithGoogle(
-      dto.idToken,
-    );
-    this.setSessionCookie(res, accessToken);
-    return { user: this.toSafeUser(user) };
+    const { user, isNewUser, ...tokens } =
+      await this.authService.loginWithGoogle(dto.idToken);
+    setAuthCookies(res, tokens, this.configService);
+    return { user: this.toSafeUser(user), isNewUser };
   }
 
   @Post('facebook')
-  @ApiOperation({ summary: 'Login/registro con Facebook' })
+  @ApiOperation({
+    summary:
+      'Login/registro con Facebook. isNewUser indica si se creó la cuenta ahora (dispara el onboarding)',
+  })
   async loginWithFacebook(
     @Body() dto: FacebookLoginDto,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const { accessToken, user } = await this.authService.loginWithFacebook(
-      dto.accessToken,
+    const { user, isNewUser, ...tokens } =
+      await this.authService.loginWithFacebook(dto.accessToken);
+    setAuthCookies(res, tokens, this.configService);
+    return { user: this.toSafeUser(user), isNewUser };
+  }
+
+  @Post('refresh')
+  @UseGuards(JwtRefreshGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary:
+      'Renovar el access_token usando el refresh_token (rota ambos). 401 si el refresh_token es inválido o expiró',
+  })
+  async refresh(
+    @Req() req: RefreshAuthenticatedRequest,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const { user, ...tokens } = await this.authService.refreshSession(
+      req.user.userId,
     );
-    this.setSessionCookie(res, accessToken);
+    setAuthCookies(res, tokens, this.configService);
     return { user: this.toSafeUser(user) };
   }
 
@@ -67,6 +100,7 @@ export class AuthController {
   @ApiOperation({ summary: 'Cerrar sesión' })
   logout(@Res({ passthrough: true }) res: Response) {
     res.clearCookie('access_token');
+    res.clearCookie('refresh_token');
     return { message: 'Sesión cerrada' };
   }
 
@@ -102,13 +136,33 @@ export class AuthController {
     return { message: 'Contraseña actualizada correctamente' };
   }
 
-  private setSessionCookie(res: Response, accessToken: string): void {
-    res.cookie('access_token', accessToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production', // en local (http) tiene que ir false
-      sameSite: 'lax',
-      maxAge: 24 * 60 * 60 * 1000, // 1 día, ajusta según JWT_EXPIRES_IN
-    });
+  @Post('request-email-change')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Solicitar cambio de email estando autenticado. Envía un enlace de confirmación al nuevo correo',
+  })
+  async requestEmailChange(
+    @Req() req: AuthenticatedRequest,
+    @Body() dto: RequestEmailChangeDto,
+  ) {
+    await this.authService.requestEmailChange(req.user.userId, dto);
+    return {
+      message: 'Se ha enviado un enlace de confirmación al nuevo correo',
+    };
+  }
+
+  @Post('confirm-email-change')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Confirmar el cambio de email con el token recibido en el nuevo correo',
+  })
+  async confirmEmailChange(@Body() dto: ConfirmEmailChangeDto) {
+    await this.authService.confirmEmailChange(dto);
+    return { message: 'Email actualizado correctamente' };
   }
 
   private toSafeUser(user: User) {

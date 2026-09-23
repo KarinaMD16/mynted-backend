@@ -11,6 +11,7 @@ import {
 import { Category } from './category.entity';
 import { CommunityRule } from './community-rule.entity';
 import { CommunityTag } from './community-tag.entity';
+import { CommunityProfile } from './community-profile.entity';
 
 @Entity('community')
 @Unique('UQ_community_name', ['name'])
@@ -37,11 +38,11 @@ export class Community {
   @CreateDateColumn({ name: 'created_at', type: 'timestamp with time zone' })
   createdAt!: Date;
 
-  @Column({ name: 'image_url' })
-  imageUrl!: string;
+  @Column({ name: 'image_url', type: 'text', nullable: true })
+  imageUrl!: string | null;
 
-  @Column({ name: 'banner_url' })
-  bannerUrl!: string;
+  @Column({ name: 'banner_url', type: 'text', nullable: true })
+  bannerUrl!: string | null;
 
   @Column({ name: 'category_id' })
   categoryId!: number;
@@ -58,4 +59,7 @@ export class Community {
 
   @OneToMany(() => CommunityRule, (rule) => rule.community)
   rules!: CommunityRule[];
+
+  @OneToMany(() => CommunityProfile, (profile) => profile.community)
+  communityProfiles!: CommunityProfile[];
 }

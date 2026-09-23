@@ -6,7 +6,10 @@ import { AppService } from './app.service';
 import { UsersModule } from './users/users.module';
 import { AuthModule } from './auth/auth.module';
 import { CommunityModule } from './community/community.module';
-import { InterestsModule } from './interests/interests.module';
+import { UserTagsModule } from './user-tags/user-tags.module';
+import { UserCommunitiesModule } from './user-communities/user-communities.module';
+import { SellersModule } from './sellers/sellers.module';
+import { ProductsModule } from './products/products.module';
 
 @Module({
   imports: [
@@ -31,8 +34,11 @@ import { InterestsModule } from './interests/interests.module';
     }),
     UsersModule,
     AuthModule,
-    InterestsModule,
     CommunityModule,
+    UserTagsModule,
+    UserCommunitiesModule,
+    SellersModule,
+    ProductsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

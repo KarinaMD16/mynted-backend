@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { PassportModule } from '@nestjs/passport';
@@ -7,12 +7,13 @@ import { MailModule } from '../mail/mail.module';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { JwtStrategy } from './strategies/jwt.strategy';
+import { JwtRefreshStrategy } from './strategies/jwt-refresh.strategy';
 import { GoogleAuthService } from './social/google-auth.service';
 import { FacebookAuthService } from './social/facebook-auth.service';
 
 @Module({
   imports: [
-    UsersModule,
+    forwardRef(() => UsersModule),
     MailModule,
     PassportModule,
     JwtModule.registerAsync({
@@ -22,7 +23,7 @@ import { FacebookAuthService } from './social/facebook-auth.service';
         secret: configService.get<string>('JWT_SECRET'),
         signOptions: {
           expiresIn: parseInt(
-            configService.get<string>('JWT_EXPIRES_IN_SECONDS') ?? '86400',
+            configService.get<string>('JWT_EXPIRES_IN_SECONDS') ?? '900',
             10,
           ),
         },
@@ -30,6 +31,13 @@ import { FacebookAuthService } from './social/facebook-auth.service';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy, GoogleAuthService, FacebookAuthService],
+  providers: [
+    AuthService,
+    JwtStrategy,
+    JwtRefreshStrategy,
+    GoogleAuthService,
+    FacebookAuthService,
+  ],
+  exports: [AuthService],
 })
 export class AuthModule {}

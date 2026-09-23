@@ -3,18 +3,23 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   ParseIntPipe,
   Patch,
   Post,
   Query,
+  Req,
   UploadedFiles,
+  UseGuards,
   UseInterceptors,
   ValidationPipe,
 } from '@nestjs/common';
 import { FileFieldsInterceptor } from '@nestjs/platform-express';
 import {
   ApiBadRequestResponse,
+  ApiBearerAuth,
   ApiBody,
   ApiConflictResponse,
   ApiConsumes,
@@ -30,8 +35,16 @@ import { CreateCommunityDto } from './dto/create-community.dto';
 import { CreateCommunityRuleDto } from './dto/create-community-rule.dto';
 import { CreateTagDto } from './dto/create-tag.dto';
 import { GetTagsQueryDto } from './dto/get-tags-query.dto';
+import { GetCommunitiesQueryDto } from './dto/get-communities-query.dto';
 import { UpdateCommunityDto } from './dto/update-community.dto';
 import { UpdateCommunityRuleDto } from './dto/update-community-rule.dto';
+import { UpdateTagDto } from './dto/update-tag.dto';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { SuperAdminGuard } from '../auth/guards/super-admin.guard';
+import { AuthenticatedRequest } from '../auth/types/authenticated-request';
+import { CommunityRoleGuard } from './guards/community-role.guard';
+import { RequireCommunityRole } from './decorators/require-community-role.decorator';
+import { CommunityProfileRole } from './entities/community-profile.entity';
 
 interface CommunityFiles {
   image?: Express.Multer.File[];
@@ -44,6 +57,8 @@ export class CommunityController {
   constructor(private readonly communityService: CommunityService) {}
 
   @Post('communities')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Crear una comunidad' })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
@@ -63,8 +78,6 @@ export class CommunityController {
         'categoryId',
         'tagIds',
         'rules',
-        'image',
-        'banner',
       ],
       properties: {
         name: {
@@ -111,21 +124,24 @@ export class CommunityController {
         image: {
           type: 'string',
           format: 'binary',
-          description: 'Imagen principal de la comunidad',
+          description: 'Imagen principal de la comunidad (opcional)',
         },
         banner: {
           type: 'string',
           format: 'binary',
-          description: 'Imagen de portada de la comunidad',
+          description: 'Imagen de portada de la comunidad (opcional)',
         },
       },
     },
   })
   @UseInterceptors(
-    FileFieldsInterceptor([
-      { name: 'image', maxCount: 1 },
-      { name: 'banner', maxCount: 1 },
-    ]),
+    FileFieldsInterceptor(
+      [
+        { name: 'image', maxCount: 1 },
+        { name: 'banner', maxCount: 1 },
+      ],
+      { limits: { fileSize: 5 * 1024 * 1024 } },
+    ),
   )
   create(
     @Body(
@@ -137,11 +153,13 @@ export class CommunityController {
     )
     dto: CreateCommunityDto,
     @UploadedFiles() files: CommunityFiles,
+    @Req() request: AuthenticatedRequest,
   ) {
     return this.communityService.create(
       dto,
       files?.image?.[0],
       files?.banner?.[0],
+      request.user.userId,
     );
   }
 
@@ -151,7 +169,62 @@ export class CommunityController {
     return this.communityService.findAllCategories();
   }
 
+  @Get('communities')
+  @ApiOperation({
+    summary: 'Listar comunidades activas con búsqueda, filtros y paginación',
+  })
+  findAllCommunities(
+    @Query(
+      new ValidationPipe({
+        transform: true,
+        whitelist: true,
+        forbidNonWhitelisted: true,
+      }),
+    )
+    query: GetCommunitiesQueryDto,
+  ) {
+    return this.communityService.findAllCommunities(query);
+  }
+
+  @Get('communities/by-slug/:slug')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Obtener el detalle de una comunidad por slug' })
+  findCommunityDetailBySlug(
+    @Param('slug') slug: string,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.communityService.findCommunityDetailBySlug(
+      slug,
+      request.user.userId,
+    );
+  }
+
+  @Get('communities/:communityId')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Obtener el detalle de una comunidad' })
+  findCommunityDetail(
+    @Param('communityId', ParseIntPipe) communityId: number,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.communityService.findCommunityDetail(
+      communityId,
+      request.user.userId,
+    );
+  }
+
+  @Get('communities/:communityId/stats')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Obtener estadísticas básicas de una comunidad' })
+  getCommunityStats(@Param('communityId', ParseIntPipe) communityId: number) {
+    return this.communityService.getStats(communityId);
+  }
+
   @Post('tags')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Crear un tag reutilizable' })
   createTag(@Body() dto: CreateTagDto) {
     return this.communityService.createTag(dto);
@@ -188,7 +261,35 @@ export class CommunityController {
     return this.communityService.findAllTags(query);
   }
 
+  @Get('tags/:id')
+  @ApiOperation({ summary: 'Obtener un tag por id' })
+  findTagById(@Param('id', ParseIntPipe) id: number) {
+    return this.communityService.findTagById(id);
+  }
+
+  @Patch('tags/:id')
+  @UseGuards(JwtAuthGuard, SuperAdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary:
+      '[Superadmin] Editar un tag (renombrar, recategorizar o marcar/desmarcar como principal para el onboarding)',
+  })
+  updateTag(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateTagDto) {
+    return this.communityService.updateTag(id, dto);
+  }
+
+  @Delete('tags/:id')
+  @UseGuards(JwtAuthGuard, SuperAdminGuard)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: '[Superadmin] Eliminar un tag' })
+  async deleteTag(@Param('id', ParseIntPipe) id: number) {
+    await this.communityService.deleteTag(id);
+  }
+
   @Get('communities/:communityId/rules')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Consultar las reglas de una comunidad' })
   @ApiParam({ name: 'communityId', type: Number, example: 5 })
   @ApiOkResponse({
@@ -206,6 +307,12 @@ export class CommunityController {
   }
 
   @Post('communities/:communityId/rules')
+  @UseGuards(JwtAuthGuard, CommunityRoleGuard)
+  @RequireCommunityRole(
+    CommunityProfileRole.OWNER,
+    CommunityProfileRole.MODERATOR,
+  )
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Crear una regla para una comunidad' })
   @ApiParam({ name: 'communityId', type: Number, example: 5 })
   @ApiCreatedResponse({
@@ -242,6 +349,12 @@ export class CommunityController {
   }
 
   @Patch('communities/:communityId/rules/:ruleId')
+  @UseGuards(JwtAuthGuard, CommunityRoleGuard)
+  @RequireCommunityRole(
+    CommunityProfileRole.OWNER,
+    CommunityProfileRole.MODERATOR,
+  )
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Actualizar una regla de una comunidad' })
   @ApiParam({ name: 'communityId', type: Number, example: 5 })
   @ApiParam({ name: 'ruleId', type: Number, example: 11 })
@@ -268,6 +381,12 @@ export class CommunityController {
   }
 
   @Delete('communities/:communityId/rules/:ruleId')
+  @UseGuards(JwtAuthGuard, CommunityRoleGuard)
+  @RequireCommunityRole(
+    CommunityProfileRole.OWNER,
+    CommunityProfileRole.MODERATOR,
+  )
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Eliminar una regla de una comunidad' })
   @ApiParam({ name: 'communityId', type: Number, example: 5 })
   @ApiParam({ name: 'ruleId', type: Number, example: 11 })
@@ -285,7 +404,13 @@ export class CommunityController {
     return this.communityService.deleteRule(communityId, ruleId);
   }
 
-  @Patch('communities/:id')
+  @Patch('communities/:communityId')
+  @UseGuards(JwtAuthGuard, CommunityRoleGuard)
+  @RequireCommunityRole(
+    CommunityProfileRole.OWNER,
+    CommunityProfileRole.MODERATOR,
+  )
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Actualizar una comunidad' })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
@@ -345,13 +470,16 @@ export class CommunityController {
     },
   })
   @UseInterceptors(
-    FileFieldsInterceptor([
-      { name: 'image', maxCount: 1 },
-      { name: 'banner', maxCount: 1 },
-    ]),
+    FileFieldsInterceptor(
+      [
+        { name: 'image', maxCount: 1 },
+        { name: 'banner', maxCount: 1 },
+      ],
+      { limits: { fileSize: 5 * 1024 * 1024 } },
+    ),
   )
   update(
-    @Param('id', ParseIntPipe) id: number,
+    @Param('communityId', ParseIntPipe) communityId: number,
     @Body(
       new ValidationPipe({
         transform: true,
@@ -363,50 +491,144 @@ export class CommunityController {
     @UploadedFiles() files: CommunityFiles,
   ) {
     return this.communityService.update(
-      id,
+      communityId,
       dto,
       files?.image?.[0],
       files?.banner?.[0],
     );
   }
 
-  @Patch('communities/:id/deactivate')
+  @Patch('communities/:communityId/deactivate')
+  @UseGuards(JwtAuthGuard, CommunityRoleGuard)
+  @RequireCommunityRole(CommunityProfileRole.OWNER)
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Desactivar una comunidad' })
   @ApiOkResponse({
     schema: { example: { message: 'Comunidad desactivada exitosamente' } },
   })
-  deactivate(@Param('id', ParseIntPipe) id: number) {
-    return this.communityService.deactivate(id);
+  deactivate(@Param('communityId', ParseIntPipe) communityId: number) {
+    return this.communityService.deactivate(communityId);
   }
 
-  @Patch('communities/:id/activate')
+  @Patch('communities/:communityId/activate')
+  @UseGuards(JwtAuthGuard, CommunityRoleGuard)
+  @RequireCommunityRole(CommunityProfileRole.OWNER)
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Activar nuevamente una comunidad' })
   @ApiOkResponse({
     schema: { example: { message: 'Comunidad activada exitosamente' } },
   })
-  activate(@Param('id', ParseIntPipe) id: number) {
-    return this.communityService.activate(id);
+  activate(@Param('communityId', ParseIntPipe) communityId: number) {
+    return this.communityService.activate(communityId);
   }
 
-  @Patch('communities/:id/public')
+  @Patch('communities/:communityId/public')
+  @UseGuards(JwtAuthGuard, CommunityRoleGuard)
+  @RequireCommunityRole(CommunityProfileRole.OWNER)
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Cambiar una comunidad a pública' })
   @ApiOkResponse({
     schema: {
       example: { message: 'Comunidad configurada como pública exitosamente' },
     },
   })
-  makePublic(@Param('id', ParseIntPipe) id: number) {
-    return this.communityService.makePublic(id);
+  makePublic(@Param('communityId', ParseIntPipe) communityId: number) {
+    return this.communityService.makePublic(communityId);
   }
 
-  @Patch('communities/:id/private')
+  @Patch('communities/:communityId/private')
+  @UseGuards(JwtAuthGuard, CommunityRoleGuard)
+  @RequireCommunityRole(CommunityProfileRole.OWNER)
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Cambiar una comunidad a privada' })
   @ApiOkResponse({
     schema: {
       example: { message: 'Comunidad configurada como privada exitosamente' },
     },
   })
-  makePrivate(@Param('id', ParseIntPipe) id: number) {
-    return this.communityService.makePrivate(id);
+  makePrivate(@Param('communityId', ParseIntPipe) communityId: number) {
+    return this.communityService.makePrivate(communityId);
+  }
+
+  @Post('communities/:communityId/moderators/:profileId')
+  @UseGuards(JwtAuthGuard, CommunityRoleGuard)
+  @RequireCommunityRole(CommunityProfileRole.OWNER)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Asignar el rol de moderador a un perfil' })
+  addModerator(
+    @Param('communityId', ParseIntPipe) communityId: number,
+    @Param('profileId', ParseIntPipe) profileId: number,
+  ) {
+    return this.communityService.addModerator(communityId, profileId);
+  }
+
+  @Delete('communities/:communityId/moderators/:profileId')
+  @UseGuards(JwtAuthGuard, CommunityRoleGuard)
+  @RequireCommunityRole(CommunityProfileRole.OWNER)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Quitar el rol de moderador a un perfil' })
+  removeModerator(
+    @Param('communityId', ParseIntPipe) communityId: number,
+    @Param('profileId', ParseIntPipe) profileId: number,
+  ) {
+    return this.communityService.removeModerator(communityId, profileId);
+  }
+
+  @Get('communities/:communityId/join-requests')
+  @UseGuards(JwtAuthGuard, CommunityRoleGuard)
+  @RequireCommunityRole(
+    CommunityProfileRole.OWNER,
+    CommunityProfileRole.MODERATOR,
+  )
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary:
+      'Listar las solicitudes pendientes para unirse a una comunidad privada',
+  })
+  findJoinRequests(@Param('communityId', ParseIntPipe) communityId: number) {
+    return this.communityService.findJoinRequests(communityId);
+  }
+
+  @Patch('communities/:communityId/join-requests/:requestId/accept')
+  @UseGuards(JwtAuthGuard, CommunityRoleGuard)
+  @RequireCommunityRole(
+    CommunityProfileRole.OWNER,
+    CommunityProfileRole.MODERATOR,
+  )
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary:
+      'Aceptar una solicitud de unión: crea el communityProfile (member)',
+  })
+  acceptJoinRequest(
+    @Param('communityId', ParseIntPipe) communityId: number,
+    @Param('requestId', ParseIntPipe) requestId: number,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.communityService.acceptJoinRequest(
+      communityId,
+      requestId,
+      request.user.userId,
+    );
+  }
+
+  @Patch('communities/:communityId/join-requests/:requestId/reject')
+  @UseGuards(JwtAuthGuard, CommunityRoleGuard)
+  @RequireCommunityRole(
+    CommunityProfileRole.OWNER,
+    CommunityProfileRole.MODERATOR,
+  )
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Rechazar una solicitud de unión' })
+  rejectJoinRequest(
+    @Param('communityId', ParseIntPipe) communityId: number,
+    @Param('requestId', ParseIntPipe) requestId: number,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.communityService.rejectJoinRequest(
+      communityId,
+      requestId,
+      request.user.userId,
+    );
   }
 }

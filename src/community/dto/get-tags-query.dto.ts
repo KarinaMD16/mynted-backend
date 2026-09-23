@@ -1,6 +1,7 @@
-import { Type } from 'class-transformer';
-import { IsInt, IsOptional, Max, Min } from 'class-validator';
+import { Transform, TransformFnParams, Type } from 'class-transformer';
+import { IsBoolean, IsInt, IsOptional, Max, Min } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
+import { parseBoolean, parseInteger } from './create-community.dto';
 
 export class GetTagsQueryDto {
   @ApiPropertyOptional({
@@ -28,4 +29,24 @@ export class GetTagsQueryDto {
   @Min(1)
   @Max(100)
   limit: number = 10;
+
+  @ApiPropertyOptional({
+    example: true,
+    description:
+      'Filtra por tags principales (true, para el picker de onboarding) o hiper específicos (false)',
+  })
+  @Transform(({ value }: TransformFnParams) => parseBoolean(value as unknown))
+  @IsOptional()
+  @IsBoolean()
+  isInterest?: boolean;
+
+  @ApiPropertyOptional({
+    example: 1,
+    description: 'Filtra por categoría',
+  })
+  @Transform(({ value }: TransformFnParams) => parseInteger(value as unknown))
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  categoryId?: number;
 }

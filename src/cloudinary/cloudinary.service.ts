@@ -1,4 +1,9 @@
-import { BadRequestException, Inject, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  InternalServerErrorException,
+} from '@nestjs/common';
 import { UploadApiResponse, v2 as cloudinary } from 'cloudinary';
 import { Readable } from 'node:stream';
 import 'multer';
@@ -66,12 +71,20 @@ export class CloudinaryService {
         },
         (error, result) => {
           if (error) {
-            reject(new Error(error.message));
+            reject(
+              new BadRequestException(
+                'El archivo no es una imagen válida o está corrupto',
+              ),
+            );
             return;
           }
 
           if (!result) {
-            reject(new Error('Cloudinary no devolvió una respuesta válida'));
+            reject(
+              new InternalServerErrorException(
+                'Cloudinary no devolvió una respuesta válida',
+              ),
+            );
             return;
           }
 
