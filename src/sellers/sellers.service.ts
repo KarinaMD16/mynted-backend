@@ -101,7 +101,7 @@ export class SellersService {
   async findPendingRequests(): Promise<Seller[]> {
     return this.sellerRepository.find({
       where: { user: { sellerRequestStatus: SellerRequestStatus.PENDING } },
-      relations: { user: true },
+      relations: { user: true, paymentInfo: true },
       order: { user: { sellerRequestedAt: 'ASC' } },
     });
   }
@@ -112,7 +112,7 @@ export class SellersService {
         userId,
         user: { sellerRequestStatus: SellerRequestStatus.PENDING },
       },
-      relations: { user: true },
+      relations: { user: true, paymentInfo: true },
     });
 
     if (!seller) {
