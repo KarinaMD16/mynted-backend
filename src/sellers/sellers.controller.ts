@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Get,
   Param,
   ParseUUIDPipe,
   Patch,
@@ -33,6 +34,27 @@ export class SellersController {
     @Body() dto: RequestSellerDto,
   ) {
     return this.sellersService.requestSeller(req.user.userId, dto);
+  }
+
+  @Get('seller-requests')
+  @UseGuards(JwtAuthGuard, SuperAdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: '[Superadmin] Listar las solicitudes de vendedor pendientes',
+  })
+  findPendingRequests() {
+    return this.sellersService.findPendingRequests();
+  }
+
+  @Get('seller-request/:id')
+  @UseGuards(JwtAuthGuard, SuperAdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary:
+      '[Superadmin] Ver el detalle de la solicitud de vendedor pendiente de un usuario',
+  })
+  findPendingRequest(@Param('id', ParseUUIDPipe) id: string) {
+    return this.sellersService.findPendingRequestByUserId(id);
   }
 
   @Patch(':id/seller-status')

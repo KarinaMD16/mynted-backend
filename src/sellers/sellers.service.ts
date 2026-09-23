@@ -98,6 +98,32 @@ export class SellersService {
     }
   }
 
+  async findPendingRequests(): Promise<Seller[]> {
+    return this.sellerRepository.find({
+      where: { user: { sellerRequestStatus: SellerRequestStatus.PENDING } },
+      relations: { user: true },
+      order: { user: { sellerRequestedAt: 'ASC' } },
+    });
+  }
+
+  async findPendingRequestByUserId(userId: string): Promise<Seller> {
+    const seller = await this.sellerRepository.findOne({
+      where: {
+        userId,
+        user: { sellerRequestStatus: SellerRequestStatus.PENDING },
+      },
+      relations: { user: true },
+    });
+
+    if (!seller) {
+      throw new NotFoundException(
+        'Este usuario no tiene una solicitud de vendedor pendiente',
+      );
+    }
+
+    return seller;
+  }
+
   async updateSellerStatus(
     targetUserId: string,
     dto: UpdateSellerStatusDto,
