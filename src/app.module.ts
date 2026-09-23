@@ -32,12 +32,17 @@ import { ProductsModule } from './products/products.module';
         synchronize: true,
       }),
     }),
+    // SellersModule antes que UsersModule: ambos comparten el prefijo
+    // 'users' y SellersController registra rutas literales
+    // (seller-requests, seller-request/:id) que un GET /users/:id
+    // registrado primero interceptaría (Express/Nest matchean rutas en
+    // orden de registro, no por especificidad).
+    SellersModule,
     UsersModule,
     AuthModule,
     CommunityModule,
     UserTagsModule,
     UserCommunitiesModule,
-    SellersModule,
     ProductsModule,
   ],
   controllers: [AppController],
