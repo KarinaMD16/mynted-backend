@@ -10,7 +10,7 @@ import { Post } from './entities/post.entity';
 import { Tag } from './entities/tag.entity';
 import { GetCommunitiesQueryDto } from './dto/get-communities-query.dto';
 
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return */
 
 describe('CommunityService.findRecommendedCommunities', () => {
   const service = new CommunityService(
@@ -32,7 +32,7 @@ describe('CommunityService.findRecommendedCommunities', () => {
       name: `Community ${startId + index}`,
       description: 'Community',
       slug: `community-${startId + index}`,
-      isPrivate: false,
+      isPrivate: index === 0,
       imageUrl: null,
       bannerUrl: null,
       createdAt: new Date('2026-01-01T00:00:00.000Z'),
@@ -97,6 +97,74 @@ describe('CommunityService.findRecommendedCommunities', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+  });
+
+  it('does not filter private communities while keeping active and membership filters', () => {
+    const builders = Array.from({ length: 5 }, () => ({
+      subQuery: jest.fn().mockReturnThis(),
+      select: jest.fn().mockReturnThis(),
+      from: jest.fn().mockReturnThis(),
+      innerJoin: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockReturnThis(),
+      getQuery: jest.fn().mockReturnValue('SUBQUERY'),
+      leftJoinAndSelect: jest.fn().mockReturnThis(),
+      addSelect: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      addOrderBy: jest.fn().mockReturnThis(),
+    }));
+    const queuedBuilders = [...builders];
+    const communityRepository = {
+      createQueryBuilder: jest.fn(() => queuedBuilders.shift()),
+    };
+    const queryService = new CommunityService(
+      communityRepository as unknown as Repository<Community>,
+      {} as Repository<Category>,
+      {} as Repository<Tag>,
+      {} as Repository<CommunityRule>,
+      {} as never,
+      {} as CloudinaryService,
+      {} as UsersService,
+      {} as Repository<CommunityProfile>,
+      {} as never,
+      {} as Repository<Post>,
+    );
+
+    Object.getOwnPropertyDescriptor(
+      CommunityService.prototype,
+      'buildRecommendationQuery',
+    )?.value.call(queryService, 'user-id', 'interests');
+
+    const mainQuery = builders[4];
+    const conditions = [
+      ...((mainQuery?.where.mock.calls ?? []) as unknown[]),
+      ...((mainQuery?.andWhere.mock.calls ?? []) as unknown[]),
+    ];
+    const conditionText = JSON.stringify(conditions);
+
+    expect(conditionText).toContain('community.is_active');
+    expect(conditionText).toContain('recommendation_membership');
+    expect(conditionText).not.toContain('community.is_private');
+  });
+
+  it('allows private communities in interests, categories and popularity stages', async () => {
+    const { interestQuery, categoryQuery, popularityQuery } = mockStages(
+      1,
+      1,
+      1,
+    );
+
+    const result = await service.findRecommendedCommunities('user-id', {
+      page: 1,
+      limit: 3,
+    });
+
+    expect(result.data).toHaveLength(3);
+    expect(result.data.every((community) => community.isPrivate)).toBe(true);
+    expect(interestQuery.getRawAndEntities).toHaveBeenCalled();
+    expect(categoryQuery.getRawAndEntities).toHaveBeenCalled();
+    expect(popularityQuery.getRawAndEntities).toHaveBeenCalled();
   });
 
   it('returns only interest results when they fill the requested limit', async () => {

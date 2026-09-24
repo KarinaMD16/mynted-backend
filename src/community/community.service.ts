@@ -355,7 +355,6 @@ export class CommunityService {
       )
       .addSelect(popularityExpression, 'recommendation_popularity_score')
       .where('community.is_active = :isActive', { isActive: true })
-      .andWhere('community.is_private = :isPrivate', { isPrivate: false })
       .andWhere(
         `NOT EXISTS (
           SELECT 1
