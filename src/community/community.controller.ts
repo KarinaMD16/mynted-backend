@@ -33,6 +33,7 @@ import {
 import { CommunityService } from './community.service';
 import { CreateCommunityDto } from './dto/create-community.dto';
 import { CreateCommunityRuleDto } from './dto/create-community-rule.dto';
+import { CreateCategoryDto } from './dto/create-category.dto';
 import { CreateTagDto } from './dto/create-tag.dto';
 import { GetTagsQueryDto } from './dto/get-tags-query.dto';
 import { GetCommunitiesQueryDto } from './dto/get-communities-query.dto';
@@ -167,6 +168,40 @@ export class CommunityController {
   @ApiOperation({ summary: 'Consultar las categorías de comunidades' })
   findAllCategories() {
     return this.communityService.findAllCategories();
+  }
+
+  @Get('categories/inactive')
+  @UseGuards(JwtAuthGuard, SuperAdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: '[Superadmin] Consultar categorías inactivas',
+  })
+  findInactiveCategories() {
+    return this.communityService.findInactiveCategories();
+  }
+
+  @Post('categories')
+  @UseGuards(JwtAuthGuard, SuperAdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: '[Superadmin] Crear una categoría' })
+  createCategory(@Body() dto: CreateCategoryDto) {
+    return this.communityService.createCategory(dto);
+  }
+
+  @Patch('categories/:id/activate')
+  @UseGuards(JwtAuthGuard, SuperAdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: '[Superadmin] Activar una categoría' })
+  activateCategory(@Param('id', ParseIntPipe) id: number) {
+    return this.communityService.activateCategory(id);
+  }
+
+  @Patch('categories/:id/deactivate')
+  @UseGuards(JwtAuthGuard, SuperAdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: '[Superadmin] Desactivar una categoría' })
+  deactivateCategory(@Param('id', ParseIntPipe) id: number) {
+    return this.communityService.deactivateCategory(id);
   }
 
   @Get('communities')
