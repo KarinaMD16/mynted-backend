@@ -8,6 +8,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import {
   And,
   DataSource,
+  FindOptionsRelations,
   FindOptionsWhere,
   In,
   LessThanOrEqual,
@@ -37,7 +38,6 @@ import { ProductTag } from './entities/product-tag.entity';
 import { ProductImage } from './entities/product-image.entity';
 
 const RELATED_PRODUCTS_LIMIT = 4;
-const SHOP_SECTIONS = 3;
 const DEFAULT_CURRENCY = 'USD';
 
 const DETAIL_RELATIONS = {
@@ -87,8 +87,35 @@ export interface ShopSection {
   };
 }
 
+export interface SectionsPagination {
+  page: number;
+  limit: number;
+  totalSections: number;
+  totalPages: number;
+}
+
 export interface ShopResult {
   sections: ShopSection[];
+  pagination: SectionsPagination;
+}
+
+interface TagGroup {
+  tagId: number;
+  ids: number[];
+}
+
+interface SectionPaginationQuery {
+  page: number;
+  limit: number;
+  productsPage: number;
+  productsLimit: number;
+}
+
+interface TagSection<T> {
+  tag: { tagId: number; name: string };
+  totalProducts: number;
+  products: T[];
+  pagination: { page: number; limit: number; totalPages: number };
 }
 
 export interface MyProductCard {
@@ -118,6 +145,7 @@ export interface MyProductsSection {
 export interface MyProductsResult {
   totalProducts: number;
   sections: MyProductsSection[];
+  pagination: SectionsPagination;
 }
 
 export interface Paginated<T> {
@@ -271,22 +299,27 @@ export class ProductsService {
   }
 
   /**
-   * Pantalla Shop: hasta SHOP_SECTIONS secciones (#tag, cantidad y tarjetas).
-   * Con usuario autenticado se priorizan los tags de sus intereses; si tiene
-   * menos de SHOP_SECTIONS (o ninguno) se rellena con los tags más populares.
-   * Sin usuario (visitante) se muestran directamente los más populares.
-   * "Popular" = tag con más productos activos.
-   * Cada producto aparece en una sola sección: la primera (en orden) cuyo tag
-   * tenga, así un producto con varios tags de interés no se repite. Por eso
-   * una sección solo entra si tiene productos que no estén ya en una anterior
-   * (nunca se devuelven secciones vacías) y totalProducts cuenta solo los
-   * productos propios de esa sección.
+  /**
+   * Pantalla Shop con scroll infinito: una sección por cada tag que tenga
+   * productos activos, paginadas con page/limit (secciones por página).
+   * Con usuario autenticado primero van los tags de sus intereses y luego el
+   * resto; sin usuario o sin intereses, todos van por popularidad
+   * (tag con más productos activos). Cada producto aparece en una sola
+   * sección: la primera (en orden) cuyo tag tenga, así no se repite.
+   * Nunca se devuelven secciones vacías y totalProducts cuenta solo los
+   * productos propios de esa sección. productsPage/productsLimit paginan los
+   * productos dentro de cada sección.
    */
   async findShop(
     userId: string | undefined,
     query: GetShopQueryDto,
   ): Promise<ShopResult> {
-    const rankedTags = await this.rankTagsByActiveProducts();
+    const active = await this.productRepository.find({
+      where: { status: ProductStatus.ACTIVE },
+      select: { id: true, createdAt: true, productTags: { tagId: true } },
+      relations: { productTags: true },
+      order: { createdAt: 'DESC', id: 'DESC' },
+    });
 
     const interestTagIds = new Set<number>();
     if (userId) {
@@ -297,128 +330,128 @@ export class ProductsService {
       userTags.forEach((userTag) => interestTagIds.add(userTag.tagId));
     }
 
-    const candidates: { tagId: number; source: ShopSectionSource }[] = [
-      ...rankedTags
-        .filter((tag) => interestTagIds.has(tag.tagId))
-        .map((tag) => ({ tagId: tag.tagId, source: 'interest' as const })),
-      ...rankedTags
-        .filter((tag) => !interestTagIds.has(tag.tagId))
-        .map((tag) => ({ tagId: tag.tagId, source: 'popular' as const })),
+    const ranked = this.rankTagIds(active);
+    const orderedTagIds = [
+      ...ranked.filter((tagId) => interestTagIds.has(tagId)),
+      ...ranked.filter((tagId) => !interestTagIds.has(tagId)),
     ];
 
-    const tags =
-      candidates.length === 0
-        ? []
-        : await this.tagRepository.find({
-            where: { tagId: In(candidates.map((item) => item.tagId)) },
-          });
+    const { sections, pagination } = await this.buildTagSections(
+      this.groupIdsByTag(active, orderedTagIds),
+      query,
+      { productTags: { tag: true }, seller: { user: true } },
+      (product) => this.toTagProductCard(product),
+    );
+
+    return {
+      sections: sections.map((section) => ({
+        ...section,
+        source: interestTagIds.has(section.tag.tagId)
+          ? ('interest' as const)
+          : ('popular' as const),
+      })),
+      pagination,
+    };
+  }
+
+  // Tags ordenados por cantidad de productos (desc) y luego por id.
+  private rankTagIds(products: Product[]): number[] {
+    const counts = new Map<number, number>();
+    for (const product of products) {
+      for (const { tagId } of product.productTags) {
+        counts.set(tagId, (counts.get(tagId) ?? 0) + 1);
+      }
+    }
+    return [...counts.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0] - b[0])
+      .map(([tagId]) => tagId);
+  }
+
+  // Asigna cada producto al primer tag (según orderedTagIds) que tenga, de
+  // modo que no se repita entre secciones. Omite tags sin productos propios.
+  private groupIdsByTag(
+    products: Product[],
+    orderedTagIds: number[],
+  ): TagGroup[] {
+    const rankOf = new Map(orderedTagIds.map((tagId, index) => [tagId, index]));
+    const idsByTag = new Map<number, number[]>();
+    for (const product of products) {
+      if (product.productTags.length === 0) continue;
+      const sectionTagId = product.productTags
+        .map((productTag) => productTag.tagId)
+        .sort((a, b) => rankOf.get(a)! - rankOf.get(b)!)[0];
+      const ids = idsByTag.get(sectionTagId) ?? [];
+      ids.push(product.id);
+      idsByTag.set(sectionTagId, ids);
+    }
+    return orderedTagIds
+      .filter((tagId) => idsByTag.has(tagId))
+      .map((tagId) => ({ tagId, ids: idsByTag.get(tagId)! }));
+  }
+
+  // Pagina las secciones (page/limit) y los productos dentro de cada una
+  // (productsPage/productsLimit); solo hidrata los productos de la ventana.
+  private async buildTagSections<T>(
+    groups: TagGroup[],
+    query: SectionPaginationQuery,
+    relations: FindOptionsRelations<Product>,
+    toCard: (product: Product) => T,
+  ): Promise<{
+    sections: TagSection<T>[];
+    pagination: SectionsPagination;
+  }> {
+    const windowGroups = groups.slice(
+      (query.page - 1) * query.limit,
+      query.page * query.limit,
+    );
+    const pageIdsByTag = new Map(
+      windowGroups.map(({ tagId, ids }) => [
+        tagId,
+        ids.slice(
+          (query.productsPage - 1) * query.productsLimit,
+          query.productsPage * query.productsLimit,
+        ),
+      ]),
+    );
+    const pageIds = [...pageIdsByTag.values()].flat();
+
+    const [tags, products] = await Promise.all([
+      windowGroups.length === 0
+        ? Promise.resolve([] as Tag[])
+        : this.tagRepository.find({
+            where: { tagId: In(windowGroups.map((group) => group.tagId)) },
+          }),
+      pageIds.length === 0
+        ? Promise.resolve([] as Product[])
+        : this.productRepository.find({
+            where: { id: In(pageIds) },
+            relations,
+          }),
+    ]);
     const tagById = new Map(tags.map((tag) => [tag.tagId, tag]));
-
-    const sections: ShopSection[] = [];
-    const earlierTagIds: number[] = [];
-
-    for (const { tagId, source } of candidates) {
-      if (sections.length >= SHOP_SECTIONS) break;
-
-      const { products, total } = await this.findActiveProductsByTag(
-        tagId,
-        earlierTagIds,
-        query.page,
-        query.limit,
-      );
-
-      if (total === 0) continue;
-
-      const tag = tagById.get(tagId)!;
-      sections.push({
-        tag: { tagId: tag.tagId, name: tag.name },
-        source,
-        totalProducts: total,
-        products,
-        pagination: {
-          page: query.page,
-          limit: query.limit,
-          totalPages: Math.max(1, Math.ceil(total / query.limit)),
-        },
-      });
-      earlierTagIds.push(tagId);
-    }
-
-    return { sections };
-  }
-
-  private async rankTagsByActiveProducts(): Promise<
-    { tagId: number; count: number }[]
-  > {
-    const rows = await this.dataSource
-      .createQueryBuilder()
-      .select('product_tag.tag_id', 'tagId')
-      .addSelect('COUNT(*)', 'count')
-      .from(ProductTag, 'product_tag')
-      .innerJoin(Product, 'product', 'product.id = product_tag.product_id')
-      .where('product.status = :status', { status: ProductStatus.ACTIVE })
-      .groupBy('product_tag.tag_id')
-      .orderBy('COUNT(*)', 'DESC')
-      .addOrderBy('product_tag.tag_id', 'ASC')
-      .getRawMany<{ tagId: number; count: string }>();
-
-    return rows.map((row) => ({
-      tagId: Number(row.tagId),
-      count: Number(row.count),
-    }));
-  }
-
-  // Se pagina primero por ids filtrados y luego se hidratan las relaciones:
-  // filtrar por productTags directamente haría que cada producto solo trajera
-  // el tag filtrado en vez de todos sus tags.
-  private async findActiveProductsByTag(
-    tagId: number,
-    excludedTagIds: number[],
-    page: number,
-    limit: number,
-  ): Promise<{ products: TagProductCard[]; total: number }> {
-    const idsQuery = this.productRepository
-      .createQueryBuilder('product')
-      .select(['product.id', 'product.createdAt'])
-      .innerJoin('product.productTags', 'matchTag', 'matchTag.tagId = :tagId', {
-        tagId,
-      })
-      .where('product.status = :status', { status: ProductStatus.ACTIVE });
-
-    if (excludedTagIds.length > 0) {
-      idsQuery.andWhere(
-        `NOT EXISTS (
-          SELECT 1 FROM product_tag earlier_tag
-          WHERE earlier_tag.product_id = product.id
-            AND earlier_tag.tag_id IN (:...excludedTagIds)
-        )`,
-        { excludedTagIds },
-      );
-    }
-
-    const [pageRows, total] = await idsQuery
-      .orderBy('product.createdAt', 'DESC')
-      .addOrderBy('product.id', 'DESC')
-      .skip((page - 1) * limit)
-      .take(limit)
-      .getManyAndCount();
-    const ids = pageRows.map((row) => row.id);
-
-    const products =
-      ids.length === 0
-        ? []
-        : await this.productRepository.find({
-            where: { id: In(ids) },
-            relations: { productTags: { tag: true }, seller: { user: true } },
-          });
-
     const productById = new Map(
       products.map((product) => [product.id, product]),
     );
 
     return {
-      products: ids.map((id) => this.toTagProductCard(productById.get(id)!)),
-      total,
+      sections: windowGroups.map(({ tagId, ids }) => ({
+        tag: { tagId, name: tagById.get(tagId)?.name ?? '' },
+        totalProducts: ids.length,
+        products: pageIdsByTag
+          .get(tagId)!
+          .map((id) => toCard(productById.get(id)!)),
+        pagination: {
+          page: query.productsPage,
+          limit: query.productsLimit,
+          totalPages: Math.ceil(ids.length / query.productsLimit),
+        },
+      })),
+      pagination: {
+        page: query.page,
+        limit: query.limit,
+        totalSections: groups.length,
+        totalPages: Math.ceil(groups.length / query.limit),
+      },
     };
   }
 
@@ -480,74 +513,14 @@ export class ProductsService {
       order: { createdAt: 'DESC', id: 'DESC' },
     });
 
-    const tagCounts = new Map<number, number>();
-    for (const product of matching) {
-      for (const { tagId } of product.productTags) {
-        tagCounts.set(tagId, (tagCounts.get(tagId) ?? 0) + 1);
-      }
-    }
-    const rankedTagIds = [...tagCounts.entries()]
-      .sort((a, b) => b[1] - a[1] || a[0] - b[0])
-      .map(([tagId]) => tagId);
-    const rankOf = new Map(rankedTagIds.map((tagId, index) => [tagId, index]));
-
-    const idsByTag = new Map<number, number[]>();
-    for (const product of matching) {
-      if (product.productTags.length === 0) continue;
-      const sectionTagId = product.productTags
-        .map((productTag) => productTag.tagId)
-        .sort((a, b) => rankOf.get(a)! - rankOf.get(b)!)[0];
-      const ids = idsByTag.get(sectionTagId) ?? [];
-      ids.push(product.id);
-      idsByTag.set(sectionTagId, ids);
-    }
-
-    const sectionTagIds = rankedTagIds.filter((tagId) => idsByTag.has(tagId));
-    if (sectionTagIds.length === 0) {
-      return { totalProducts: 0, sections: [] };
-    }
-
-    const pageIdsByTag = new Map(
-      sectionTagIds.map((tagId) => [
-        tagId,
-        idsByTag
-          .get(tagId)!
-          .slice((query.page - 1) * query.limit, query.page * query.limit),
-      ]),
-    );
-    const pageIds = [...pageIdsByTag.values()].flat();
-
-    const [tags, products] = await Promise.all([
-      this.tagRepository.find({ where: { tagId: In(sectionTagIds) } }),
-      pageIds.length === 0
-        ? Promise.resolve([] as Product[])
-        : this.productRepository.find({
-            where: { id: In(pageIds) },
-            relations: { productTags: { tag: true }, community: true },
-          }),
-    ]);
-    const tagById = new Map(tags.map((tag) => [tag.tagId, tag]));
-    const productById = new Map(
-      products.map((product) => [product.id, product]),
+    const { sections, pagination } = await this.buildTagSections(
+      this.groupIdsByTag(matching, this.rankTagIds(matching)),
+      query,
+      { productTags: { tag: true }, community: true },
+      (product) => this.toMyProductCard(product),
     );
 
-    const sections = sectionTagIds.map((tagId) => {
-      const total = idsByTag.get(tagId)!.length;
-      return {
-        tag: { tagId, name: tagById.get(tagId)?.name ?? '' },
-        totalProducts: total,
-        products: pageIdsByTag
-          .get(tagId)!
-          .map((id) => this.toMyProductCard(productById.get(id)!)),
-        pagination: {
-          page: query.page,
-          limit: query.limit,
-          totalPages: Math.ceil(total / query.limit),
-        },
-      };
-    });
-
-    return { totalProducts: matching.length, sections };
+    return { totalProducts: matching.length, sections, pagination };
   }
 
   private toMyProductCard(product: Product): MyProductCard {
