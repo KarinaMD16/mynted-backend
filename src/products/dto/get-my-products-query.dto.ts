@@ -52,7 +52,7 @@ export class GetMyProductsQueryDto {
     example: 1,
     default: 1,
     minimum: 1,
-    description: 'Página de productos dentro de cada sección (tag)',
+    description: 'Página de secciones (tags) para el scroll infinito',
   })
   @Type(() => Number)
   @IsOptional()
@@ -62,16 +62,44 @@ export class GetMyProductsQueryDto {
 
   @ApiPropertyOptional({
     type: Number,
+    example: 3,
+    default: 3,
+    minimum: 1,
+    maximum: 20,
+    description: 'Secciones (tags) por página',
+  })
+  @Type(() => Number)
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(20)
+  limit: number = 3;
+
+  @ApiPropertyOptional({
+    type: Number,
+    example: 1,
+    default: 1,
+    minimum: 1,
+    description: 'Página de productos dentro de cada sección',
+  })
+  @Type(() => Number)
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  productsPage: number = 1;
+
+  @ApiPropertyOptional({
+    type: Number,
     example: 8,
     default: 8,
     minimum: 1,
     maximum: 50,
-    description: 'Productos por sección (tag)',
+    description: 'Productos por sección',
   })
   @Type(() => Number)
   @IsOptional()
   @IsInt()
   @Min(1)
   @Max(50)
-  limit: number = 8;
+  productsLimit: number = 8;
 }

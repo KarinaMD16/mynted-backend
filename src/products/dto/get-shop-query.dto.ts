@@ -8,13 +8,41 @@ export class GetShopQueryDto {
     example: 1,
     default: 1,
     minimum: 1,
-    description: 'Página de productos dentro de cada sección',
+    description: 'Página de secciones (tags) para el scroll infinito',
   })
   @Type(() => Number)
   @IsOptional()
   @IsInt()
   @Min(1)
   page: number = 1;
+
+  @ApiPropertyOptional({
+    type: Number,
+    example: 3,
+    default: 3,
+    minimum: 1,
+    maximum: 20,
+    description: 'Secciones (tags) por página',
+  })
+  @Type(() => Number)
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(20)
+  limit: number = 3;
+
+  @ApiPropertyOptional({
+    type: Number,
+    example: 1,
+    default: 1,
+    minimum: 1,
+    description: 'Página de productos dentro de cada sección',
+  })
+  @Type(() => Number)
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  productsPage: number = 1;
 
   @ApiPropertyOptional({
     type: Number,
@@ -29,5 +57,5 @@ export class GetShopQueryDto {
   @IsInt()
   @Min(1)
   @Max(20)
-  limit: number = 4;
+  productsLimit: number = 4;
 }
