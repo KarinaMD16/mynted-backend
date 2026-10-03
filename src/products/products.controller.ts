@@ -28,6 +28,7 @@ import { UpdateProductDto } from './dto/update-product.dto';
 import { UpdateProductStatusDto } from './dto/update-product-status.dto';
 import { GetProductsQueryDto } from './dto/get-products-query.dto';
 import { GetRecommendedProductsQueryDto } from './dto/get-recommended-products-query.dto';
+import { GetShopQueryDto } from './dto/get-shop-query.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
 import { SellerGuard } from '../auth/guards/seller.guard';
@@ -155,6 +156,22 @@ export class ProductsController {
     @Query() query: GetRecommendedProductsQueryDto,
   ) {
     return this.productsService.findRecommended(request.user?.userId, query);
+  }
+
+  @Get('products/shop')
+  @UseGuards(OptionalJwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary:
+      'Pantalla Shop: hasta 3 secciones (tag, cantidad de productos y productos con vendedor, foto y verificación). ' +
+      'Con usuario autenticado prioriza los tags de sus intereses y rellena con los más populares; ' +
+      'sin usuario o sin intereses muestra los tags más populares (más productos activos)',
+  })
+  findShop(
+    @Req() request: OptionalAuthenticatedRequest,
+    @Query() query: GetShopQueryDto,
+  ) {
+    return this.productsService.findShop(request.user?.userId, query);
   }
 
   @Get('products')
