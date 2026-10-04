@@ -28,8 +28,17 @@ describe('ForumService', () => {
       select: jest.fn().mockReturnThis(),
       addSelect: jest.fn().mockReturnThis(),
       where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
       groupBy: jest.fn().mockReturnThis(),
       getRawMany: jest.fn().mockResolvedValue([]),
+      innerJoinAndSelect: jest.fn().mockReturnThis(),
+      leftJoinAndSelect: jest.fn().mockReturnThis(),
+      distinct: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      addOrderBy: jest.fn().mockReturnThis(),
+      skip: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
+      getManyAndCount: jest.fn().mockResolvedValue([[], 0]),
     })),
   });
 
@@ -148,5 +157,90 @@ describe('ForumService', () => {
     await ctx.service.votePost(10, 'user-id', { voteType: VoteType.UP });
 
     expect(ctx.postVoteRepository.remove).toHaveBeenCalled();
+  });
+
+  it('lists the global feed with public-community and tag filters', async () => {
+    const ctx = setup();
+    const builder = ctx.postRepository.createQueryBuilder();
+    ctx.postRepository.createQueryBuilder.mockReturnValue(builder);
+    const post = {
+      id: 10,
+      title: 'Global post',
+      body: 'Body',
+      postedAt: new Date(),
+      communityProfileId: 4,
+      communityProfile: {
+        communityProfileId: 4,
+        communityId: 7,
+        displayName: 'Author',
+        role: 'member',
+        community: {
+          id: 7,
+          name: 'Public community',
+          slug: 'public-community',
+          imageUrl: null,
+          isActive: true,
+          isPrivate: false,
+        },
+      },
+      postTags: [],
+      images: [],
+    } as unknown as Post;
+    builder.getManyAndCount.mockResolvedValue([[post], 1]);
+    ctx.profileRepository.find.mockResolvedValue([
+      { communityProfileId: 4, communityId: 7 },
+    ]);
+
+    const result = await ctx.service.findGlobalPosts('user-id', {
+      page: 1,
+      limit: 20,
+      tagIds: [1, 3],
+      search: '  pokemon  ',
+    });
+
+    expect(builder.where).toHaveBeenCalledWith(
+      'community.is_active = :isActive',
+      { isActive: true },
+    );
+    expect(builder.andWhere).toHaveBeenCalledWith(
+      'community.is_private = :isPrivate',
+      { isPrivate: false },
+    );
+    expect(builder.andWhere).toHaveBeenCalledWith(
+      expect.stringContaining('global_feed_filter_post_tag.tag_id IN'),
+      { tagIds: [1, 3] },
+    );
+    expect(builder.andWhere).toHaveBeenCalledWith(
+      '(post.title ILIKE :search OR post.body ILIKE :search)',
+      { search: '%pokemon%' },
+    );
+    expect(result).toMatchObject({
+      data: [
+        {
+          id: 10,
+          community: { id: 7, slug: 'public-community' },
+          replyCount: 0,
+        },
+      ],
+      pagination: { page: 1, limit: 20, total: 1, totalPages: 1 },
+    });
+  });
+
+  it('does not add a text filter when search only contains spaces', async () => {
+    const ctx = setup();
+    const builder = ctx.postRepository.createQueryBuilder();
+    ctx.postRepository.createQueryBuilder.mockReturnValue(builder);
+
+    await ctx.service.findGlobalPosts('user-id', {
+      page: 1,
+      limit: 20,
+      search: '   ',
+    });
+
+    expect(builder.andWhere).toHaveBeenCalledTimes(1);
+    expect(builder.andWhere).toHaveBeenCalledWith(
+      'community.is_private = :isPrivate',
+      { isPrivate: false },
+    );
   });
 });

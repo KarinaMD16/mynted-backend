@@ -23,6 +23,7 @@ import { RequireCommunityRole } from './decorators/require-community-role.decora
 import { CreatePostDto } from './dto/create-post.dto';
 import { CreateReplyDto } from './dto/create-reply.dto';
 import { GetPostsQueryDto } from './dto/get-posts-query.dto';
+import { GetGlobalPostsQueryDto } from './dto/get-global-posts-query.dto';
 import { VoteDto } from './dto/vote.dto';
 import { FavoriteItemType } from './entities/favorite.entity';
 import { ForumService } from './forum.service';
@@ -72,6 +73,15 @@ export class ForumController {
     @Req() request: AuthenticatedRequest,
   ) {
     return this.forumService.findPosts(communityId, request.user.userId, query);
+  }
+
+  @Get('posts')
+  @UseGuards(JwtAuthGuard)
+  findGlobalPosts(
+    @Query() query: GetGlobalPostsQueryDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.forumService.findGlobalPosts(request.user.userId, query);
   }
 
   @Get('posts/:postId')
