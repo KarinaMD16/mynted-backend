@@ -14,6 +14,15 @@ import { Tag } from './entities/tag.entity';
 import { CommunityProfile } from './entities/community-profile.entity';
 import { CommunityJoinRequest } from './entities/community-join-request.entity';
 import { Post } from './entities/post.entity';
+import { PostTag } from './entities/post-tag.entity';
+import { PostImage } from './entities/post-image.entity';
+import { Reply } from './entities/reply.entity';
+import { PostVote } from './entities/post-vote.entity';
+import { ReplyVote } from './entities/reply-vote.entity';
+import { Favorite } from './entities/favorite.entity';
+import { Product } from '../products/entities/product.entity';
+import { ForumController } from './forum.controller';
+import { ForumService } from './forum.service';
 import { CategorySeed } from './seeds/category.seed';
 import { TagSeed } from './seeds/tag.seed';
 
@@ -28,13 +37,21 @@ import { TagSeed } from './seeds/tag.seed';
       CommunityProfile,
       CommunityJoinRequest,
       Post,
+      PostTag,
+      PostImage,
+      Reply,
+      PostVote,
+      ReplyVote,
+      Favorite,
+      Product,
     ]),
     CloudinaryModule,
     UsersModule,
   ],
-  controllers: [CommunityController],
+  controllers: [CommunityController, ForumController],
   providers: [
     CommunityService,
+    ForumService,
     CategorySeed,
     TagSeed,
     SuperAdminGuard,

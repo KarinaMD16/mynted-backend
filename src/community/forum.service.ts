@@ -1,0 +1,636 @@
+import {
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { DataSource, In, Repository } from 'typeorm';
+import { CloudinaryService } from '../cloudinary/cloudinary.service';
+import { Product, ProductStatus } from '../products/entities/product.entity';
+import { CreatePostDto } from './dto/create-post.dto';
+import { CreateReplyDto } from './dto/create-reply.dto';
+import { GetPostsQueryDto } from './dto/get-posts-query.dto';
+import { VoteDto } from './dto/vote.dto';
+import { CommunityProfile } from './entities/community-profile.entity';
+import { Community } from './entities/community.entity';
+import { Favorite, FavoriteItemType } from './entities/favorite.entity';
+import { PostImage } from './entities/post-image.entity';
+import { PostTag } from './entities/post-tag.entity';
+import { PostVote } from './entities/post-vote.entity';
+import { Post } from './entities/post.entity';
+import { ReplyVote } from './entities/reply-vote.entity';
+import { Reply } from './entities/reply.entity';
+import { Tag } from './entities/tag.entity';
+import { VoteType } from './entities/vote-type.enum';
+
+interface PostFiles {
+  images?: Express.Multer.File[];
+}
+
+interface PostMetric {
+  upVotes: number;
+  downVotes: number;
+  timesSaved: number;
+  myVote: VoteType | null;
+  isSaved: boolean;
+}
+
+@Injectable()
+export class ForumService {
+  constructor(
+    @InjectRepository(Community)
+    private readonly communityRepository: Repository<Community>,
+    @InjectRepository(CommunityProfile)
+    private readonly communityProfileRepository: Repository<CommunityProfile>,
+    @InjectRepository(Post)
+    private readonly postRepository: Repository<Post>,
+    @InjectRepository(PostTag)
+    private readonly postTagRepository: Repository<PostTag>,
+    @InjectRepository(PostImage)
+    private readonly postImageRepository: Repository<PostImage>,
+    @InjectRepository(Tag)
+    private readonly tagRepository: Repository<Tag>,
+    @InjectRepository(Reply)
+    private readonly replyRepository: Repository<Reply>,
+    @InjectRepository(PostVote)
+    private readonly postVoteRepository: Repository<PostVote>,
+    @InjectRepository(ReplyVote)
+    private readonly replyVoteRepository: Repository<ReplyVote>,
+    @InjectRepository(Favorite)
+    private readonly favoriteRepository: Repository<Favorite>,
+    @InjectRepository(Product)
+    private readonly productRepository: Repository<Product>,
+    private readonly dataSource: DataSource,
+    private readonly cloudinaryService: CloudinaryService,
+  ) {}
+
+  async createPost(
+    communityId: number,
+    userId: string,
+    dto: CreatePostDto,
+    files: PostFiles,
+  ) {
+    const community = await this.getActiveCommunity(communityId);
+    const profile = await this.getMemberProfile(userId, communityId);
+    const tags = await this.getTags(dto.tagIds);
+    const uploads =
+      files.images && files.images.length > 0
+        ? await this.cloudinaryService.uploadImages(files.images)
+        : [];
+
+    const postId = await this.dataSource.transaction(async (manager) => {
+      const post = manager.create(Post, {
+        title: dto.title,
+        body: dto.body,
+        communityProfileId: profile.communityProfileId,
+      });
+      const savedPost = await manager.save(Post, post);
+
+      if (tags.length > 0) {
+        await manager.save(
+          PostTag,
+          tags.map((tag) =>
+            manager.create(PostTag, {
+              postId: savedPost.id,
+              tagId: tag.tagId,
+            }),
+          ),
+        );
+      }
+
+      if (uploads.length > 0) {
+        await manager.save(
+          PostImage,
+          uploads.map((upload, index) =>
+            manager.create(PostImage, {
+              postId: savedPost.id,
+              url: upload.url,
+              order: index + 1,
+            }),
+          ),
+        );
+      }
+
+      return savedPost.id;
+    });
+
+    return this.findPost(postId, userId, community);
+  }
+
+  async findPosts(
+    communityId: number,
+    userId: string,
+    query: GetPostsQueryDto,
+  ) {
+    await this.getActiveCommunity(communityId);
+    const profile = await this.communityProfileRepository.findOne({
+      where: { userId, communityId },
+      select: { communityProfileId: true },
+    });
+    const [posts, total] = await this.postRepository.findAndCount({
+      where: { communityProfile: { communityId } },
+      relations: {
+        communityProfile: true,
+        postTags: { tag: true },
+        images: true,
+      },
+      order: { postedAt: 'DESC', id: 'DESC' },
+      skip: (query.page - 1) * query.limit,
+      take: query.limit,
+    });
+
+    const metrics = await this.getPostMetrics(
+      posts.map((post) => post.id),
+      profile?.communityProfileId,
+      userId,
+    );
+    const replyCounts = await this.getReplyCounts(posts.map((post) => post.id));
+
+    return {
+      data: posts.map((post) =>
+        this.mapPost(post, metrics.get(post.id), replyCounts.get(post.id) ?? 0),
+      ),
+      pagination: {
+        page: query.page,
+        limit: query.limit,
+        total,
+        totalPages: Math.ceil(total / query.limit),
+      },
+    };
+  }
+
+  async findPost(postId: number, userId: string, knownCommunity?: Community) {
+    const post = await this.postRepository.findOne({
+      where: { id: postId },
+      relations: {
+        communityProfile: { community: true },
+        postTags: { tag: true },
+        images: true,
+      },
+    });
+
+    if (!post || !post.communityProfile?.community) {
+      throw new NotFoundException('Publicación no encontrada');
+    }
+
+    const community = knownCommunity ?? post.communityProfile.community;
+    if (!community.isActive) {
+      throw new NotFoundException('Publicación no encontrada');
+    }
+
+    const profile = await this.communityProfileRepository.findOne({
+      where: {
+        userId,
+        communityId: community.id,
+      },
+      select: { communityProfileId: true },
+    });
+    const metrics = await this.getPostMetrics(
+      [post.id],
+      profile?.communityProfileId,
+      userId,
+    );
+    const replyCounts = await this.getReplyCounts([post.id]);
+    const replies = await this.findReplies(post.id, userId);
+
+    return {
+      ...this.mapPost(
+        post,
+        metrics.get(post.id),
+        replyCounts.get(post.id) ?? 0,
+      ),
+      replies,
+    };
+  }
+
+  async createReply(postId: number, userId: string, dto: CreateReplyDto) {
+    const post = await this.getActivePost(postId);
+    const profile = await this.getMemberProfile(
+      userId,
+      post.communityProfile.communityId,
+    );
+
+    if (dto.parentReplyId !== undefined) {
+      const parent = await this.replyRepository.findOne({
+        where: { id: dto.parentReplyId, postId },
+      });
+      if (!parent) {
+        throw new NotFoundException(
+          'La respuesta padre no existe en esta publicación',
+        );
+      }
+    }
+
+    const reply = this.replyRepository.create({
+      body: dto.body,
+      postId,
+      communityProfileId: profile.communityProfileId,
+      parentReplyId: dto.parentReplyId ?? null,
+    });
+    const savedReply = await this.replyRepository.save(reply);
+    return this.findReplyResponse(savedReply.id, userId);
+  }
+
+  async findReplies(postId: number, userId: string) {
+    const post = await this.getActivePost(postId);
+    const replies = await this.replyRepository.find({
+      where: { postId },
+      relations: { communityProfile: true },
+      order: { postedAt: 'ASC', id: 'ASC' },
+    });
+    const profile = await this.communityProfileRepository.findOne({
+      where: { userId, communityId: post.communityProfile.communityId },
+      select: { communityProfileId: true },
+    });
+    const metrics = await this.getReplyMetrics(
+      replies.map((reply) => reply.id),
+      profile?.communityProfileId,
+      userId,
+    );
+
+    return replies.map((reply) => ({
+      id: reply.id,
+      body: reply.body,
+      postedAt: reply.postedAt,
+      postId: reply.postId,
+      communityProfileId: reply.communityProfileId,
+      parentReplyId: reply.parentReplyId,
+      author: reply.communityProfile
+        ? {
+            communityProfileId: reply.communityProfile.communityProfileId,
+            displayName: reply.communityProfile.displayName,
+            role: reply.communityProfile.role,
+          }
+        : null,
+      ...(metrics.get(reply.id) ?? this.emptyMetric()),
+    }));
+  }
+
+  async findReplyResponse(replyId: number, userId: string) {
+    const reply = await this.replyRepository.findOne({
+      where: { id: replyId },
+      relations: { communityProfile: true, post: { communityProfile: true } },
+    });
+    if (!reply || !reply.post) {
+      throw new NotFoundException('Respuesta no encontrada');
+    }
+    await this.getActiveCommunity(reply.post.communityProfile.communityId);
+    const profile = await this.communityProfileRepository.findOne({
+      where: {
+        userId,
+        communityId: reply.post.communityProfile.communityId,
+      },
+      select: { communityProfileId: true },
+    });
+    const metrics = await this.getReplyMetrics(
+      [reply.id],
+      profile?.communityProfileId,
+      userId,
+    );
+
+    return {
+      id: reply.id,
+      body: reply.body,
+      postedAt: reply.postedAt,
+      postId: reply.postId,
+      communityProfileId: reply.communityProfileId,
+      parentReplyId: reply.parentReplyId,
+      author: reply.communityProfile
+        ? {
+            communityProfileId: reply.communityProfile.communityProfileId,
+            displayName: reply.communityProfile.displayName,
+            role: reply.communityProfile.role,
+          }
+        : null,
+      ...(metrics.get(reply.id) ?? this.emptyMetric()),
+    };
+  }
+
+  async votePost(postId: number, userId: string, dto: VoteDto) {
+    const post = await this.getActivePost(postId);
+    const profile = await this.getMemberProfile(
+      userId,
+      post.communityProfile.communityId,
+    );
+    const existing = await this.postVoteRepository.findOne({
+      where: { postId, communityProfileId: profile.communityProfileId },
+    });
+
+    if (existing && existing.voteType === dto.voteType) {
+      await this.postVoteRepository.remove(existing);
+    } else if (existing) {
+      existing.voteType = dto.voteType;
+      await this.postVoteRepository.save(existing);
+    } else {
+      await this.postVoteRepository.save(
+        this.postVoteRepository.create({
+          postId,
+          communityProfileId: profile.communityProfileId,
+          voteType: dto.voteType,
+        }),
+      );
+    }
+
+    return this.getPostMetricsResponse(
+      postId,
+      profile.communityProfileId,
+      userId,
+    );
+  }
+
+  async voteReply(replyId: number, userId: string, dto: VoteDto) {
+    const reply = await this.getReplyWithPost(replyId);
+    const profile = await this.getMemberProfile(
+      userId,
+      reply.post.communityProfile.communityId,
+    );
+    const existing = await this.replyVoteRepository.findOne({
+      where: { replyId, communityProfileId: profile.communityProfileId },
+    });
+
+    if (existing && existing.voteType === dto.voteType) {
+      await this.replyVoteRepository.remove(existing);
+    } else if (existing) {
+      existing.voteType = dto.voteType;
+      await this.replyVoteRepository.save(existing);
+    } else {
+      await this.replyVoteRepository.save(
+        this.replyVoteRepository.create({
+          replyId,
+          communityProfileId: profile.communityProfileId,
+          voteType: dto.voteType,
+        }),
+      );
+    }
+
+    return this.getReplyMetricsResponse(
+      replyId,
+      profile.communityProfileId,
+      userId,
+    );
+  }
+
+  async saveFavorite(
+    itemType: FavoriteItemType,
+    itemId: number,
+    userId: string,
+  ) {
+    await this.validateFavoriteTarget(itemType, itemId);
+    const existing = await this.favoriteRepository.findOne({
+      where: { userId, itemId, itemType },
+    });
+    if (!existing) {
+      await this.favoriteRepository.save(
+        this.favoriteRepository.create({ userId, itemId, itemType }),
+      );
+    }
+    return { itemId, itemType, isSaved: true };
+  }
+
+  async removeFavorite(
+    itemType: FavoriteItemType,
+    itemId: number,
+    userId: string,
+  ) {
+    await this.validateFavoriteTarget(itemType, itemId);
+    await this.favoriteRepository.delete({ userId, itemId, itemType });
+    return { itemId, itemType, isSaved: false };
+  }
+
+  private async getActiveCommunity(communityId: number): Promise<Community> {
+    const community = await this.communityRepository.findOne({
+      where: { id: communityId, isActive: true },
+    });
+    if (!community) {
+      throw new NotFoundException('Comunidad no encontrada');
+    }
+    return community;
+  }
+
+  private async getMemberProfile(
+    userId: string,
+    communityId: number,
+  ): Promise<CommunityProfile> {
+    const profile = await this.communityProfileRepository.findOne({
+      where: { userId, communityId },
+    });
+    if (!profile) {
+      throw new ForbiddenException(
+        'Debes pertenecer a la comunidad para realizar esta acción',
+      );
+    }
+    return profile;
+  }
+
+  private async getActivePost(postId: number): Promise<Post> {
+    const post = await this.postRepository.findOne({
+      where: { id: postId },
+      relations: { communityProfile: { community: true } },
+    });
+    if (!post || !post.communityProfile?.community?.isActive) {
+      throw new NotFoundException('Publicación no encontrada');
+    }
+    return post;
+  }
+
+  private async getReplyWithPost(replyId: number): Promise<Reply> {
+    const reply = await this.replyRepository.findOne({
+      where: { id: replyId },
+      relations: { post: { communityProfile: { community: true } } },
+    });
+    if (!reply || !reply.post?.communityProfile?.community?.isActive) {
+      throw new NotFoundException('Respuesta no encontrada');
+    }
+    return reply;
+  }
+
+  private async getTags(tagIds: number[] | undefined): Promise<Tag[]> {
+    if (!tagIds || tagIds.length === 0) return [];
+    const tags = await this.tagRepository.find({
+      where: { tagId: In(tagIds) },
+    });
+    const existingIds = new Set(tags.map((tag) => tag.tagId));
+    const missing = tagIds.filter((tagId) => !existingIds.has(tagId));
+    if (missing.length > 0) {
+      throw new NotFoundException(
+        `No existen los siguientes tags: ${missing.join(', ')}`,
+      );
+    }
+    return tags;
+  }
+
+  private async getPostMetrics(
+    postIds: number[],
+    communityProfileId: number | undefined,
+    userId: string,
+  ): Promise<Map<number, PostMetric>> {
+    const result = new Map<number, PostMetric>();
+    if (postIds.length === 0) return result;
+
+    const [votes, favorites] = await Promise.all([
+      this.postVoteRepository.find({ where: { postId: In(postIds) } }),
+      this.favoriteRepository.find({
+        where: { itemId: In(postIds), itemType: FavoriteItemType.POST },
+      }),
+    ]);
+    const favoriteIds = new Set(
+      favorites
+        .filter((favorite) => favorite.userId === userId)
+        .map((favorite) => favorite.itemId),
+    );
+
+    for (const postId of postIds) {
+      const postVotes = votes.filter((vote) => vote.postId === postId);
+      const myVote = postVotes.find(
+        (vote) => vote.communityProfileId === communityProfileId,
+      )?.voteType;
+      result.set(postId, {
+        upVotes: postVotes.filter((vote) => vote.voteType === VoteType.UP)
+          .length,
+        downVotes: postVotes.filter((vote) => vote.voteType === VoteType.DOWN)
+          .length,
+        timesSaved: favorites.filter((favorite) => favorite.itemId === postId)
+          .length,
+        myVote: myVote ?? null,
+        isSaved: favoriteIds.has(postId),
+      });
+    }
+    return result;
+  }
+
+  private async getReplyMetrics(
+    replyIds: number[],
+    communityProfileId: number | undefined,
+    userId: string,
+  ): Promise<Map<number, PostMetric>> {
+    const result = new Map<number, PostMetric>();
+    if (replyIds.length === 0) return result;
+    const [votes, favorites] = await Promise.all([
+      this.replyVoteRepository.find({ where: { replyId: In(replyIds) } }),
+      this.favoriteRepository.find({
+        where: { itemId: In(replyIds), itemType: FavoriteItemType.REPLY },
+      }),
+    ]);
+    for (const replyId of replyIds) {
+      const replyVotes = votes.filter((vote) => vote.replyId === replyId);
+      result.set(replyId, {
+        upVotes: replyVotes.filter((vote) => vote.voteType === VoteType.UP)
+          .length,
+        downVotes: replyVotes.filter((vote) => vote.voteType === VoteType.DOWN)
+          .length,
+        timesSaved: favorites.filter((favorite) => favorite.itemId === replyId)
+          .length,
+        myVote:
+          replyVotes.find(
+            (vote) => vote.communityProfileId === communityProfileId,
+          )?.voteType ?? null,
+        isSaved: favorites.some(
+          (favorite) =>
+            favorite.itemId === replyId && favorite.userId === userId,
+        ),
+      });
+    }
+    return result;
+  }
+
+  private async getReplyCounts(
+    postIds: number[],
+  ): Promise<Map<number, number>> {
+    const counts = new Map<number, number>();
+    if (postIds.length === 0) return counts;
+    const rows = (await this.replyRepository
+      .createQueryBuilder('reply')
+      .select('reply.post_id', 'post_id')
+      .addSelect('COUNT(reply.id)', 'count')
+      .where('reply.post_id IN (:...postIds)', { postIds })
+      .groupBy('reply.post_id')
+      .getRawMany()) as unknown as { post_id: string; count: string }[];
+    rows.forEach((row) => counts.set(Number(row.post_id), Number(row.count)));
+    return counts;
+  }
+
+  private async getPostMetricsResponse(
+    postId: number,
+    communityProfileId: number,
+    userId: string,
+  ) {
+    const metrics = await this.getPostMetrics(
+      [postId],
+      communityProfileId,
+      userId,
+    );
+    return { postId, ...(metrics.get(postId) ?? this.emptyMetric()) };
+  }
+
+  private async getReplyMetricsResponse(
+    replyId: number,
+    communityProfileId: number,
+    userId: string,
+  ) {
+    const metrics = await this.getReplyMetrics(
+      [replyId],
+      communityProfileId,
+      userId,
+    );
+    return { replyId, ...(metrics.get(replyId) ?? this.emptyMetric()) };
+  }
+
+  private async validateFavoriteTarget(
+    itemType: FavoriteItemType,
+    itemId: number,
+  ): Promise<void> {
+    if (itemType === FavoriteItemType.POST) {
+      await this.getActivePost(itemId);
+      return;
+    }
+    if (itemType === FavoriteItemType.REPLY) {
+      await this.getReplyWithPost(itemId);
+      return;
+    }
+    const product = await this.productRepository.findOne({
+      where: { id: itemId, status: ProductStatus.ACTIVE },
+    });
+    if (!product) throw new NotFoundException('Producto no encontrado');
+  }
+
+  private mapPost(
+    post: Post,
+    metric: PostMetric | undefined,
+    replyCount: number,
+  ) {
+    const postMetric = metric ?? this.emptyMetric();
+    return {
+      id: post.id,
+      title: post.title,
+      body: post.body,
+      postedAt: post.postedAt,
+      communityProfileId: post.communityProfileId,
+      author: post.communityProfile
+        ? {
+            communityProfileId: post.communityProfile.communityProfileId,
+            displayName: post.communityProfile.displayName,
+            role: post.communityProfile.role,
+          }
+        : null,
+      tags: (post.postTags ?? []).map(({ tag }) => ({
+        tagId: tag.tagId,
+        name: tag.name,
+      })),
+      images: [...(post.images ?? [])]
+        .sort((left, right) => left.order - right.order)
+        .map(({ id, url, order }) => ({ id, url, order })),
+      ...postMetric,
+      replyCount,
+    };
+  }
+
+  private emptyMetric(): PostMetric {
+    return {
+      upVotes: 0,
+      downVotes: 0,
+      timesSaved: 0,
+      myVote: null,
+      isSaved: false,
+    };
+  }
+}

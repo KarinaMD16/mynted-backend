@@ -7,6 +7,7 @@ import {
   Injectable,
   InternalServerErrorException,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import {
@@ -40,6 +41,9 @@ import { CommunityTag } from './entities/community-tag.entity';
 import { Community } from './entities/community.entity';
 import { Tag } from './entities/tag.entity';
 import { Post } from './entities/post.entity';
+import { PostVote } from './entities/post-vote.entity';
+import { Favorite, FavoriteItemType } from './entities/favorite.entity';
+import { VoteType } from './entities/vote-type.enum';
 import { UserTag } from '../user-tags/entities/user-tag.entity';
 import { UsersService } from '../users/users.service';
 
@@ -77,6 +81,12 @@ export class CommunityService {
     private readonly communityJoinRequestRepository: Repository<CommunityJoinRequest>,
     @InjectRepository(Post)
     private readonly postRepository: Repository<Post>,
+    @Optional()
+    @InjectRepository(PostVote)
+    private readonly postVoteRepository?: Repository<PostVote>,
+    @Optional()
+    @InjectRepository(Favorite)
+    private readonly favoriteRepository?: Repository<Favorite>,
   ) {}
 
   async create(
@@ -436,10 +446,16 @@ export class CommunityService {
         this.countRecentPosts(communityId),
         this.communityProfileRepository.findOne({
           where: { userId, communityId },
-          select: { role: true },
+          select: { communityProfileId: true, role: true },
         }),
         this.findRecentForumPosts(communityId),
       ]);
+
+    const forumPostMetrics = await this.getForumPostMetrics(
+      forumPosts,
+      membership?.communityProfileId,
+      userId,
+    );
 
     return {
       id: community.id,
@@ -474,9 +490,7 @@ export class CommunityService {
         title: post.title,
         body: post.body,
         postedAt: post.postedAt,
-        upVotes: post.upVotes,
-        downVotes: post.downVotes,
-        timesSaved: post.timesSaved,
+        ...(forumPostMetrics.get(post.id) ?? this.emptyForumPostMetric()),
         author: post.communityProfile
           ? {
               communityProfileId: post.communityProfile.communityProfileId,
@@ -510,10 +524,16 @@ export class CommunityService {
         this.countRecentPosts(community.id),
         this.communityProfileRepository.findOne({
           where: { userId, communityId: community.id },
-          select: { role: true },
+          select: { communityProfileId: true, role: true },
         }),
         this.findRecentForumPosts(community.id),
       ]);
+
+    const forumPostMetrics = await this.getForumPostMetrics(
+      forumPosts,
+      membership?.communityProfileId,
+      userId,
+    );
 
     return {
       id: community.id,
@@ -548,9 +568,7 @@ export class CommunityService {
         title: post.title,
         body: post.body,
         postedAt: post.postedAt,
-        upVotes: post.upVotes,
-        downVotes: post.downVotes,
-        timesSaved: post.timesSaved,
+        ...(forumPostMetrics.get(post.id) ?? this.emptyForumPostMetric()),
         author: post.communityProfile
           ? {
               communityProfileId: post.communityProfile.communityProfileId,
@@ -1546,6 +1564,71 @@ export class CommunityService {
         'No fue posible subir las imágenes de la comunidad',
       );
     }
+  }
+
+  private async getForumPostMetrics(
+    posts: Post[],
+    communityProfileId: number | undefined,
+    userId: string,
+  ) {
+    const metrics = new Map<
+      number,
+      {
+        upVotes: number;
+        downVotes: number;
+        timesSaved: number;
+        myVote: string | null;
+        isSaved: boolean;
+      }
+    >();
+    const postIds = posts.map((post) => post.id);
+
+    if (
+      postIds.length === 0 ||
+      !this.postVoteRepository ||
+      !this.favoriteRepository
+    ) {
+      return metrics;
+    }
+
+    const [votes, favorites] = await Promise.all([
+      this.postVoteRepository.find({ where: { postId: In(postIds) } }),
+      this.favoriteRepository.find({
+        where: { itemId: In(postIds), itemType: FavoriteItemType.POST },
+      }),
+    ]);
+
+    for (const postId of postIds) {
+      const postVotes = votes.filter((vote) => vote.postId === postId);
+      metrics.set(postId, {
+        upVotes: postVotes.filter((vote) => vote.voteType === VoteType.UP)
+          .length,
+        downVotes: postVotes.filter((vote) => vote.voteType === VoteType.DOWN)
+          .length,
+        timesSaved: favorites.filter((favorite) => favorite.itemId === postId)
+          .length,
+        myVote:
+          postVotes.find(
+            (vote) => vote.communityProfileId === communityProfileId,
+          )?.voteType ?? null,
+        isSaved: favorites.some(
+          (favorite) =>
+            favorite.itemId === postId && favorite.userId === userId,
+        ),
+      });
+    }
+
+    return metrics;
+  }
+
+  private emptyForumPostMetric() {
+    return {
+      upVotes: 0,
+      downVotes: 0,
+      timesSaved: 0,
+      myVote: null,
+      isSaved: false,
+    };
   }
 
   private handleDatabaseError(error: unknown): never {
