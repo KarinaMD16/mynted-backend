@@ -10,6 +10,7 @@ import { Product, ProductStatus } from '../products/entities/product.entity';
 import { CreatePostDto } from './dto/create-post.dto';
 import { CreateReplyDto } from './dto/create-reply.dto';
 import { GetPostsQueryDto } from './dto/get-posts-query.dto';
+import { GetGlobalPostsQueryDto } from './dto/get-global-posts-query.dto';
 import { VoteDto } from './dto/vote.dto';
 import { CommunityProfile } from './entities/community-profile.entity';
 import { Community } from './entities/community.entity';
@@ -150,6 +151,106 @@ export class ForumService {
       data: posts.map((post) =>
         this.mapPost(post, metrics.get(post.id), replyCounts.get(post.id) ?? 0),
       ),
+      pagination: {
+        page: query.page,
+        limit: query.limit,
+        total,
+        totalPages: Math.ceil(total / query.limit),
+      },
+    };
+  }
+
+  async findGlobalPosts(userId: string, query: GetGlobalPostsQueryDto) {
+    const queryBuilder = this.postRepository
+      .createQueryBuilder('post')
+      .innerJoinAndSelect('post.communityProfile', 'communityProfile')
+      .innerJoinAndSelect('communityProfile.community', 'community')
+      .leftJoinAndSelect('post.postTags', 'postTag')
+      .leftJoinAndSelect('postTag.tag', 'tag')
+      .leftJoinAndSelect('post.images', 'image')
+      // Política actual del feed global: solo comunidades públicas activas.
+      .where('community.is_active = :isActive', { isActive: true })
+      .andWhere('community.is_private = :isPrivate', { isPrivate: false })
+      .distinct(true)
+      .orderBy('post.posted_at', 'DESC')
+      .addOrderBy('post.id', 'DESC');
+
+    const search = query.search?.trim();
+    if (search) {
+      queryBuilder.andWhere(
+        '(post.title ILIKE :search OR post.body ILIKE :search)',
+        { search: `%${search}%` },
+      );
+    }
+
+    if (query.tagIds && query.tagIds.length > 0) {
+      queryBuilder.andWhere(
+        `EXISTS (
+          SELECT 1
+          FROM post_tag global_feed_filter_post_tag
+          WHERE global_feed_filter_post_tag.post_id = post.id
+            AND global_feed_filter_post_tag.tag_id IN (:...tagIds)
+        )`,
+        { tagIds: query.tagIds },
+      );
+    }
+
+    const [posts, total] = await queryBuilder
+      .skip((query.page - 1) * query.limit)
+      .take(query.limit)
+      .getManyAndCount();
+
+    const communityIds = [
+      ...new Set(
+        posts
+          .map((post) => post.communityProfile?.communityId)
+          .filter(
+            (communityId): communityId is number => communityId !== undefined,
+          ),
+      ),
+    ];
+    const profiles = communityIds.length
+      ? await this.communityProfileRepository.find({
+          where: { userId, communityId: In(communityIds) },
+          select: { communityProfileId: true, communityId: true },
+        })
+      : [];
+    const profileByCommunityId = new Map(
+      profiles.map((profile) => [
+        profile.communityId,
+        profile.communityProfileId,
+      ]),
+    );
+    const profileByPostId = new Map(
+      posts.map((post) => [
+        post.id,
+        profileByCommunityId.get(post.communityProfile.communityId),
+      ]),
+    );
+    const metrics = await this.getPostMetrics(
+      posts.map((post) => post.id),
+      undefined,
+      userId,
+      profileByPostId,
+    );
+    const replyCounts = await this.getReplyCounts(posts.map((post) => post.id));
+
+    return {
+      data: posts.map((post) => ({
+        ...this.mapPost(
+          post,
+          metrics.get(post.id),
+          replyCounts.get(post.id) ?? 0,
+        ),
+        community: post.communityProfile.community
+          ? {
+              id: post.communityProfile.community.id,
+              name: post.communityProfile.community.name,
+              slug: post.communityProfile.community.slug,
+              imageUrl: post.communityProfile.community.imageUrl,
+            }
+          : null,
+      })),
       pagination: {
         page: query.page,
         limit: query.limit,
@@ -463,6 +564,7 @@ export class ForumService {
     postIds: number[],
     communityProfileId: number | undefined,
     userId: string,
+    profileByPostId?: Map<number, number | undefined>,
   ): Promise<Map<number, PostMetric>> {
     const result = new Map<number, PostMetric>();
     if (postIds.length === 0) return result;
@@ -481,8 +583,10 @@ export class ForumService {
 
     for (const postId of postIds) {
       const postVotes = votes.filter((vote) => vote.postId === postId);
+      const currentProfileId =
+        profileByPostId?.get(postId) ?? communityProfileId;
       const myVote = postVotes.find(
-        (vote) => vote.communityProfileId === communityProfileId,
+        (vote) => vote.communityProfileId === currentProfileId,
       )?.voteType;
       result.set(postId, {
         upVotes: postVotes.filter((vote) => vote.voteType === VoteType.UP)

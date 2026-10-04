@@ -45,4 +45,24 @@ describe('ForumController', () => {
       limit: 10,
     });
   });
+
+  it('protects and passes the authenticated user to the global feed', async () => {
+    const service = { findGlobalPosts: jest.fn().mockResolvedValue({}) };
+    const controller = new ForumController(service as never);
+    const request = { user: { userId: 'user-id' } };
+    const method = Object.getOwnPropertyDescriptor(
+      ForumController.prototype,
+      'findGlobalPosts',
+    )?.value as (...args: never[]) => unknown;
+
+    await controller.findGlobalPosts({ page: 1, limit: 20 }, request as never);
+
+    expect(Reflect.getMetadata(GUARDS_METADATA, method)).toEqual(
+      expect.arrayContaining([JwtAuthGuard]),
+    );
+    expect(service.findGlobalPosts).toHaveBeenCalledWith('user-id', {
+      page: 1,
+      limit: 20,
+    });
+  });
 });
