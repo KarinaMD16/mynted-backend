@@ -17,6 +17,9 @@ export class Category {
   @Column()
   name!: string;
 
+  @Column({ name: 'is_active', default: true })
+  isActive!: boolean;
+
   @OneToMany(() => Community, (community) => community.category)
   communities!: Community[];
 

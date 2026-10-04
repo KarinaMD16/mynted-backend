@@ -7,6 +7,7 @@ import {
   Injectable,
   InternalServerErrorException,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import {
@@ -19,6 +20,7 @@ import {
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
 import { CreateCommunityDto } from './dto/create-community.dto';
 import { CreateCommunityRuleDto } from './dto/create-community-rule.dto';
+import { CreateCategoryDto } from './dto/create-category.dto';
 import { CreateTagDto } from './dto/create-tag.dto';
 import { GetTagsQueryDto } from './dto/get-tags-query.dto';
 import { UpdateCommunityDto } from './dto/update-community.dto';
@@ -39,6 +41,9 @@ import { CommunityTag } from './entities/community-tag.entity';
 import { Community } from './entities/community.entity';
 import { Tag } from './entities/tag.entity';
 import { Post } from './entities/post.entity';
+import { PostVote } from './entities/post-vote.entity';
+import { Favorite, FavoriteItemType } from './entities/favorite.entity';
+import { VoteType } from './entities/vote-type.enum';
 import { UserTag } from '../user-tags/entities/user-tag.entity';
 import { UsersService } from '../users/users.service';
 
@@ -76,6 +81,12 @@ export class CommunityService {
     private readonly communityJoinRequestRepository: Repository<CommunityJoinRequest>,
     @InjectRepository(Post)
     private readonly postRepository: Repository<Post>,
+    @Optional()
+    @InjectRepository(PostVote)
+    private readonly postVoteRepository?: Repository<PostVote>,
+    @Optional()
+    @InjectRepository(Favorite)
+    private readonly favoriteRepository?: Repository<Favorite>,
   ) {}
 
   async create(
@@ -91,7 +102,7 @@ export class CommunityService {
         this.communityRepository.findOne({ where: { name: dto.name } }),
         this.communityRepository.findOne({ where: { slug: dto.slug } }),
         this.categoryRepository.findOne({
-          where: { categoryId: dto.categoryId },
+          where: { categoryId: dto.categoryId, isActive: true },
         }),
         this.tagRepository.find({ where: { tagId: In(dto.tagIds) } }),
       ]);
@@ -435,10 +446,16 @@ export class CommunityService {
         this.countRecentPosts(communityId),
         this.communityProfileRepository.findOne({
           where: { userId, communityId },
-          select: { role: true },
+          select: { communityProfileId: true, role: true },
         }),
         this.findRecentForumPosts(communityId),
       ]);
+
+    const forumPostMetrics = await this.getForumPostMetrics(
+      forumPosts,
+      membership?.communityProfileId,
+      userId,
+    );
 
     return {
       id: community.id,
@@ -473,9 +490,7 @@ export class CommunityService {
         title: post.title,
         body: post.body,
         postedAt: post.postedAt,
-        upVotes: post.upVotes,
-        downVotes: post.downVotes,
-        timesSaved: post.timesSaved,
+        ...(forumPostMetrics.get(post.id) ?? this.emptyForumPostMetric()),
         author: post.communityProfile
           ? {
               communityProfileId: post.communityProfile.communityProfileId,
@@ -509,10 +524,16 @@ export class CommunityService {
         this.countRecentPosts(community.id),
         this.communityProfileRepository.findOne({
           where: { userId, communityId: community.id },
-          select: { role: true },
+          select: { communityProfileId: true, role: true },
         }),
         this.findRecentForumPosts(community.id),
       ]);
+
+    const forumPostMetrics = await this.getForumPostMetrics(
+      forumPosts,
+      membership?.communityProfileId,
+      userId,
+    );
 
     return {
       id: community.id,
@@ -547,9 +568,7 @@ export class CommunityService {
         title: post.title,
         body: post.body,
         postedAt: post.postedAt,
-        upVotes: post.upVotes,
-        downVotes: post.downVotes,
-        timesSaved: post.timesSaved,
+        ...(forumPostMetrics.get(post.id) ?? this.emptyForumPostMetric()),
         author: post.communityProfile
           ? {
               communityProfileId: post.communityProfile.communityProfileId,
@@ -903,7 +922,74 @@ export class CommunityService {
   }
 
   findAllCategories(): Promise<Category[]> {
-    return this.categoryRepository.find({ order: { categoryId: 'ASC' } });
+    return this.categoryRepository.find({
+      where: { isActive: true },
+      order: { categoryId: 'ASC' },
+    });
+  }
+
+  findInactiveCategories(): Promise<Category[]> {
+    return this.categoryRepository.find({
+      where: { isActive: false },
+      order: { categoryId: 'ASC' },
+    });
+  }
+
+  async createCategory(dto: CreateCategoryDto): Promise<Category> {
+    const name = dto.name.trim();
+    const existingCategory = await this.findCategoryByNormalizedName(name);
+
+    if (existingCategory) {
+      throw new ConflictException('Ya existe una categoría con ese nombre');
+    }
+
+    try {
+      return await this.categoryRepository.save(
+        this.categoryRepository.create({ name, isActive: true }),
+      );
+    } catch (error: unknown) {
+      if (
+        error instanceof QueryFailedError &&
+        (error.driverError as PostgresError).code === '23505'
+      ) {
+        throw new ConflictException('Ya existe una categoría con ese nombre');
+      }
+
+      throw new InternalServerErrorException(
+        'Ocurrió un error al crear la categoría',
+      );
+    }
+  }
+
+  async activateCategory(categoryId: number): Promise<Category> {
+    return this.updateCategoryStatus(categoryId, true);
+  }
+
+  async deactivateCategory(categoryId: number): Promise<Category> {
+    return this.updateCategoryStatus(categoryId, false);
+  }
+
+  private findCategoryByNormalizedName(name: string): Promise<Category | null> {
+    return this.categoryRepository
+      .createQueryBuilder('category')
+      .where('LOWER(BTRIM(category.name)) = LOWER(:name)', { name })
+      .getOne();
+  }
+
+  private async updateCategoryStatus(
+    categoryId: number,
+    isActive: boolean,
+  ): Promise<Category> {
+    const category = await this.categoryRepository.findOne({
+      where: { categoryId },
+    });
+
+    if (!category) {
+      throw new NotFoundException('Categoría no encontrada');
+    }
+
+    category.isActive = isActive;
+    return this.categoryRepository.save(category);
   }
 
   async createTag(dto: CreateTagDto): Promise<Tag> {
@@ -917,7 +1003,7 @@ export class CommunityService {
 
     if (dto.categoryId !== undefined) {
       const category = await this.categoryRepository.findOne({
-        where: { categoryId: dto.categoryId },
+        where: { categoryId: dto.categoryId, isActive: true },
       });
       if (!category) {
         throw new NotFoundException('La categoría seleccionada no existe');
@@ -997,7 +1083,7 @@ export class CommunityService {
     if (dto.categoryId !== undefined) {
       if (dto.categoryId !== null) {
         const category = await this.categoryRepository.findOne({
-          where: { categoryId: dto.categoryId },
+          where: { categoryId: dto.categoryId, isActive: true },
         });
         if (!category) {
           throw new NotFoundException('La categoría seleccionada no existe');
@@ -1179,7 +1265,7 @@ export class CommunityService {
         : Promise.resolve(null),
       dto.categoryId !== undefined
         ? this.categoryRepository.findOne({
-            where: { categoryId: dto.categoryId },
+            where: { categoryId: dto.categoryId, isActive: true },
           })
         : Promise.resolve(null),
       dto.tagIds !== undefined
@@ -1478,6 +1564,71 @@ export class CommunityService {
         'No fue posible subir las imágenes de la comunidad',
       );
     }
+  }
+
+  private async getForumPostMetrics(
+    posts: Post[],
+    communityProfileId: number | undefined,
+    userId: string,
+  ) {
+    const metrics = new Map<
+      number,
+      {
+        upVotes: number;
+        downVotes: number;
+        timesSaved: number;
+        myVote: string | null;
+        isSaved: boolean;
+      }
+    >();
+    const postIds = posts.map((post) => post.id);
+
+    if (
+      postIds.length === 0 ||
+      !this.postVoteRepository ||
+      !this.favoriteRepository
+    ) {
+      return metrics;
+    }
+
+    const [votes, favorites] = await Promise.all([
+      this.postVoteRepository.find({ where: { postId: In(postIds) } }),
+      this.favoriteRepository.find({
+        where: { itemId: In(postIds), itemType: FavoriteItemType.POST },
+      }),
+    ]);
+
+    for (const postId of postIds) {
+      const postVotes = votes.filter((vote) => vote.postId === postId);
+      metrics.set(postId, {
+        upVotes: postVotes.filter((vote) => vote.voteType === VoteType.UP)
+          .length,
+        downVotes: postVotes.filter((vote) => vote.voteType === VoteType.DOWN)
+          .length,
+        timesSaved: favorites.filter((favorite) => favorite.itemId === postId)
+          .length,
+        myVote:
+          postVotes.find(
+            (vote) => vote.communityProfileId === communityProfileId,
+          )?.voteType ?? null,
+        isSaved: favorites.some(
+          (favorite) =>
+            favorite.itemId === postId && favorite.userId === userId,
+        ),
+      });
+    }
+
+    return metrics;
+  }
+
+  private emptyForumPostMetric() {
+    return {
+      upVotes: 0,
+      downVotes: 0,
+      timesSaved: 0,
+      myVote: null,
+      isSaved: false,
+    };
   }
 
   private handleDatabaseError(error: unknown): never {

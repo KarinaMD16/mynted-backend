@@ -23,11 +23,23 @@ export class CategorySeed implements OnApplicationBootstrap {
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
+    const existingCategories = await this.categoryRepository.find({
+      select: { name: true },
+    });
+    const existingNames = new Set(
+      existingCategories.map((category) => category.name),
+    );
+    const missingCategoryNames = INITIAL_CATEGORY_NAMES.filter(
+      (name) => !existingNames.has(name),
+    );
+
+    if (missingCategoryNames.length === 0) return;
+
     await this.categoryRepository
       .createQueryBuilder()
       .insert()
       .into(Category)
-      .values(INITIAL_CATEGORY_NAMES.map((name) => ({ name })))
+      .values(missingCategoryNames.map((name) => ({ name })))
       .orIgnore()
       .execute();
   }
