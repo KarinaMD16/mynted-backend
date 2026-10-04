@@ -8,6 +8,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import {
   And,
   DataSource,
+  FindOptionsRelations,
   FindOptionsWhere,
   In,
   LessThanOrEqual,
@@ -25,7 +26,14 @@ import { UpdateProductDto } from './dto/update-product.dto';
 import { UpdateProductStatusDto } from './dto/update-product-status.dto';
 import { GetProductsQueryDto } from './dto/get-products-query.dto';
 import { GetRecommendedProductsQueryDto } from './dto/get-recommended-products-query.dto';
-import { Product, ProductStatus } from './entities/product.entity';
+import { GetShopQueryDto } from './dto/get-shop-query.dto';
+import { GetMyProductsQueryDto } from './dto/get-my-products-query.dto';
+import {
+  Product,
+  ProductCondition,
+  ProductStatus,
+  ProductType,
+} from './entities/product.entity';
 import { ProductTag } from './entities/product-tag.entity';
 import { ProductImage } from './entities/product-image.entity';
 
@@ -47,6 +55,98 @@ const DETAIL_SELECT = {
     isVerified: true,
   },
 };
+
+export interface TagProductCard {
+  id: number;
+  title: string;
+  price: number;
+  currency: string;
+  imageUrl: string;
+  type: ProductType;
+  condition: ProductCondition;
+  tags: { tagId: number; name: string }[];
+  seller: {
+    sellerId: number;
+    displayName: string;
+    photoUrl: string | null;
+    isVerified: boolean;
+  };
+}
+
+export type ShopSectionSource = 'interest' | 'popular';
+
+export interface ShopSection {
+  tag: { tagId: number; name: string };
+  source: ShopSectionSource;
+  totalProducts: number;
+  products: TagProductCard[];
+  pagination: {
+    page: number;
+    limit: number;
+    totalPages: number;
+  };
+}
+
+export interface SectionsPagination {
+  page: number;
+  limit: number;
+  totalSections: number;
+  totalPages: number;
+}
+
+export interface ShopResult {
+  sections: ShopSection[];
+  pagination: SectionsPagination;
+}
+
+interface TagGroup {
+  tagId: number;
+  ids: number[];
+}
+
+interface SectionPaginationQuery {
+  page: number;
+  limit: number;
+  productsPage: number;
+  productsLimit: number;
+}
+
+interface TagSection<T> {
+  tag: { tagId: number; name: string };
+  totalProducts: number;
+  products: T[];
+  pagination: { page: number; limit: number; totalPages: number };
+}
+
+export interface MyProductCard {
+  id: number;
+  title: string;
+  price: number;
+  currency: string;
+  imageUrl: string;
+  status: ProductStatus;
+  type: ProductType;
+  condition: ProductCondition;
+  tags: { tagId: number; name: string }[];
+  community: { id: number; name: string };
+}
+
+export interface MyProductsSection {
+  tag: { tagId: number; name: string };
+  totalProducts: number;
+  products: MyProductCard[];
+  pagination: {
+    page: number;
+    limit: number;
+    totalPages: number;
+  };
+}
+
+export interface MyProductsResult {
+  totalProducts: number;
+  sections: MyProductsSection[];
+  pagination: SectionsPagination;
+}
 
 export interface Paginated<T> {
   data: T[];
@@ -195,6 +295,249 @@ export class ProductsService {
     return {
       data,
       pagination: this.buildPagination(query.page, query.limit, total),
+    };
+  }
+
+  /**
+  /**
+   * Pantalla Shop con scroll infinito: una sección por cada tag que tenga
+   * productos activos, paginadas con page/limit (secciones por página).
+   * Con usuario autenticado primero van los tags de sus intereses y luego el
+   * resto; sin usuario o sin intereses, todos van por popularidad
+   * (tag con más productos activos). Cada producto aparece en una sola
+   * sección: la primera (en orden) cuyo tag tenga, así no se repite.
+   * Nunca se devuelven secciones vacías y totalProducts cuenta solo los
+   * productos propios de esa sección. productsPage/productsLimit paginan los
+   * productos dentro de cada sección.
+   */
+  async findShop(
+    userId: string | undefined,
+    query: GetShopQueryDto,
+  ): Promise<ShopResult> {
+    const active = await this.productRepository.find({
+      where: { status: ProductStatus.ACTIVE },
+      select: { id: true, createdAt: true, productTags: { tagId: true } },
+      relations: { productTags: true },
+      order: { createdAt: 'DESC', id: 'DESC' },
+    });
+
+    const interestTagIds = new Set<number>();
+    if (userId) {
+      const userTags = await this.userTagRepository.find({
+        where: { userId },
+        select: { tagId: true },
+      });
+      userTags.forEach((userTag) => interestTagIds.add(userTag.tagId));
+    }
+
+    const ranked = this.rankTagIds(active);
+    const orderedTagIds = [
+      ...ranked.filter((tagId) => interestTagIds.has(tagId)),
+      ...ranked.filter((tagId) => !interestTagIds.has(tagId)),
+    ];
+
+    const { sections, pagination } = await this.buildTagSections(
+      this.groupIdsByTag(active, orderedTagIds),
+      query,
+      { productTags: { tag: true }, seller: { user: true } },
+      (product) => this.toTagProductCard(product),
+    );
+
+    return {
+      sections: sections.map((section) => ({
+        ...section,
+        source: interestTagIds.has(section.tag.tagId)
+          ? ('interest' as const)
+          : ('popular' as const),
+      })),
+      pagination,
+    };
+  }
+
+  // Tags ordenados por cantidad de productos (desc) y luego por id.
+  private rankTagIds(products: Product[]): number[] {
+    const counts = new Map<number, number>();
+    for (const product of products) {
+      for (const { tagId } of product.productTags) {
+        counts.set(tagId, (counts.get(tagId) ?? 0) + 1);
+      }
+    }
+    return [...counts.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0] - b[0])
+      .map(([tagId]) => tagId);
+  }
+
+  // Asigna cada producto al primer tag (según orderedTagIds) que tenga, de
+  // modo que no se repita entre secciones. Omite tags sin productos propios.
+  private groupIdsByTag(
+    products: Product[],
+    orderedTagIds: number[],
+  ): TagGroup[] {
+    const rankOf = new Map(orderedTagIds.map((tagId, index) => [tagId, index]));
+    const idsByTag = new Map<number, number[]>();
+    for (const product of products) {
+      if (product.productTags.length === 0) continue;
+      const sectionTagId = product.productTags
+        .map((productTag) => productTag.tagId)
+        .sort((a, b) => rankOf.get(a)! - rankOf.get(b)!)[0];
+      const ids = idsByTag.get(sectionTagId) ?? [];
+      ids.push(product.id);
+      idsByTag.set(sectionTagId, ids);
+    }
+    return orderedTagIds
+      .filter((tagId) => idsByTag.has(tagId))
+      .map((tagId) => ({ tagId, ids: idsByTag.get(tagId)! }));
+  }
+
+  // Pagina las secciones (page/limit) y los productos dentro de cada una
+  // (productsPage/productsLimit); solo hidrata los productos de la ventana.
+  private async buildTagSections<T>(
+    groups: TagGroup[],
+    query: SectionPaginationQuery,
+    relations: FindOptionsRelations<Product>,
+    toCard: (product: Product) => T,
+  ): Promise<{
+    sections: TagSection<T>[];
+    pagination: SectionsPagination;
+  }> {
+    const windowGroups = groups.slice(
+      (query.page - 1) * query.limit,
+      query.page * query.limit,
+    );
+    const pageIdsByTag = new Map(
+      windowGroups.map(({ tagId, ids }) => [
+        tagId,
+        ids.slice(
+          (query.productsPage - 1) * query.productsLimit,
+          query.productsPage * query.productsLimit,
+        ),
+      ]),
+    );
+    const pageIds = [...pageIdsByTag.values()].flat();
+
+    const [tags, products] = await Promise.all([
+      windowGroups.length === 0
+        ? Promise.resolve([] as Tag[])
+        : this.tagRepository.find({
+            where: { tagId: In(windowGroups.map((group) => group.tagId)) },
+          }),
+      pageIds.length === 0
+        ? Promise.resolve([] as Product[])
+        : this.productRepository.find({
+            where: { id: In(pageIds) },
+            relations,
+          }),
+    ]);
+    const tagById = new Map(tags.map((tag) => [tag.tagId, tag]));
+    const productById = new Map(
+      products.map((product) => [product.id, product]),
+    );
+
+    return {
+      sections: windowGroups.map(({ tagId, ids }) => ({
+        tag: { tagId, name: tagById.get(tagId)?.name ?? '' },
+        totalProducts: ids.length,
+        products: pageIdsByTag
+          .get(tagId)!
+          .map((id) => toCard(productById.get(id)!)),
+        pagination: {
+          page: query.productsPage,
+          limit: query.productsLimit,
+          totalPages: Math.ceil(ids.length / query.productsLimit),
+        },
+      })),
+      pagination: {
+        page: query.page,
+        limit: query.limit,
+        totalSections: groups.length,
+        totalPages: Math.ceil(groups.length / query.limit),
+      },
+    };
+  }
+
+  private toTagProductCard(product: Product): TagProductCard {
+    return {
+      id: product.id,
+      title: product.title,
+      price: product.price,
+      currency: product.currency,
+      imageUrl: product.imageUrl,
+      type: product.type,
+      condition: product.condition,
+      tags: product.productTags.map((productTag) => ({
+        tagId: productTag.tag.tagId,
+        name: productTag.tag.name,
+      })),
+      seller: {
+        sellerId: product.seller.sellerId,
+        displayName: product.seller.displayName,
+        photoUrl: product.seller.user.photoUrl ?? null,
+        isVerified: product.seller.isVerified,
+      },
+    };
+  }
+
+  // Productos del vendedor autenticado agrupados por tag. Cada producto aparece
+  // una sola vez, en la primera sección (tags ordenados por cantidad de
+  // productos) cuyo tag tenga. La paginación aplica dentro de cada sección.
+  async findMine(
+    userId: string,
+    query: GetMyProductsQueryDto,
+  ): Promise<MyProductsResult> {
+    const seller = await this.sellerRepository.findOne({ where: { userId } });
+    if (!seller) {
+      throw new ForbiddenException(
+        'Solo los vendedores pueden ver sus productos',
+      );
+    }
+
+    const where: FindOptionsWhere<Product> = { sellerId: seller.sellerId };
+    if (query.status) where.status = query.status;
+    if (query.type) where.type = query.type;
+    if (query.condition) where.condition = query.condition;
+    if (query.priceMin !== undefined && query.priceMax !== undefined) {
+      where.price = And(
+        MoreThanOrEqual(query.priceMin),
+        LessThanOrEqual(query.priceMax),
+      );
+    } else if (query.priceMin !== undefined) {
+      where.price = MoreThanOrEqual(query.priceMin);
+    } else if (query.priceMax !== undefined) {
+      where.price = LessThanOrEqual(query.priceMax);
+    }
+
+    const matching = await this.productRepository.find({
+      where,
+      select: { id: true, createdAt: true, productTags: { tagId: true } },
+      relations: { productTags: true },
+      order: { createdAt: 'DESC', id: 'DESC' },
+    });
+
+    const { sections, pagination } = await this.buildTagSections(
+      this.groupIdsByTag(matching, this.rankTagIds(matching)),
+      query,
+      { productTags: { tag: true }, community: true },
+      (product) => this.toMyProductCard(product),
+    );
+
+    return { totalProducts: matching.length, sections, pagination };
+  }
+
+  private toMyProductCard(product: Product): MyProductCard {
+    return {
+      id: product.id,
+      title: product.title,
+      price: product.price,
+      currency: product.currency,
+      imageUrl: product.imageUrl,
+      status: product.status,
+      type: product.type,
+      condition: product.condition,
+      tags: product.productTags.map((productTag) => ({
+        tagId: productTag.tag.tagId,
+        name: productTag.tag.name,
+      })),
+      community: { id: product.community.id, name: product.community.name },
     };
   }
 
