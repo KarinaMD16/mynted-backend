@@ -191,6 +191,17 @@ export class ProductsController {
     return this.productsService.findMine(request.user.userId, query);
   }
 
+  @Get('products/me/stats')
+  @UseGuards(JwtAuthGuard, SellerGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary:
+      'Contadores de los productos del vendedor autenticado por estado (active, sold, inactive) y total',
+  })
+  countMine(@Req() request: AuthenticatedRequest) {
+    return this.productsService.countMineByStatus(request.user.userId);
+  }
+
   @Get('products')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
@@ -306,7 +317,10 @@ export class ProductsController {
   @Patch('products/:id/status')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Cambiar el status de un producto propio' })
+  @ApiOperation({
+    summary:
+      'Cambiar el status de un producto propio (active solo para reactivar uno inactivo)',
+  })
   updateStatus(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateProductStatusDto,

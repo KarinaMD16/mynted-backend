@@ -2,17 +2,17 @@ import { IsIn } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 import { ProductStatus } from '../entities/product.entity';
 
-type ProductStatusTransition = ProductStatus.SOLD | ProductStatus.INACTIVE;
+type ProductStatusTransition = ProductStatus;
 
 export class UpdateProductStatusDto {
   @ApiProperty({
-    enum: [ProductStatus.SOLD, ProductStatus.INACTIVE],
+    enum: [ProductStatus.ACTIVE, ProductStatus.SOLD, ProductStatus.INACTIVE],
     example: ProductStatus.SOLD,
     description:
-      'No se puede volver a "active" desde este endpoint una vez marcado sold/inactive',
+      'active solo se permite para reactivar un producto que está inactive; un producto sold no puede volver a active',
   })
-  @IsIn([ProductStatus.SOLD, ProductStatus.INACTIVE], {
-    message: 'status debe ser sold o inactive',
+  @IsIn([ProductStatus.ACTIVE, ProductStatus.SOLD, ProductStatus.INACTIVE], {
+    message: 'status debe ser active, sold o inactive',
   })
   status!: ProductStatusTransition;
 }
