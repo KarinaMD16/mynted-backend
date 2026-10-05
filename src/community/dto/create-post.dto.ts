@@ -1,5 +1,7 @@
 import { Transform, TransformFnParams } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  ArrayMinSize,
   ArrayUnique,
   IsArray,
   IsInt,
@@ -24,21 +26,34 @@ export class CreatePostDto {
   @IsNotEmpty()
   body!: string;
 
-  @ApiPropertyOptional({
+  @ApiProperty({
     type: [Number],
     example: [1, 3],
-    description: 'Opcional. Puede enviarse como arreglo JSON en multipart.',
+    description:
+      'Entre 1 y 3 tags. Puede enviarse como arreglo JSON en multipart.',
   })
   @Transform(({ value }: TransformFnParams) => {
     const input: unknown = value;
-    return input === undefined ? undefined : parseIntegerArray(input);
+    if (input === undefined || Array.isArray(input)) return input;
+
+    if (typeof input === 'string' && input.trim().startsWith('[')) {
+      try {
+        const parsed: unknown = JSON.parse(input);
+        return parsed;
+      } catch {
+        return input;
+      }
+    }
+
+    return parseIntegerArray(input);
   })
-  @IsOptional()
   @IsArray()
+  @ArrayMinSize(1, { message: 'La publicación debe tener al menos un tag' })
+  @ArrayMaxSize(3, { message: 'La publicación no puede tener más de 3 tags' })
   @ArrayUnique({ message: 'No puede repetir tags en la publicación' })
   @IsInt({ each: true, message: 'Cada tagId debe ser un número entero' })
   @Min(1, { each: true })
-  tagIds?: number[];
+  tagIds!: number[];
 
   @ApiPropertyOptional({
     type: 'array',

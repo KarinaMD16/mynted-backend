@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -546,7 +547,11 @@ export class ForumService {
   }
 
   private async getTags(tagIds: number[] | undefined): Promise<Tag[]> {
-    if (!tagIds || tagIds.length === 0) return [];
+    if (!tagIds || tagIds.length === 0) {
+      throw new BadRequestException(
+        'La publicación debe tener al menos un tag',
+      );
+    }
     const tags = await this.tagRepository.find({
       where: { tagId: In(tagIds) },
     });

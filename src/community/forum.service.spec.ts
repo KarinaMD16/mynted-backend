@@ -82,6 +82,7 @@ describe('ForumService', () => {
       communityRepository,
       profileRepository,
       postRepository,
+      tagRepository,
       postVoteRepository,
       manager,
     };
@@ -96,6 +97,7 @@ describe('ForumService', () => {
     ctx.profileRepository.findOne
       .mockResolvedValueOnce({ communityProfileId: 4, communityId: 7 })
       .mockResolvedValueOnce({ communityProfileId: 4, communityId: 7 });
+    ctx.tagRepository.find.mockResolvedValue([{ tagId: 1 }]);
     ctx.postRepository.findOne.mockResolvedValue({
       id: 10,
       communityProfile: { community: { id: 7, isActive: true } },
@@ -113,6 +115,7 @@ describe('ForumService', () => {
       {
         title: 'Title',
         body: 'Body',
+        tagIds: [1],
       },
       {},
     );
@@ -139,6 +142,28 @@ describe('ForumService', () => {
         {},
       ),
     ).rejects.toThrow('Comunidad no encontrada');
+  });
+
+  it('rejects post creation when a tag does not exist', async () => {
+    const ctx = setup();
+    ctx.communityRepository.findOne.mockResolvedValue({
+      id: 7,
+      isActive: true,
+    });
+    ctx.profileRepository.findOne.mockResolvedValue({
+      communityProfileId: 4,
+      communityId: 7,
+    });
+    ctx.tagRepository.find.mockResolvedValue([]);
+
+    await expect(
+      ctx.service.createPost(
+        7,
+        'user-id',
+        { title: 'Title', body: 'Body', tagIds: [999] },
+        {},
+      ),
+    ).rejects.toThrow('No existen los siguientes tags: 999');
   });
 
   it('toggles a post vote off when the same vote is sent twice', async () => {
