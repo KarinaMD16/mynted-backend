@@ -4,9 +4,14 @@ import {
   Entity,
   JoinColumn,
   ManyToOne,
+  OneToMany,
   PrimaryGeneratedColumn,
 } from 'typeorm';
 import { CommunityProfile } from './community-profile.entity';
+import { PostImage } from './post-image.entity';
+import { PostTag } from './post-tag.entity';
+import { PostVote } from './post-vote.entity';
+import { Reply } from './reply.entity';
 
 @Entity('post')
 export class Post {
@@ -22,15 +27,6 @@ export class Post {
   @CreateDateColumn({ name: 'posted_at', type: 'timestamp with time zone' })
   postedAt!: Date;
 
-  @Column({ name: 'up_votes', default: 0 })
-  upVotes!: number;
-
-  @Column({ name: 'down_votes', default: 0 })
-  downVotes!: number;
-
-  @Column({ name: 'times_saved', default: 0 })
-  timesSaved!: number;
-
   @Column({ name: 'community_profile_id' })
   communityProfileId!: number;
 
@@ -43,4 +39,16 @@ export class Post {
     referencedColumnName: 'communityProfileId',
   })
   communityProfile!: CommunityProfile;
+
+  @OneToMany(() => PostTag, (postTag) => postTag.post)
+  postTags!: PostTag[];
+
+  @OneToMany(() => PostImage, (image) => image.post)
+  images!: PostImage[];
+
+  @OneToMany(() => Reply, (reply) => reply.post)
+  replies!: Reply[];
+
+  @OneToMany(() => PostVote, (vote) => vote.post)
+  votes!: PostVote[];
 }

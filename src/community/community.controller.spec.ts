@@ -1,6 +1,7 @@
 import { GUARDS_METADATA } from '@nestjs/common/constants';
 import { CommunityController } from './community.controller';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { SuperAdminGuard } from '../auth/guards/super-admin.guard';
 
 describe('CommunityController', () => {
   it('protects POST /communities with JwtAuthGuard', () => {
@@ -85,5 +86,39 @@ describe('CommunityController', () => {
     const guards = Reflect.getMetadata(GUARDS_METADATA, method) as unknown[];
 
     expect(guards).toEqual(expect.arrayContaining([JwtAuthGuard]));
+  });
+
+  it.each(['createCategory', 'activateCategory', 'deactivateCategory'])(
+    'protects category endpoint %s with JwtAuthGuard and SuperAdminGuard',
+    (methodName) => {
+      const method = Object.getOwnPropertyDescriptor(
+        CommunityController.prototype,
+        methodName,
+      )?.value as (...args: never[]) => unknown;
+      const guards = Reflect.getMetadata(GUARDS_METADATA, method) as unknown[];
+
+      expect(guards).toEqual(
+        expect.arrayContaining([JwtAuthGuard, SuperAdminGuard]),
+      );
+    },
+  );
+
+  it('protects the inactive categories endpoint with JWT and SuperAdmin guards', async () => {
+    const communityService = {
+      findInactiveCategories: jest.fn().mockResolvedValue([]),
+    };
+    const controller = new CommunityController(communityService as never);
+    const method = Object.getOwnPropertyDescriptor(
+      CommunityController.prototype,
+      'findInactiveCategories',
+    )?.value as (...args: never[]) => unknown;
+    const guards = Reflect.getMetadata(GUARDS_METADATA, method) as unknown[];
+
+    await controller.findInactiveCategories();
+
+    expect(guards).toEqual(
+      expect.arrayContaining([JwtAuthGuard, SuperAdminGuard]),
+    );
+    expect(communityService.findInactiveCategories).toHaveBeenCalled();
   });
 });
