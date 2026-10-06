@@ -148,7 +148,7 @@ export class ForumService {
     const [posts, total] = await this.postRepository.findAndCount({
       where: { communityProfile: { communityId } },
       relations: {
-        communityProfile: true,
+        communityProfile: { user: true },
         postTags: { tag: true },
         images: true,
       },
@@ -181,6 +181,7 @@ export class ForumService {
     const queryBuilder = this.postRepository
       .createQueryBuilder('post')
       .innerJoinAndSelect('post.communityProfile', 'communityProfile')
+      .innerJoinAndSelect('communityProfile.user', 'user')
       .innerJoinAndSelect('communityProfile.community', 'community')
       .leftJoinAndSelect('post.postTags', 'postTag')
       .leftJoinAndSelect('postTag.tag', 'tag')
@@ -281,7 +282,7 @@ export class ForumService {
     const post = await this.postRepository.findOne({
       where: { id: postId },
       relations: {
-        communityProfile: { community: true },
+        communityProfile: { community: true, user: true },
         postTags: { tag: true },
         images: true,
       },
@@ -353,7 +354,7 @@ export class ForumService {
     const post = await this.getActivePost(postId);
     const replies = await this.replyRepository.find({
       where: { postId },
-      relations: { communityProfile: true },
+      relations: { communityProfile: { user: true } },
       order: { postedAt: 'ASC', id: 'ASC' },
     });
     const profile = await this.communityProfileRepository.findOne({
@@ -378,6 +379,7 @@ export class ForumService {
             communityProfileId: reply.communityProfile.communityProfileId,
             displayName: reply.communityProfile.displayName,
             role: reply.communityProfile.role,
+            photoUrl: reply.communityProfile.user?.photoUrl ?? null,
           }
         : null,
       ...(metrics.get(reply.id) ?? this.emptyMetric()),
@@ -387,7 +389,10 @@ export class ForumService {
   async findReplyResponse(replyId: number, userId: string) {
     const reply = await this.replyRepository.findOne({
       where: { id: replyId },
-      relations: { communityProfile: true, post: { communityProfile: true } },
+      relations: {
+        communityProfile: { user: true },
+        post: { communityProfile: true },
+      },
     });
     if (!reply || !reply.post) {
       throw new NotFoundException('Respuesta no encontrada');
@@ -418,6 +423,7 @@ export class ForumService {
             communityProfileId: reply.communityProfile.communityProfileId,
             displayName: reply.communityProfile.displayName,
             role: reply.communityProfile.role,
+            photoUrl: reply.communityProfile.user?.photoUrl ?? null,
           }
         : null,
       ...(metrics.get(reply.id) ?? this.emptyMetric()),
@@ -735,6 +741,7 @@ export class ForumService {
             communityProfileId: post.communityProfile.communityProfileId,
             displayName: post.communityProfile.displayName,
             role: post.communityProfile.role,
+            photoUrl: post.communityProfile.user?.photoUrl ?? null,
           }
         : null,
       tags: (post.postTags ?? []).map(({ tag }) => ({

@@ -20,6 +20,7 @@ describe('ForumService', () => {
   const repository = () => ({
     findOne: jest.fn(),
     find: jest.fn().mockResolvedValue([]),
+    findAndCount: jest.fn().mockResolvedValue([[], 0]),
     save: jest.fn(),
     remove: jest.fn(),
     delete: jest.fn(),
@@ -83,6 +84,7 @@ describe('ForumService', () => {
       profileRepository,
       postRepository,
       tagRepository,
+      replyRepository,
       postVoteRepository,
       manager,
     };
@@ -184,6 +186,130 @@ describe('ForumService', () => {
     expect(ctx.postVoteRepository.remove).toHaveBeenCalled();
   });
 
+  it('includes the author photo in posts listed by community', async () => {
+    const ctx = setup();
+    const post = {
+      id: 11,
+      title: 'Community post',
+      body: 'Body',
+      postedAt: new Date(),
+      communityProfileId: 4,
+      communityProfile: {
+        communityProfileId: 4,
+        displayName: 'Author',
+        role: 'member',
+        user: { photoUrl: 'https://img.test/author.png' },
+      },
+      postTags: [],
+      images: [],
+    } as unknown as Post;
+    ctx.communityRepository.findOne.mockResolvedValue({
+      id: 7,
+      isActive: true,
+    });
+    ctx.profileRepository.findOne.mockResolvedValue({
+      communityProfileId: 4,
+    });
+    ctx.postRepository.findAndCount.mockResolvedValue([[post], 1]);
+
+    const result = await ctx.service.findPosts(7, 'user-id', {
+      page: 1,
+      limit: 10,
+    });
+
+    expect(result.data[0].author).toMatchObject({
+      communityProfileId: 4,
+      displayName: 'Author',
+      role: 'member',
+      photoUrl: 'https://img.test/author.png',
+    });
+  });
+
+  it('includes null author photos in replies', async () => {
+    const ctx = setup();
+    ctx.postRepository.findOne.mockResolvedValue({
+      id: 10,
+      communityProfile: {
+        communityId: 7,
+        community: { isActive: true },
+      },
+    });
+    ctx.replyRepository.find.mockResolvedValue([
+      {
+        id: 20,
+        body: 'Reply',
+        postId: 10,
+        communityProfileId: 4,
+        parentReplyId: null,
+        communityProfile: {
+          communityProfileId: 4,
+          displayName: 'Reply author',
+          role: 'member',
+          user: { photoUrl: null },
+        },
+      },
+    ]);
+    ctx.profileRepository.findOne.mockResolvedValue(null);
+
+    const replies = await ctx.service.findReplies(10, 'user-id');
+
+    expect(replies[0].author).toMatchObject({
+      communityProfileId: 4,
+      displayName: 'Reply author',
+      role: 'member',
+      photoUrl: null,
+    });
+  });
+
+  it('includes photos in post detail and embedded replies', async () => {
+    const ctx = setup();
+    const post = {
+      id: 10,
+      title: 'Post detail',
+      body: 'Body',
+      postedAt: new Date(),
+      communityProfileId: 4,
+      communityProfile: {
+        communityProfileId: 4,
+        communityId: 7,
+        displayName: 'Post author',
+        role: 'member',
+        user: { photoUrl: 'https://img.test/post-author.png' },
+        community: { id: 7, isActive: true },
+      },
+      postTags: [],
+      images: [],
+    } as unknown as Post;
+    ctx.postRepository.findOne.mockResolvedValue(post);
+    ctx.profileRepository.findOne.mockResolvedValue(null);
+    ctx.replyRepository.find.mockResolvedValue([
+      {
+        id: 21,
+        body: 'Nested reply',
+        postId: 10,
+        communityProfileId: 5,
+        parentReplyId: null,
+        communityProfile: {
+          communityProfileId: 5,
+          displayName: 'Reply author',
+          role: 'member',
+          user: { photoUrl: 'https://img.test/reply-author.png' },
+        },
+      },
+    ]);
+
+    const result = await ctx.service.findPost(10, 'user-id');
+
+    expect(result.author).toMatchObject({
+      displayName: 'Post author',
+      photoUrl: 'https://img.test/post-author.png',
+    });
+    expect(result.replies[0].author).toMatchObject({
+      displayName: 'Reply author',
+      photoUrl: 'https://img.test/reply-author.png',
+    });
+  });
+
   it('lists the global feed with public-community and tag filters', async () => {
     const ctx = setup();
     const builder = ctx.postRepository.createQueryBuilder();
@@ -199,6 +325,7 @@ describe('ForumService', () => {
         communityId: 7,
         displayName: 'Author',
         role: 'member',
+        user: { photoUrl: 'https://img.test/author.png' },
         community: {
           id: 7,
           name: 'Public community',
@@ -244,6 +371,7 @@ describe('ForumService', () => {
         {
           id: 10,
           community: { id: 7, slug: 'public-community' },
+          author: { photoUrl: 'https://img.test/author.png' },
           replyCount: 0,
         },
       ],
