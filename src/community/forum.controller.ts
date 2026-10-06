@@ -140,6 +140,15 @@ export class ForumController {
     return this.forumService.findRecommendedPosts(request.user.userId, query);
   }
 
+  @Get('explore/forums/posts')
+  @UseGuards(JwtAuthGuard)
+  findExploreForumPosts(
+    @Query() query: GetPostsQueryDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.forumService.findRecommendedPosts(request.user.userId, query);
+  }
+
   @Get('posts/:postId')
   @UseGuards(JwtAuthGuard)
   findPost(
