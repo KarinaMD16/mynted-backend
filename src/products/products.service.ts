@@ -10,6 +10,7 @@ import {
   DataSource,
   FindOptionsRelations,
   FindOptionsWhere,
+  ILike,
   In,
   LessThanOrEqual,
   MoreThanOrEqual,
@@ -140,6 +141,13 @@ export interface MyProductsSection {
     limit: number;
     totalPages: number;
   };
+}
+
+export interface MyProductsStats {
+  total: number;
+  active: number;
+  sold: number;
+  inactive: number;
 }
 
 export interface MyProductsResult {
@@ -495,6 +503,10 @@ export class ProductsService {
     if (query.status) where.status = query.status;
     if (query.type) where.type = query.type;
     if (query.condition) where.condition = query.condition;
+    if (query.title) {
+      const escaped = query.title.replace(/[\\%_]/g, (char) => `\\${char}`);
+      where.title = ILike(`%${escaped}%`);
+    }
     if (query.priceMin !== undefined && query.priceMax !== undefined) {
       where.price = And(
         MoreThanOrEqual(query.priceMin),
@@ -513,14 +525,50 @@ export class ProductsService {
       order: { createdAt: 'DESC', id: 'DESC' },
     });
 
+    let groups = this.groupIdsByTag(matching, this.rankTagIds(matching));
+    if (query.tagId !== undefined) {
+      // Con tagId se pide solo esa sección ("Show all"): se pagina su lista
+      // de productos con productsPage/productsLimit.
+      groups = groups.filter((group) => group.tagId === query.tagId);
+    }
+
     const { sections, pagination } = await this.buildTagSections(
-      this.groupIdsByTag(matching, this.rankTagIds(matching)),
+      groups,
       query,
       { productTags: { tag: true }, community: true },
       (product) => this.toMyProductCard(product),
     );
 
     return { totalProducts: matching.length, sections, pagination };
+  }
+
+  async countMineByStatus(userId: string): Promise<MyProductsStats> {
+    const seller = await this.sellerRepository.findOne({ where: { userId } });
+    if (!seller) {
+      throw new ForbiddenException(
+        'Solo los vendedores pueden ver sus productos',
+      );
+    }
+
+    const rows = await this.productRepository
+      .createQueryBuilder('product')
+      .select('product.status', 'status')
+      .addSelect('COUNT(*)', 'count')
+      .where('product.sellerId = :sellerId', { sellerId: seller.sellerId })
+      .groupBy('product.status')
+      .getRawMany<{ status: ProductStatus; count: string }>();
+
+    const stats: MyProductsStats = {
+      total: 0,
+      active: 0,
+      sold: 0,
+      inactive: 0,
+    };
+    for (const row of rows) {
+      stats[row.status] = Number(row.count);
+      stats.total += Number(row.count);
+    }
+    return stats;
   }
 
   private toMyProductCard(product: Product): MyProductCard {
@@ -678,7 +726,11 @@ export class ProductsService {
     const product = await this.productRepository.findOne({
       where: { id },
       relations: { seller: true },
-      select: { seller: { sellerId: true, userId: true } },
+      select: {
+        id: true,
+        status: true,
+        seller: { sellerId: true, userId: true },
+      },
     });
 
     if (!product) {
@@ -687,6 +739,17 @@ export class ProductsService {
 
     if (product.seller.userId !== userId) {
       throw new ForbiddenException('No eres el dueño de este producto');
+    }
+
+    if (
+      dto.status === ProductStatus.ACTIVE &&
+      product.status !== ProductStatus.INACTIVE
+    ) {
+      throw new BadRequestException(
+        product.status === ProductStatus.ACTIVE
+          ? 'El producto ya está activo'
+          : 'Solo se puede reactivar un producto inactivo',
+      );
     }
 
     product.status = dto.status;

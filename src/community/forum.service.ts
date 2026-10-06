@@ -12,6 +12,16 @@ import { CreatePostDto } from './dto/create-post.dto';
 import { CreateReplyDto } from './dto/create-reply.dto';
 import { GetPostsQueryDto } from './dto/get-posts-query.dto';
 import { GetGlobalPostsQueryDto } from './dto/get-global-posts-query.dto';
+import {
+  GetMyPostsQueryDto,
+  MyPostsSortBy,
+  SortOrder,
+} from './dto/get-my-posts-query.dto';
+import { GetMyFeedQueryDto } from './dto/get-my-feed-query.dto';
+import {
+  ContentType,
+  GetMyContentQueryDto,
+} from './dto/get-my-content-query.dto';
 import { VoteDto } from './dto/vote.dto';
 import { CommunityProfile } from './entities/community-profile.entity';
 import { Community } from './entities/community.entity';
@@ -27,6 +37,12 @@ import { VoteType } from './entities/vote-type.enum';
 
 interface PostFiles {
   images?: Express.Multer.File[];
+}
+
+interface ContentEntry {
+  type: 'post' | 'product';
+  id: number;
+  date: Date;
 }
 
 interface PostMetric {
@@ -741,5 +757,304 @@ export class ForumService {
       myVote: null,
       isSaved: false,
     };
+  }
+
+  // Posts publicados por el usuario autenticado (todas sus comunidades
+  // activas), ordenables por fecha, upvotes, downvotes o veces guardado.
+  async findMyPosts(userId: string, query: GetMyPostsQueryDto) {
+    const direction = query.order === SortOrder.ASC ? 'ASC' : 'DESC';
+    const sortExpressions: Record<MyPostsSortBy, string> = {
+      [MyPostsSortBy.DATE]: 'post.posted_at',
+      [MyPostsSortBy.UPVOTES]: `(SELECT COUNT(*) FROM post_vote sort_vote WHERE sort_vote.post_id = post.id AND sort_vote."voteType" = 'UP')`,
+      [MyPostsSortBy.DOWNVOTES]: `(SELECT COUNT(*) FROM post_vote sort_vote WHERE sort_vote.post_id = post.id AND sort_vote."voteType" = 'DOWN')`,
+      [MyPostsSortBy.SAVES]: `(SELECT COUNT(*) FROM favorite sort_favorite WHERE sort_favorite.item_id = post.id AND sort_favorite."itemType" = 'POST')`,
+    };
+
+    const base = this.postRepository
+      .createQueryBuilder('post')
+      .innerJoin('post.communityProfile', 'profile')
+      .innerJoin('profile.community', 'community')
+      .where('profile.user_id = :userId', { userId })
+      .andWhere('community.is_active = :isActive', { isActive: true });
+
+    const total = await base.clone().getCount();
+    const rows = await base
+      .select('post.id', 'id')
+      .orderBy(sortExpressions[query.sortBy], direction)
+      .addOrderBy('post.posted_at', 'DESC')
+      .addOrderBy('post.id', 'DESC')
+      .offset((query.page - 1) * query.limit)
+      .limit(query.limit)
+      .getRawMany<{ id: number }>();
+
+    const cards = await this.buildPostCards(
+      rows.map((row) => Number(row.id)),
+      userId,
+    );
+
+    return {
+      data: cards,
+      pagination: this.buildPageInfo(query.page, query.limit, total),
+    };
+  }
+
+  // Posts y productos publicados por el usuario, mezclados por fecha.
+  async findMyContent(userId: string, query: GetMyFeedQueryDto) {
+    const entries: ContentEntry[] = [];
+
+    {
+      const posts = await this.postRepository.find({
+        where: {
+          communityProfile: { userId, community: { isActive: true } },
+        },
+        select: { id: true, postedAt: true },
+      });
+      posts.forEach((post) =>
+        entries.push({ type: 'post', id: post.id, date: post.postedAt }),
+      );
+    }
+
+    {
+      const products = await this.productRepository.find({
+        where: { seller: { userId } },
+        select: { id: true, createdAt: true },
+      });
+      products.forEach((product) =>
+        entries.push({
+          type: 'product',
+          id: product.id,
+          date: product.createdAt,
+        }),
+      );
+    }
+
+    return this.pageContent(entries, userId, query);
+  }
+
+  // Posts y productos guardados como favoritos por el usuario; la fecha es
+  // la de guardado. Se omiten los que ya no existen o no están disponibles.
+  async findMyFavorites(userId: string, query: GetMyContentQueryDto) {
+    const itemTypes = [
+      ...(query.type !== ContentType.PRODUCTS ? [FavoriteItemType.POST] : []),
+      ...(query.type !== ContentType.POSTS ? [FavoriteItemType.PRODUCT] : []),
+    ];
+    const favorites = await this.favoriteRepository.find({
+      where: { userId, itemType: In(itemTypes) },
+    });
+
+    const postIds = favorites
+      .filter((favorite) => favorite.itemType === FavoriteItemType.POST)
+      .map((favorite) => favorite.itemId);
+    const productIds = favorites
+      .filter((favorite) => favorite.itemType === FavoriteItemType.PRODUCT)
+      .map((favorite) => favorite.itemId);
+
+    const [visiblePosts, visibleProducts] = await Promise.all([
+      postIds.length
+        ? this.postRepository.find({
+            where: {
+              id: In(postIds),
+              communityProfile: { community: { isActive: true } },
+            },
+            select: { id: true },
+          })
+        : ([] as Post[]),
+      productIds.length
+        ? this.productRepository.find({
+            where: {
+              id: In(productIds),
+              status: In([ProductStatus.ACTIVE, ProductStatus.SOLD]),
+            },
+            select: { id: true },
+          })
+        : ([] as Product[]),
+    ]);
+    const visiblePostIds = new Set(visiblePosts.map((post) => post.id));
+    const visibleProductIds = new Set(visibleProducts.map((p) => p.id));
+
+    const entries: ContentEntry[] = [];
+    for (const favorite of favorites) {
+      if (favorite.itemType === FavoriteItemType.POST) {
+        if (visiblePostIds.has(favorite.itemId)) {
+          entries.push({
+            type: 'post',
+            id: favorite.itemId,
+            date: favorite.createdAt,
+          });
+        }
+      } else if (visibleProductIds.has(favorite.itemId)) {
+        entries.push({
+          type: 'product',
+          id: favorite.itemId,
+          date: favorite.createdAt,
+        });
+      }
+    }
+
+    return this.pageContent(entries, userId, query);
+  }
+
+  private async pageContent(
+    entries: ContentEntry[],
+    userId: string,
+    query: GetMyFeedQueryDto,
+  ) {
+    const sign = query.order === SortOrder.ASC ? 1 : -1;
+    entries.sort(
+      (a, b) =>
+        sign * (a.date.getTime() - b.date.getTime()) || sign * (a.id - b.id),
+    );
+
+    const pageEntries = entries.slice(
+      (query.page - 1) * query.limit,
+      query.page * query.limit,
+    );
+    const [postCards, productCards] = await Promise.all([
+      this.buildPostCards(
+        pageEntries.filter((e) => e.type === 'post').map((e) => e.id),
+        userId,
+      ),
+      this.buildProductCards(
+        pageEntries.filter((e) => e.type === 'product').map((e) => e.id),
+        userId,
+      ),
+    ]);
+    const postById = new Map(postCards.map((card) => [card.id, card]));
+    const productById = new Map(productCards.map((card) => [card.id, card]));
+
+    const data = pageEntries.map((entry) =>
+      entry.type === 'post'
+        ? {
+            type: 'post' as const,
+            date: entry.date,
+            post: postById.get(entry.id)!,
+          }
+        : {
+            type: 'product' as const,
+            date: entry.date,
+            product: productById.get(entry.id)!,
+          },
+    );
+
+    return {
+      data,
+      pagination: this.buildPageInfo(query.page, query.limit, entries.length),
+    };
+  }
+
+  private buildPageInfo(page: number, limit: number, total: number) {
+    return { page, limit, total, totalPages: Math.ceil(total / limit) };
+  }
+
+  // Hidrata posts por id respetando el orden recibido, con métricas y
+  // estado del usuario (myVote / isSaved) como en el feed global.
+  private async buildPostCards(postIds: number[], userId: string) {
+    if (postIds.length === 0) return [];
+
+    const posts = await this.postRepository.find({
+      where: { id: In(postIds) },
+      relations: {
+        communityProfile: { community: true },
+        postTags: { tag: true },
+        images: true,
+      },
+    });
+    const postById = new Map(posts.map((post) => [post.id, post]));
+    const ordered = postIds
+      .map((id) => postById.get(id))
+      .filter((post): post is Post => post !== undefined);
+
+    const communityIds = [
+      ...new Set(ordered.map((post) => post.communityProfile.communityId)),
+    ];
+    const profiles = communityIds.length
+      ? await this.communityProfileRepository.find({
+          where: { userId, communityId: In(communityIds) },
+          select: { communityProfileId: true, communityId: true },
+        })
+      : [];
+    const profileByCommunityId = new Map(
+      profiles.map((profile) => [
+        profile.communityId,
+        profile.communityProfileId,
+      ]),
+    );
+    const profileByPostId = new Map(
+      ordered.map((post) => [
+        post.id,
+        profileByCommunityId.get(post.communityProfile.communityId),
+      ]),
+    );
+    const metrics = await this.getPostMetrics(
+      ordered.map((post) => post.id),
+      undefined,
+      userId,
+      profileByPostId,
+    );
+    const replyCounts = await this.getReplyCounts(ordered.map((p) => p.id));
+
+    return ordered.map((post) => ({
+      ...this.mapPost(
+        post,
+        metrics.get(post.id),
+        replyCounts.get(post.id) ?? 0,
+      ),
+      community: {
+        id: post.communityProfile.community.id,
+        name: post.communityProfile.community.name,
+        slug: post.communityProfile.community.slug,
+        imageUrl: post.communityProfile.community.imageUrl,
+      },
+    }));
+  }
+
+  private async buildProductCards(productIds: number[], userId: string) {
+    if (productIds.length === 0) return [];
+
+    const [products, favorites] = await Promise.all([
+      this.productRepository.find({
+        where: { id: In(productIds) },
+        relations: {
+          productTags: { tag: true },
+          community: true,
+          seller: { user: true },
+        },
+      }),
+      this.favoriteRepository.find({
+        where: {
+          userId,
+          itemType: FavoriteItemType.PRODUCT,
+          itemId: In(productIds),
+        },
+      }),
+    ]);
+    const savedIds = new Set(favorites.map((favorite) => favorite.itemId));
+    const productById = new Map(products.map((p) => [p.id, p]));
+
+    return productIds
+      .map((id) => productById.get(id))
+      .filter((product): product is Product => product !== undefined)
+      .map((product) => ({
+        id: product.id,
+        title: product.title,
+        price: product.price,
+        currency: product.currency,
+        imageUrl: product.imageUrl,
+        status: product.status,
+        type: product.type,
+        condition: product.condition,
+        tags: product.productTags.map(({ tag }) => ({
+          tagId: tag.tagId,
+          name: tag.name,
+        })),
+        community: { id: product.community.id, name: product.community.name },
+        seller: {
+          sellerId: product.seller.sellerId,
+          displayName: product.seller.displayName,
+          photoUrl: product.seller.user.photoUrl ?? null,
+          isVerified: product.seller.isVerified,
+        },
+        isSaved: savedIds.has(product.id),
+      }));
   }
 }

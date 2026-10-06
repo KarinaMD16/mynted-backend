@@ -1,5 +1,13 @@
 import { Type } from 'class-transformer';
-import { IsEnum, IsInt, IsOptional, Max, Min } from 'class-validator';
+import {
+  IsEnum,
+  IsInt,
+  IsOptional,
+  IsString,
+  Max,
+  MaxLength,
+  Min,
+} from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import {
   ProductCondition,
@@ -8,6 +16,27 @@ import {
 } from '../entities/product.entity';
 
 export class GetMyProductsQueryDto {
+  @ApiPropertyOptional({
+    example: 'pikachu',
+    description: 'Busca por título (contiene, sin distinguir mayúsculas)',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  title?: string;
+
+  @ApiPropertyOptional({
+    type: Number,
+    example: 2,
+    description:
+      'Devuelve solo la sección de este tag, paginada con productsPage/productsLimit',
+  })
+  @Type(() => Number)
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  tagId?: number;
+
   @ApiPropertyOptional({
     enum: ProductStatus,
     example: ProductStatus.ACTIVE,

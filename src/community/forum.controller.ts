@@ -14,7 +14,12 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileFieldsInterceptor } from '@nestjs/platform-express';
-import { ApiBearerAuth, ApiConsumes, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiConsumes,
+  ApiOperation,
+  ApiTags,
+} from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AuthenticatedRequest } from '../auth/types/authenticated-request';
 import { CommunityProfileRole } from './entities/community-profile.entity';
@@ -24,6 +29,9 @@ import { CreatePostDto } from './dto/create-post.dto';
 import { CreateReplyDto } from './dto/create-reply.dto';
 import { GetPostsQueryDto } from './dto/get-posts-query.dto';
 import { GetGlobalPostsQueryDto } from './dto/get-global-posts-query.dto';
+import { GetMyPostsQueryDto } from './dto/get-my-posts-query.dto';
+import { GetMyFeedQueryDto } from './dto/get-my-feed-query.dto';
+import { GetMyContentQueryDto } from './dto/get-my-content-query.dto';
 import { VoteDto } from './dto/vote.dto';
 import { FavoriteItemType } from './entities/favorite.entity';
 import { ForumService } from './forum.service';
@@ -82,6 +90,45 @@ export class ForumController {
     @Req() request: AuthenticatedRequest,
   ) {
     return this.forumService.findGlobalPosts(request.user.userId, query);
+  }
+
+  @Get('forums/me')
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({
+    summary:
+      'Posts del foro publicados por el usuario autenticado, paginados y ordenables por fecha, upvotes, downvotes o guardados',
+  })
+  findMyPosts(
+    @Query() query: GetMyPostsQueryDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.forumService.findMyPosts(request.user.userId, query);
+  }
+
+  @Get('posts/me')
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({
+    summary:
+      'Posts y productos publicados por el usuario autenticado, mezclados por fecha (el tab Todo). Para solo posts o solo productos usar /forums/me y /products/me',
+  })
+  findMyContent(
+    @Query() query: GetMyFeedQueryDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.forumService.findMyContent(request.user.userId, query);
+  }
+
+  @Get('favorites/me')
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({
+    summary:
+      'Posts y productos guardados como favoritos por el usuario autenticado, del más recientemente guardado al más antiguo. type: all | posts | products',
+  })
+  findMyFavorites(
+    @Query() query: GetMyContentQueryDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.forumService.findMyFavorites(request.user.userId, query);
   }
 
   @Get('posts/:postId')
