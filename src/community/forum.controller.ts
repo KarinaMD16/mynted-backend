@@ -131,6 +131,15 @@ export class ForumController {
     return this.forumService.findMyFavorites(request.user.userId, query);
   }
 
+  @Get('users/me/recommended-posts')
+  @UseGuards(JwtAuthGuard)
+  findRecommendedPosts(
+    @Query() query: GetPostsQueryDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.forumService.findRecommendedPosts(request.user.userId, query);
+  }
+
   @Get('posts/:postId')
   @UseGuards(JwtAuthGuard)
   findPost(

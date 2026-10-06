@@ -65,4 +65,27 @@ describe('ForumController', () => {
       limit: 20,
     });
   });
+
+  it('protects and passes the authenticated user to recommended posts', async () => {
+    const service = { findRecommendedPosts: jest.fn().mockResolvedValue({}) };
+    const controller = new ForumController(service as never);
+    const request = { user: { userId: 'user-id' } };
+    const method = Object.getOwnPropertyDescriptor(
+      ForumController.prototype,
+      'findRecommendedPosts',
+    )?.value as (...args: never[]) => unknown;
+
+    await controller.findRecommendedPosts(
+      { page: 1, limit: 10 },
+      request as never,
+    );
+
+    expect(Reflect.getMetadata(GUARDS_METADATA, method)).toEqual(
+      expect.arrayContaining([JwtAuthGuard]),
+    );
+    expect(service.findRecommendedPosts).toHaveBeenCalledWith('user-id', {
+      page: 1,
+      limit: 10,
+    });
+  });
 });

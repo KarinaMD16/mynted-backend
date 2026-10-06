@@ -25,6 +25,7 @@ import { ForumController } from './forum.controller';
 import { ForumService } from './forum.service';
 import { CategorySeed } from './seeds/category.seed';
 import { TagSeed } from './seeds/tag.seed';
+import { UserTag } from '../user-tags/entities/user-tag.entity';
 
 @Module({
   imports: [
@@ -44,6 +45,7 @@ import { TagSeed } from './seeds/tag.seed';
       ReplyVote,
       Favorite,
       Product,
+      UserTag,
     ]),
     CloudinaryModule,
     UsersModule,
@@ -57,6 +59,6 @@ import { TagSeed } from './seeds/tag.seed';
     SuperAdminGuard,
     CommunityRoleGuard,
   ],
-  exports: [CommunityService],
+  exports: [CommunityService, ForumService],
 })
 export class CommunityModule {}
