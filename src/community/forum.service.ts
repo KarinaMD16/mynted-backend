@@ -3,6 +3,7 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, Repository } from 'typeorm';
@@ -34,6 +35,7 @@ import { ReplyVote } from './entities/reply-vote.entity';
 import { Reply } from './entities/reply.entity';
 import { Tag } from './entities/tag.entity';
 import { VoteType } from './entities/vote-type.enum';
+import { UserTag } from '../user-tags/entities/user-tag.entity';
 
 interface PostFiles {
   images?: Express.Multer.File[];
@@ -80,6 +82,9 @@ export class ForumService {
     private readonly productRepository: Repository<Product>,
     private readonly dataSource: DataSource,
     private readonly cloudinaryService: CloudinaryService,
+    @Optional()
+    @InjectRepository(UserTag)
+    private readonly userTagRepository?: Repository<UserTag>,
   ) {}
 
   async createPost(
@@ -148,7 +153,7 @@ export class ForumService {
     const [posts, total] = await this.postRepository.findAndCount({
       where: { communityProfile: { communityId } },
       relations: {
-        communityProfile: true,
+        communityProfile: { user: true },
         postTags: { tag: true },
         images: true,
       },
@@ -181,6 +186,7 @@ export class ForumService {
     const queryBuilder = this.postRepository
       .createQueryBuilder('post')
       .innerJoinAndSelect('post.communityProfile', 'communityProfile')
+      .innerJoinAndSelect('communityProfile.user', 'user')
       .innerJoinAndSelect('communityProfile.community', 'community')
       .leftJoinAndSelect('post.postTags', 'postTag')
       .leftJoinAndSelect('postTag.tag', 'tag')
@@ -217,6 +223,81 @@ export class ForumService {
       .take(query.limit)
       .getManyAndCount();
 
+    const data = await this.mapFeedPosts(posts, userId);
+
+    return {
+      data,
+      pagination: {
+        page: query.page,
+        limit: query.limit,
+        total,
+        totalPages: Math.ceil(total / query.limit),
+      },
+    };
+  }
+
+  async findRecommendedPosts(userId: string, query: GetPostsQueryDto) {
+    if (!this.userTagRepository) {
+      return this.emptyPostPagination(query);
+    }
+
+    const userTags = await this.userTagRepository.find({
+      where: { userId },
+      select: { tagId: true },
+    });
+    const tagIds = [...new Set(userTags.map((userTag) => userTag.tagId))];
+    if (tagIds.length === 0) {
+      return this.emptyPostPagination(query);
+    }
+
+    const matchedTagCount = `(SELECT COUNT(DISTINCT matching_post_tag.tag_id)
+      FROM post_tag matching_post_tag
+      WHERE matching_post_tag.post_id = post.id
+        AND matching_post_tag.tag_id IN (:...userTagIds))`;
+    const queryBuilder = this.postRepository
+      .createQueryBuilder('post')
+      .innerJoinAndSelect('post.communityProfile', 'communityProfile')
+      .innerJoinAndSelect('communityProfile.user', 'user')
+      .innerJoinAndSelect('communityProfile.community', 'community')
+      .leftJoinAndSelect('post.postTags', 'postTag')
+      .leftJoinAndSelect('postTag.tag', 'tag')
+      .leftJoinAndSelect('post.images', 'image')
+      .where('community.is_active = :isActive', { isActive: true })
+      .andWhere('community.is_private = :isPrivate', { isPrivate: false })
+      .andWhere(`${matchedTagCount} > 0`, { userTagIds: tagIds })
+      .addSelect(matchedTagCount, 'matched_tag_count')
+      .distinct(true)
+      .orderBy('matched_tag_count', 'DESC')
+      .addOrderBy('post.posted_at', 'DESC')
+      .addOrderBy('post.id', 'DESC');
+
+    const [posts, total] = await queryBuilder
+      .setParameter('userTagIds', tagIds)
+      .skip((query.page - 1) * query.limit)
+      .take(query.limit)
+      .getManyAndCount();
+    const matchedCounts = await this.getMatchedTagCounts(
+      posts.map((post) => post.id),
+      tagIds,
+    );
+    const data = await this.mapFeedPosts(posts, userId, matchedCounts);
+
+    return {
+      data,
+      pagination: {
+        page: query.page,
+        limit: query.limit,
+        total,
+        totalPages: Math.ceil(total / query.limit),
+      },
+    };
+  }
+
+  private async mapFeedPosts(
+    posts: Post[],
+    userId: string,
+    matchedCounts?: Map<number, number>,
+  ) {
     const communityIds = [
       ...new Set(
         posts
@@ -252,8 +333,8 @@ export class ForumService {
     );
     const replyCounts = await this.getReplyCounts(posts.map((post) => post.id));
 
-    return {
-      data: posts.map((post) => ({
+    return posts.map((post) => {
+      const response = {
         ...this.mapPost(
           post,
           metrics.get(post.id),
@@ -267,12 +348,42 @@ export class ForumService {
               imageUrl: post.communityProfile.community.imageUrl,
             }
           : null,
-      })),
+      };
+
+      return matchedCounts
+        ? { ...response, matchedTagCount: matchedCounts.get(post.id) ?? 0 }
+        : response;
+    });
+  }
+
+  private async getMatchedTagCounts(
+    postIds: number[],
+    tagIds: number[],
+  ): Promise<Map<number, number>> {
+    const counts = new Map<number, number>();
+    if (postIds.length === 0) return counts;
+
+    const rows = (await this.postTagRepository
+      .createQueryBuilder('matching_post_tag')
+      .select('matching_post_tag.post_id', 'post_id')
+      .addSelect('COUNT(DISTINCT matching_post_tag.tag_id)', 'count')
+      .where('matching_post_tag.post_id IN (:...postIds)', { postIds })
+      .andWhere('matching_post_tag.tag_id IN (:...tagIds)', { tagIds })
+      .groupBy('matching_post_tag.post_id')
+      .getRawMany()) as unknown as { post_id: string; count: string }[];
+
+    rows.forEach((row) => counts.set(Number(row.post_id), Number(row.count)));
+    return counts;
+  }
+
+  private emptyPostPagination(query: GetPostsQueryDto) {
+    return {
+      data: [],
       pagination: {
         page: query.page,
         limit: query.limit,
-        total,
-        totalPages: Math.ceil(total / query.limit),
+        total: 0,
+        totalPages: 0,
       },
     };
   }
@@ -281,7 +392,7 @@ export class ForumService {
     const post = await this.postRepository.findOne({
       where: { id: postId },
       relations: {
-        communityProfile: { community: true },
+        communityProfile: { community: true, user: true },
         postTags: { tag: true },
         images: true,
       },
@@ -353,7 +464,7 @@ export class ForumService {
     const post = await this.getActivePost(postId);
     const replies = await this.replyRepository.find({
       where: { postId },
-      relations: { communityProfile: true },
+      relations: { communityProfile: { user: true } },
       order: { postedAt: 'ASC', id: 'ASC' },
     });
     const profile = await this.communityProfileRepository.findOne({
@@ -378,6 +489,7 @@ export class ForumService {
             communityProfileId: reply.communityProfile.communityProfileId,
             displayName: reply.communityProfile.displayName,
             role: reply.communityProfile.role,
+            photoUrl: reply.communityProfile.user?.photoUrl ?? null,
           }
         : null,
       ...(metrics.get(reply.id) ?? this.emptyMetric()),
@@ -387,7 +499,10 @@ export class ForumService {
   async findReplyResponse(replyId: number, userId: string) {
     const reply = await this.replyRepository.findOne({
       where: { id: replyId },
-      relations: { communityProfile: true, post: { communityProfile: true } },
+      relations: {
+        communityProfile: { user: true },
+        post: { communityProfile: true },
+      },
     });
     if (!reply || !reply.post) {
       throw new NotFoundException('Respuesta no encontrada');
@@ -418,6 +533,7 @@ export class ForumService {
             communityProfileId: reply.communityProfile.communityProfileId,
             displayName: reply.communityProfile.displayName,
             role: reply.communityProfile.role,
+            photoUrl: reply.communityProfile.user?.photoUrl ?? null,
           }
         : null,
       ...(metrics.get(reply.id) ?? this.emptyMetric()),
@@ -735,6 +851,7 @@ export class ForumService {
             communityProfileId: post.communityProfile.communityProfileId,
             displayName: post.communityProfile.displayName,
             role: post.communityProfile.role,
+            photoUrl: post.communityProfile.user?.photoUrl ?? null,
           }
         : null,
       tags: (post.postTags ?? []).map(({ tag }) => ({

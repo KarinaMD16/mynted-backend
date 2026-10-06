@@ -13,6 +13,7 @@ import { ReplyVote } from './entities/reply-vote.entity';
 import { Tag } from './entities/tag.entity';
 import { ForumService } from './forum.service';
 import { VoteType } from './entities/vote-type.enum';
+import { UserTag } from '../user-tags/entities/user-tag.entity';
 
 /* eslint-disable @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return */
 
@@ -20,6 +21,7 @@ describe('ForumService', () => {
   const repository = () => ({
     findOne: jest.fn(),
     find: jest.fn().mockResolvedValue([]),
+    findAndCount: jest.fn().mockResolvedValue([[], 0]),
     save: jest.fn(),
     remove: jest.fn(),
     delete: jest.fn(),
@@ -39,6 +41,7 @@ describe('ForumService', () => {
       skip: jest.fn().mockReturnThis(),
       take: jest.fn().mockReturnThis(),
       getManyAndCount: jest.fn().mockResolvedValue([[], 0]),
+      setParameter: jest.fn().mockReturnThis(),
     })),
   });
 
@@ -54,6 +57,7 @@ describe('ForumService', () => {
     const replyVoteRepository = repository();
     const favoriteRepository = repository();
     const productRepository = repository();
+    const userTagRepository = repository();
     const manager = {
       create: jest.fn((_, value) => value),
       save: jest.fn((_, value) => ({ id: 10, ...value })),
@@ -76,13 +80,17 @@ describe('ForumService', () => {
       productRepository as unknown as Repository<Product>,
       dataSource as never,
       cloudinary as unknown as CloudinaryService,
+      userTagRepository as unknown as Repository<UserTag>,
     );
     return {
       service,
       communityRepository,
       profileRepository,
       postRepository,
+      postTagRepository,
       tagRepository,
+      replyRepository,
+      userTagRepository,
       postVoteRepository,
       manager,
     };
@@ -184,6 +192,214 @@ describe('ForumService', () => {
     expect(ctx.postVoteRepository.remove).toHaveBeenCalled();
   });
 
+  it('includes the author photo in posts listed by community', async () => {
+    const ctx = setup();
+    const post = {
+      id: 11,
+      title: 'Community post',
+      body: 'Body',
+      postedAt: new Date(),
+      communityProfileId: 4,
+      communityProfile: {
+        communityProfileId: 4,
+        displayName: 'Author',
+        role: 'member',
+        user: { photoUrl: 'https://img.test/author.png' },
+      },
+      postTags: [],
+      images: [],
+    } as unknown as Post;
+    ctx.communityRepository.findOne.mockResolvedValue({
+      id: 7,
+      isActive: true,
+    });
+    ctx.profileRepository.findOne.mockResolvedValue({
+      communityProfileId: 4,
+    });
+    ctx.postRepository.findAndCount.mockResolvedValue([[post], 1]);
+
+    const result = await ctx.service.findPosts(7, 'user-id', {
+      page: 1,
+      limit: 10,
+    });
+
+    expect(result.data[0].author).toMatchObject({
+      communityProfileId: 4,
+      displayName: 'Author',
+      role: 'member',
+      photoUrl: 'https://img.test/author.png',
+    });
+  });
+
+  it('includes null author photos in replies', async () => {
+    const ctx = setup();
+    ctx.postRepository.findOne.mockResolvedValue({
+      id: 10,
+      communityProfile: {
+        communityId: 7,
+        community: { isActive: true },
+      },
+    });
+    ctx.replyRepository.find.mockResolvedValue([
+      {
+        id: 20,
+        body: 'Reply',
+        postId: 10,
+        communityProfileId: 4,
+        parentReplyId: null,
+        communityProfile: {
+          communityProfileId: 4,
+          displayName: 'Reply author',
+          role: 'member',
+          user: { photoUrl: null },
+        },
+      },
+    ]);
+    ctx.profileRepository.findOne.mockResolvedValue(null);
+
+    const replies = await ctx.service.findReplies(10, 'user-id');
+
+    expect(replies[0].author).toMatchObject({
+      communityProfileId: 4,
+      displayName: 'Reply author',
+      role: 'member',
+      photoUrl: null,
+    });
+  });
+
+  it('includes photos in post detail and embedded replies', async () => {
+    const ctx = setup();
+    const post = {
+      id: 10,
+      title: 'Post detail',
+      body: 'Body',
+      postedAt: new Date(),
+      communityProfileId: 4,
+      communityProfile: {
+        communityProfileId: 4,
+        communityId: 7,
+        displayName: 'Post author',
+        role: 'member',
+        user: { photoUrl: 'https://img.test/post-author.png' },
+        community: { id: 7, isActive: true },
+      },
+      postTags: [],
+      images: [],
+    } as unknown as Post;
+    ctx.postRepository.findOne.mockResolvedValue(post);
+    ctx.profileRepository.findOne.mockResolvedValue(null);
+    ctx.replyRepository.find.mockResolvedValue([
+      {
+        id: 21,
+        body: 'Nested reply',
+        postId: 10,
+        communityProfileId: 5,
+        parentReplyId: null,
+        communityProfile: {
+          communityProfileId: 5,
+          displayName: 'Reply author',
+          role: 'member',
+          user: { photoUrl: 'https://img.test/reply-author.png' },
+        },
+      },
+    ]);
+
+    const result = await ctx.service.findPost(10, 'user-id');
+
+    expect(result.author).toMatchObject({
+      displayName: 'Post author',
+      photoUrl: 'https://img.test/post-author.png',
+    });
+    expect(result.replies[0].author).toMatchObject({
+      displayName: 'Reply author',
+      photoUrl: 'https://img.test/reply-author.png',
+    });
+  });
+
+  it('recommends posts by UserTag and returns matchedTagCount', async () => {
+    const ctx = setup();
+    const postBuilder = ctx.postRepository.createQueryBuilder();
+    const postTagBuilder = ctx.postTagRepository.createQueryBuilder();
+    ctx.postRepository.createQueryBuilder.mockReturnValue(postBuilder);
+    ctx.postTagRepository.createQueryBuilder.mockReturnValue(postTagBuilder);
+    ctx.userTagRepository.find.mockResolvedValue([{ tagId: 1 }, { tagId: 3 }]);
+    const post = {
+      id: 12,
+      title: 'Recommended post',
+      body: 'Body',
+      postedAt: new Date(),
+      communityProfileId: 4,
+      communityProfile: {
+        communityProfileId: 4,
+        communityId: 7,
+        displayName: 'Author',
+        role: 'member',
+        user: { photoUrl: null },
+        community: {
+          id: 7,
+          name: 'Public community',
+          slug: 'public-community',
+          imageUrl: null,
+          isActive: true,
+          isPrivate: false,
+        },
+      },
+      postTags: [],
+      images: [],
+    } as unknown as Post;
+    const lowerMatchPost = {
+      ...post,
+      id: 13,
+      title: 'Lower match post',
+    };
+    postBuilder.getManyAndCount.mockResolvedValue([[post, lowerMatchPost], 2]);
+    postTagBuilder.getRawMany.mockResolvedValue([
+      { post_id: '12', count: '2' },
+      { post_id: '13', count: '1' },
+    ]);
+    ctx.profileRepository.find.mockResolvedValue([]);
+
+    const result = await ctx.service.findRecommendedPosts('user-id', {
+      page: 1,
+      limit: 10,
+    });
+
+    expect(ctx.userTagRepository.find).toHaveBeenCalledWith({
+      where: { userId: 'user-id' },
+      select: { tagId: true },
+    });
+    expect(postBuilder.orderBy).toHaveBeenCalledWith(
+      'matched_tag_count',
+      'DESC',
+    );
+    expect(result.data[0]).toMatchObject({
+      id: 12,
+      matchedTagCount: 2,
+      community: { id: 7 },
+    });
+    expect(result.data[1]).toMatchObject({
+      id: 13,
+      matchedTagCount: 1,
+    });
+    expect(typeof result.data[0].matchedTagCount).toBe('number');
+  });
+
+  it('returns an empty paginated result when the user has no interests', async () => {
+    const ctx = setup();
+    ctx.userTagRepository.find.mockResolvedValue([]);
+
+    const result = await ctx.service.findRecommendedPosts('user-id', {
+      page: 2,
+      limit: 10,
+    });
+
+    expect(result).toEqual({
+      data: [],
+      pagination: { page: 2, limit: 10, total: 0, totalPages: 0 },
+    });
+    expect(ctx.postRepository.createQueryBuilder).not.toHaveBeenCalled();
+  });
+
   it('lists the global feed with public-community and tag filters', async () => {
     const ctx = setup();
     const builder = ctx.postRepository.createQueryBuilder();
@@ -199,6 +415,7 @@ describe('ForumService', () => {
         communityId: 7,
         displayName: 'Author',
         role: 'member',
+        user: { photoUrl: 'https://img.test/author.png' },
         community: {
           id: 7,
           name: 'Public community',
@@ -244,11 +461,13 @@ describe('ForumService', () => {
         {
           id: 10,
           community: { id: 7, slug: 'public-community' },
+          author: { photoUrl: 'https://img.test/author.png' },
           replyCount: 0,
         },
       ],
       pagination: { page: 1, limit: 20, total: 1, totalPages: 1 },
     });
+    expect(result.data[0]).not.toHaveProperty('matchedTagCount');
   });
 
   it('does not add a text filter when search only contains spaces', async () => {
