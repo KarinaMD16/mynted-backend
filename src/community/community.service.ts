@@ -10,6 +10,8 @@ import {
   Optional,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import { BadgeEvents } from '../badges/badge-events';
 import {
   DataSource,
   FindOptionsWhere,
@@ -87,6 +89,8 @@ export class CommunityService {
     @Optional()
     @InjectRepository(Favorite)
     private readonly favoriteRepository?: Repository<Favorite>,
+    @Optional()
+    private readonly eventEmitter?: EventEmitter2,
   ) {}
 
   async create(
@@ -153,8 +157,10 @@ export class CommunityService {
 
     const user = await this.usersService.findById(userId);
 
+    let creatorProfileId: number | undefined;
+
     try {
-      return await this.dataSource.transaction(async (manager) => {
+      const created = await this.dataSource.transaction(async (manager) => {
         const community = manager.create(Community, {
           name: dto.name,
           description: dto.description,
@@ -175,7 +181,11 @@ export class CommunityService {
           userId,
           communityId: savedCommunity.id,
         });
-        await manager.save(CommunityProfile, creatorProfile);
+        const savedCreator = await manager.save(
+          CommunityProfile,
+          creatorProfile,
+        );
+        creatorProfileId = savedCreator.communityProfileId;
 
         const communityTags = dto.tagIds.map((tagId) =>
           manager.create(CommunityTag, {
@@ -213,6 +223,20 @@ export class CommunityService {
 
         return result;
       });
+
+      if (creatorProfileId !== undefined) {
+        this.eventEmitter?.emit(BadgeEvents.COMMUNITY_CREATED, {
+          userId,
+          communityProfileId: creatorProfileId,
+        });
+        this.eventEmitter?.emit(BadgeEvents.MEMBER_JOINED, {
+          userId,
+          communityProfileId: creatorProfileId,
+          communityId: created.id,
+        });
+      }
+
+      return created;
     } catch (error: unknown) {
       this.handleDatabaseError(error);
     }
@@ -634,7 +658,11 @@ export class CommunityService {
     }
 
     profile.role = CommunityProfileRole.MODERATOR;
-    return this.communityProfileRepository.save(profile);
+    const savedModerator = await this.communityProfileRepository.save(profile);
+    this.eventEmitter?.emit(BadgeEvents.MODERATOR_ASSIGNED, {
+      communityProfileId: savedModerator.communityProfileId,
+    });
+    return savedModerator;
   }
 
   async removeModerator(
@@ -689,7 +717,7 @@ export class CommunityService {
       actingUserId,
     );
 
-    return this.dataSource.transaction(async (manager) => {
+    const accepted = await this.dataSource.transaction(async (manager) => {
       const user = await this.usersService.findById(request.userId);
       const profile = manager.create(CommunityProfile, {
         userId: request.userId,
@@ -707,6 +735,14 @@ export class CommunityService {
 
       return savedProfile;
     });
+
+    this.eventEmitter?.emit(BadgeEvents.MEMBER_JOINED, {
+      userId: request.userId,
+      communityProfileId: accepted.communityProfileId,
+      communityId,
+    });
+
+    return accepted;
   }
 
   async rejectJoinRequest(

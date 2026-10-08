@@ -5,6 +5,7 @@ import {
   Get,
   Inject,
   Param,
+  Query,
   ParseUUIDPipe,
   Patch,
   Post,
@@ -20,6 +21,7 @@ import {
   ApiBearerAuth,
   ApiBody,
   ApiConsumes,
+  ApiOkResponse,
   ApiOperation,
   ApiTags,
 } from '@nestjs/swagger';
@@ -28,6 +30,9 @@ import { Response } from 'express';
 import { UsersService } from './users.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import { PublicUserDto } from './dto/public-user.dto';
+import { SearchUsersQueryDto } from './dto/search-users-query.dto';
+import { UserRole } from './entities/user.entity';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { SuperAdminGuard } from '../auth/guards/super-admin.guard';
 import { AuthenticatedRequest } from '../auth/types/authenticated-request';
@@ -84,7 +89,7 @@ export class UsersController {
   @ApiOperation({
     summary:
       'Actualizar el perfil del usuario autenticado (username, bio, location, locale, currency, ' +
-      'preferencias de notificación y/o foto)',
+      'país, preferencias de notificación, confirmUnfavorite y/o foto)',
   })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
@@ -99,7 +104,13 @@ export class UsersController {
         },
         location: { type: 'string', example: 'San José, Costa Rica' },
         locale: { type: 'string', example: 'es-CR' },
-        currency: { type: 'string', example: 'CRC' },
+        currency: { type: 'string', example: 'CRC', description: 'ISO 4217' },
+        country: {
+          type: 'string',
+          example: 'CR',
+          description: 'ISO 3166-1 alfa-2',
+        },
+        confirmUnfavorite: { type: 'boolean', example: true },
         emailNotifications: { type: 'boolean', example: true },
         pushNotifications: { type: 'boolean', example: true },
         photo: {
@@ -145,11 +156,45 @@ export class UsersController {
     return this.usersService.activate(id);
   }
 
+  // Las rutas literales (search, by-username) van antes de ':id'.
+  @Get('search')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary:
+      'Buscar usuarios activos por username (contiene, sin distinguir mayúsculas). Solo datos públicos',
+  })
+  search(@Query() query: SearchUsersQueryDto) {
+    return this.usersService.searchPublic(query);
+  }
+
+  @Get('by-username/:username')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Obtener el perfil público de un usuario por username',
+  })
+  @ApiOkResponse({ type: PublicUserDto })
+  findByUsername(@Param('username') username: string) {
+    return this.usersService.findPublicByUsername(username);
+  }
+
   @Get(':id')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Obtener un usuario por id' })
-  findOne(@Param('id', ParseUUIDPipe) id: string) {
-    return this.usersService.findById(id);
+  @ApiOperation({
+    summary:
+      'Obtener el perfil público de un usuario por id (un superadmin recibe la respuesta completa)',
+  })
+  @ApiOkResponse({ type: PublicUserDto })
+  async findOne(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    const requester = await this.usersService.findById(request.user.userId);
+    if (requester.role === UserRole.SUPERADMIN) {
+      return this.usersService.findById(id);
+    }
+    return this.usersService.findPublicById(id);
   }
 }

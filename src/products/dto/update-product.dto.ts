@@ -1,23 +1,32 @@
 import { Transform, TransformFnParams, Type } from 'class-transformer';
 import {
   ArrayMaxSize,
-  ArrayMinSize,
   ArrayUnique,
   IsArray,
+  IsBoolean,
   IsEnum,
   IsInt,
+  IsISO31661Alpha2,
   IsNotEmpty,
   IsNumber,
   IsOptional,
   IsPositive,
   IsString,
+  Max,
   Min,
 } from 'class-validator';
 import { ApiHideProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { parseIntegerArray } from '../../community/dto/create-community.dto';
+import {
+  parseBoolean,
+  parseCodeArray,
+  parseInteger,
+  parseIntegerArray,
+} from '../../community/dto/create-community.dto';
 import { ProductCondition, ProductType } from '../entities/product.entity';
-
-const REQUIRED_PRODUCT_TAG_COUNT = 3;
+import {
+  MAX_RELATED_PRODUCTS,
+  REQUIRED_PRODUCT_TAG_COUNT,
+} from './create-product.dto';
 
 export class UpdateProductDto {
   @ApiPropertyOptional({ example: 'Figura de Charizard Funko Pop #123' })
@@ -58,26 +67,96 @@ export class UpdateProductDto {
   @ApiPropertyOptional({
     type: [Number],
     example: [1, 3, 5],
-    minItems: REQUIRED_PRODUCT_TAG_COUNT,
     maxItems: REQUIRED_PRODUCT_TAG_COUNT,
     description:
-      'Reemplaza por completo los tags del producto. Debe traer exactamente 3 si se incluye. En multipart/form-data puede enviarse como arreglo JSON',
+      'Reemplaza por completo los tags del producto. En un producto publicado debe traer exactamente 3; en un borrador, hasta 3. En multipart/form-data puede enviarse como arreglo JSON',
   })
   @Transform(({ value }: TransformFnParams) =>
     parseIntegerArray(value as unknown),
   )
   @IsOptional()
   @IsArray()
-  @ArrayMinSize(REQUIRED_PRODUCT_TAG_COUNT, {
-    message: `Debe seleccionar exactamente ${REQUIRED_PRODUCT_TAG_COUNT} tags`,
-  })
   @ArrayMaxSize(REQUIRED_PRODUCT_TAG_COUNT, {
-    message: `Debe seleccionar exactamente ${REQUIRED_PRODUCT_TAG_COUNT} tags`,
+    message: `No puede seleccionar más de ${REQUIRED_PRODUCT_TAG_COUNT} tags`,
   })
   @ArrayUnique({ message: 'No puede repetir tags en el mismo producto' })
   @IsInt({ each: true, message: 'Cada tagId debe ser un número entero' })
   @Min(1, { each: true })
   tagIds?: number[];
+
+  @ApiPropertyOptional({
+    type: Number,
+    nullable: true,
+    example: 5,
+    description:
+      'Mueve el producto a esta comunidad (debes ser miembro). "null" lo deja sin comunidad. Si se omite, no cambia',
+  })
+  @Transform(({ value }: TransformFnParams) =>
+    value === 'null' || value === '' ? null : parseInteger(value as unknown),
+  )
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  communityId?: number | null;
+
+  @ApiPropertyOptional({
+    type: Number,
+    example: 15,
+    minimum: 0,
+    maximum: 100,
+    description:
+      'Porcentaje de descuento (0 lo quita). price no se modifica: la respuesta trae finalPrice',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(100)
+  discountPercent?: number;
+
+  @ApiPropertyOptional({
+    example: true,
+    description: 'Si es false, el producto no aparece en listados públicos',
+  })
+  @IsOptional()
+  @Transform(({ value }: TransformFnParams) => parseBoolean(value as unknown))
+  @IsBoolean({ message: 'isVisible debe ser un booleano' })
+  isVisible?: boolean;
+
+  @ApiPropertyOptional({
+    type: [String],
+    example: ['CR', 'MX'],
+    description:
+      'Reemplaza los países de envío (ISO 3166-1 alfa-2). Acepta arreglo JSON, partes repetidas o lista separada por comas',
+  })
+  @Transform(({ value }: TransformFnParams) => parseCodeArray(value as unknown))
+  @IsOptional()
+  @IsArray()
+  @ArrayUnique({ message: 'No puede repetir países' })
+  @IsISO31661Alpha2({
+    each: true,
+    message: 'Cada país debe ser un código ISO 3166-1 alfa-2 (p. ej. CR)',
+  })
+  shipsTo?: string[];
+
+  @ApiPropertyOptional({
+    type: [Number],
+    example: [10, 11],
+    maxItems: MAX_RELATED_PRODUCTS,
+    description: `Reemplaza los productos relacionados (máximo ${MAX_RELATED_PRODUCTS}; del mismo vendedor y activos). [] los quita`,
+  })
+  @Transform(({ value }: TransformFnParams) =>
+    parseIntegerArray(value as unknown),
+  )
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(MAX_RELATED_PRODUCTS, {
+    message: `No puede elegir más de ${MAX_RELATED_PRODUCTS} productos relacionados`,
+  })
+  @ArrayUnique({ message: 'No puede repetir productos relacionados' })
+  @IsInt({ each: true })
+  @Min(1, { each: true })
+  relatedProductIds?: number[];
 
   // No se validan aquí: los archivos reales llegan por @UploadedFiles(), no
   // por el body. Existen solo para que el ValidationPipe global

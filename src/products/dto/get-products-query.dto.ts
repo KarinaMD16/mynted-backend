@@ -1,5 +1,13 @@
-import { Type } from 'class-transformer';
-import { IsEnum, IsInt, IsOptional, Max, Min } from 'class-validator';
+import { Transform, TransformFnParams, Type } from 'class-transformer';
+import {
+  IsEnum,
+  IsInt,
+  IsISO31661Alpha2,
+  IsISO4217CurrencyCode,
+  IsOptional,
+  Max,
+  Min,
+} from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { ProductCondition, ProductType } from '../entities/product.entity';
 
@@ -54,14 +62,34 @@ export class GetProductsQueryDto {
   })
   condition?: ProductCondition;
 
-  @ApiPropertyOptional({ type: Number, example: 10 })
+  @ApiPropertyOptional({
+    example: 'CRC',
+    description:
+      'Solo productos en esta moneda (ISO 4217). Recomendado al usar priceMin/priceMax',
+  })
+  @Transform(({ value }: TransformFnParams) =>
+    typeof value === 'string' ? value.trim().toUpperCase() : (value as unknown),
+  )
+  @IsOptional()
+  @IsISO4217CurrencyCode({ message: 'currency debe ser un código ISO 4217' })
+  currency?: string;
+
+  @ApiPropertyOptional({
+    type: Number,
+    example: 10,
+    description: 'Precio final mínimo (con descuento aplicado)',
+  })
   @Type(() => Number)
   @IsOptional()
   @IsInt()
   @Min(0)
   priceMin?: number;
 
-  @ApiPropertyOptional({ type: Number, example: 100 })
+  @ApiPropertyOptional({
+    type: Number,
+    example: 100,
+    description: 'Precio final máximo (con descuento aplicado)',
+  })
   @Type(() => Number)
   @IsOptional()
   @IsInt()
@@ -88,4 +116,15 @@ export class GetProductsQueryDto {
   @Min(1)
   @Max(100)
   limit: number = 10;
+
+  @ApiPropertyOptional({
+    example: 'CR',
+    description: 'Solo productos que envían a este país (ISO 3166-1 alfa-2)',
+  })
+  @Transform(({ value }: TransformFnParams) =>
+    typeof value === 'string' ? value.trim().toUpperCase() : (value as unknown),
+  )
+  @IsOptional()
+  @IsISO31661Alpha2({ message: 'shipTo debe ser un código ISO 3166-1 alfa-2' })
+  shipTo?: string;
 }

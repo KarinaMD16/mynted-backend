@@ -8,7 +8,13 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiBearerAuth,
+  ApiBadRequestResponse,
+  ApiConflictResponse,
+} from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 import { Response } from 'express';
 import { AuthService } from './auth.service';
@@ -144,6 +150,8 @@ export class AuthController {
     summary:
       'Solicitar cambio de email estando autenticado. Envía un enlace de confirmación al nuevo correo',
   })
+  @ApiBadRequestResponse({ description: 'El nuevo email es igual al actual' })
+  @ApiConflictResponse({ description: 'El nuevo email ya está en uso' })
   async requestEmailChange(
     @Req() req: AuthenticatedRequest,
     @Body() dto: RequestEmailChangeDto,
@@ -160,6 +168,10 @@ export class AuthController {
     summary:
       'Confirmar el cambio de email con el token recibido en el nuevo correo',
   })
+  @ApiBadRequestResponse({
+    description: 'Token inválido, expirado o ya utilizado',
+  })
+  @ApiConflictResponse({ description: 'El email ya está en uso' })
   async confirmEmailChange(@Body() dto: ConfirmEmailChangeDto) {
     await this.authService.confirmEmailChange(dto);
     return { message: 'Email actualizado correctamente' };

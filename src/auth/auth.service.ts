@@ -254,7 +254,7 @@ export class AuthService {
       );
     }
 
-    const existing = await this.usersService.findByEmail(newEmail);
+    const existing = await this.usersService.findByEmailInsensitive(newEmail);
     if (existing) {
       throw new ConflictException('Ese email ya está en uso');
     }
@@ -303,7 +303,9 @@ export class AuthService {
       );
     }
 
-    const existing = await this.usersService.findByEmail(user.pendingEmail);
+    const existing = await this.usersService.findByEmailInsensitive(
+      user.pendingEmail,
+    );
     if (existing && existing.id !== user.id) {
       throw new ConflictException('Ese email ya está en uso');
     }
