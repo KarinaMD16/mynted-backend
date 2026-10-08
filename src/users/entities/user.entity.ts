@@ -133,4 +133,12 @@ export class User {
 
   @Column({ name: 'push_notifications', type: 'boolean', default: true })
   pushNotifications!: boolean;
+
+  // Si es true, el frontend pide confirmación antes de quitar un favorito.
+  @Column({ name: 'confirm_unfavorite', type: 'boolean', default: true })
+  confirmUnfavorite!: boolean;
+
+  // País del usuario, ISO 3166-1 alfa-2 (p. ej. 'CR').
+  @Column({ type: 'varchar', length: 2, nullable: true })
+  country!: string | null;
 }

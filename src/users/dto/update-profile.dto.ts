@@ -1,5 +1,7 @@
 import {
   IsBoolean,
+  IsISO31661Alpha2,
+  IsISO4217CurrencyCode,
   IsOptional,
   IsString,
   Matches,
@@ -55,10 +57,36 @@ export class UpdateProfileDto {
     example: 'CRC',
     description: 'Moneda preferida del usuario',
   })
+  @Transform(({ value }: TransformFnParams) =>
+    typeof value === 'string' ? value.trim().toUpperCase() : (value as unknown),
+  )
   @IsOptional()
-  @IsString()
-  @MaxLength(10, { message: 'La moneda no puede superar 10 caracteres' })
+  @IsISO4217CurrencyCode({
+    message: 'La moneda debe ser un código ISO 4217 (p. ej. CRC, USD)',
+  })
   currency?: string;
+
+  @ApiPropertyOptional({
+    example: 'CR',
+    description: 'País del usuario (ISO 3166-1 alfa-2)',
+  })
+  @Transform(({ value }: TransformFnParams) =>
+    typeof value === 'string' ? value.trim().toUpperCase() : (value as unknown),
+  )
+  @IsOptional()
+  @IsISO31661Alpha2({
+    message: 'El país debe ser un código ISO 3166-1 alfa-2 (p. ej. CR, MX)',
+  })
+  country?: string;
+
+  @ApiPropertyOptional({
+    example: true,
+    description: 'Pedir confirmación antes de quitar un favorito',
+  })
+  @IsOptional()
+  @Transform(({ value }: TransformFnParams) => parseBoolean(value as unknown))
+  @IsBoolean({ message: 'confirmUnfavorite debe ser un booleano' })
+  confirmUnfavorite?: boolean;
 
   @ApiPropertyOptional({
     example: true,

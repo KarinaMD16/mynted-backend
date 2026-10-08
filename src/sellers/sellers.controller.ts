@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Param,
+  Query,
   ParseUUIDPipe,
   Patch,
   Post,
@@ -12,6 +13,7 @@ import {
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { SellersService } from './sellers.service';
 import { RequestSellerDto } from './dto/request-seller.dto';
+import { GetSellerRequestsQueryDto } from './dto/get-seller-requests-query.dto';
 import { UpdateSellerStatusDto } from './dto/update-seller-status.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { SuperAdminGuard } from '../auth/guards/super-admin.guard';
@@ -40,10 +42,11 @@ export class SellersController {
   @UseGuards(JwtAuthGuard, SuperAdminGuard)
   @ApiBearerAuth()
   @ApiOperation({
-    summary: '[Superadmin] Listar las solicitudes de vendedor pendientes',
+    summary:
+      '[Superadmin] Listar solicitudes de vendedor por estado (status=pending|approved|rejected; por defecto pending)',
   })
-  findPendingRequests() {
-    return this.sellersService.findPendingRequests();
+  findRequests(@Query() query: GetSellerRequestsQueryDto) {
+    return this.sellersService.findRequests(query.status);
   }
 
   @Get('seller-request/:id')

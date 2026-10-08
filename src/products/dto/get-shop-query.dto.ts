@@ -1,5 +1,5 @@
-import { Type } from 'class-transformer';
-import { IsInt, IsOptional, Max, Min } from 'class-validator';
+import { Transform, TransformFnParams, Type } from 'class-transformer';
+import { IsInt, IsISO31661Alpha2, IsOptional, Max, Min } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 
 export class GetShopQueryDto {
@@ -58,4 +58,15 @@ export class GetShopQueryDto {
   @Min(1)
   @Max(20)
   productsLimit: number = 4;
+
+  @ApiPropertyOptional({
+    example: 'CR',
+    description: 'Solo productos que envían a este país (ISO 3166-1 alfa-2)',
+  })
+  @Transform(({ value }: TransformFnParams) =>
+    typeof value === 'string' ? value.trim().toUpperCase() : (value as unknown),
+  )
+  @IsOptional()
+  @IsISO31661Alpha2({ message: 'shipTo debe ser un código ISO 3166-1 alfa-2' })
+  shipTo?: string;
 }

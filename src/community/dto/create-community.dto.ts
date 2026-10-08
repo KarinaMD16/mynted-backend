@@ -32,6 +32,22 @@ export function parseBoolean(value: unknown): unknown {
   return value;
 }
 
+// Lista de códigos de texto (p. ej. países): acepta arreglo JSON, partes
+// multipart repetidas o una cadena separada por comas; normaliza a mayúsculas.
+export function parseCodeArray(value: unknown): unknown {
+  const parsed = parseMultipartArray(value);
+  if (!Array.isArray(parsed)) return parsed;
+
+  return (parsed as unknown[]).flatMap((item) =>
+    typeof item === 'string'
+      ? item
+          .split(',')
+          .map((part) => part.trim().toUpperCase())
+          .filter((part) => part !== '')
+      : [item],
+  );
+}
+
 export function parseInteger(value: unknown): unknown {
   return typeof value === 'string' && value.trim() !== ''
     ? Number(value)

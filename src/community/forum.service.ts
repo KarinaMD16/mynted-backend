@@ -2,11 +2,19 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, In, Repository } from 'typeorm';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import { BadgeEvents } from '../badges/badge-events';
+import { DataSource, FindOptionsWhere, In, Not, Repository } from 'typeorm';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
 import { Product, ProductStatus } from '../products/entities/product.entity';
+import { escapeLike } from '../common/escape-like';
+import {
+  PUBLIC_COMMUNITY_ALTERNATIVES,
+  computeFinalPrice,
+} from '../products/product-pricing';
 import { CreatePostDto } from './dto/create-post.dto';
 import { CreateReplyDto } from './dto/create-reply.dto';
 import { GetPostsQueryDto } from './dto/get-posts-query.dto';
@@ -16,6 +24,10 @@ import {
   MyPostsSortBy,
   SortOrder,
 } from './dto/get-my-posts-query.dto';
+import {
+  FavoriteIdsType,
+  GetFavoriteIdsQueryDto,
+} from './dto/get-favorite-ids-query.dto';
 import { GetMyFeedQueryDto } from './dto/get-my-feed-query.dto';
 import {
   ContentType,
@@ -79,6 +91,8 @@ export class ForumService {
     private readonly productRepository: Repository<Product>,
     private readonly dataSource: DataSource,
     private readonly cloudinaryService: CloudinaryService,
+    @Optional()
+    private readonly eventEmitter?: EventEmitter2,
   ) {}
 
   async createPost(
@@ -129,6 +143,11 @@ export class ForumService {
       }
 
       return savedPost.id;
+    });
+
+    this.eventEmitter?.emit(BadgeEvents.POST_CREATED, {
+      userId,
+      communityProfileId: profile.communityProfileId,
     });
 
     return this.findPost(postId, userId, community);
@@ -345,6 +364,7 @@ export class ForumService {
       parentReplyId: dto.parentReplyId ?? null,
     });
     const savedReply = await this.replyRepository.save(reply);
+    this.eventEmitter?.emit(BadgeEvents.REPLY_CREATED, { userId });
     return this.findReplyResponse(savedReply.id, userId);
   }
 
@@ -708,7 +728,7 @@ export class ForumService {
       return;
     }
     const product = await this.productRepository.findOne({
-      where: { id: itemId, status: ProductStatus.ACTIVE },
+      where: { id: itemId, status: ProductStatus.ACTIVE, isVisible: true },
     });
     if (!product) throw new NotFoundException('Producto no encontrado');
   }
@@ -756,7 +776,18 @@ export class ForumService {
 
   // Posts publicados por el usuario autenticado (todas sus comunidades
   // activas), ordenables por fecha, upvotes, downvotes o veces guardado.
-  async findMyPosts(userId: string, query: GetMyPostsQueryDto) {
+  findMyPosts(userId: string, query: GetMyPostsQueryDto) {
+    return this.findUserPosts(userId, userId, query, false);
+  }
+
+  // Misma lógica para el perfil público de otro usuario (publicOnly limita a
+  // comunidades públicas). viewerId decide myVote/isSaved.
+  async findUserPosts(
+    ownerId: string,
+    viewerId: string,
+    query: GetMyPostsQueryDto,
+    publicOnly: boolean,
+  ) {
     const direction = query.order === SortOrder.ASC ? 'ASC' : 'DESC';
     const sortExpressions: Record<MyPostsSortBy, string> = {
       [MyPostsSortBy.DATE]: 'post.posted_at',
@@ -769,8 +800,11 @@ export class ForumService {
       .createQueryBuilder('post')
       .innerJoin('post.communityProfile', 'profile')
       .innerJoin('profile.community', 'community')
-      .where('profile.user_id = :userId', { userId })
+      .where('profile.user_id = :ownerId', { ownerId })
       .andWhere('community.is_active = :isActive', { isActive: true });
+    if (publicOnly) {
+      base.andWhere('community.is_private = :isPrivate', { isPrivate: false });
+    }
 
     const total = await base.clone().getCount();
     const rows = await base
@@ -784,7 +818,7 @@ export class ForumService {
 
     const cards = await this.buildPostCards(
       rows.map((row) => Number(row.id)),
-      userId,
+      viewerId,
     );
 
     return {
@@ -794,36 +828,89 @@ export class ForumService {
   }
 
   // Posts y productos publicados por el usuario, mezclados por fecha.
-  async findMyContent(userId: string, query: GetMyFeedQueryDto) {
+  findMyContent(userId: string, query: GetMyFeedQueryDto) {
+    return this.findUserContent(userId, userId, query, false);
+  }
+
+  async findUserContent(
+    ownerId: string,
+    viewerId: string,
+    query: GetMyFeedQueryDto,
+    publicOnly: boolean,
+  ) {
     const entries: ContentEntry[] = [];
 
-    {
-      const posts = await this.postRepository.find({
-        where: {
-          communityProfile: { userId, community: { isActive: true } },
+    const posts = await this.postRepository.find({
+      where: {
+        communityProfile: {
+          userId: ownerId,
+          community: {
+            isActive: true,
+            ...(publicOnly ? { isPrivate: false } : {}),
+          },
         },
-        select: { id: true, postedAt: true },
-      });
-      posts.forEach((post) =>
-        entries.push({ type: 'post', id: post.id, date: post.postedAt }),
-      );
-    }
+      },
+      select: { id: true, postedAt: true },
+    });
+    posts.forEach((post) =>
+      entries.push({ type: 'post', id: post.id, date: post.postedAt }),
+    );
 
-    {
-      const products = await this.productRepository.find({
-        where: { seller: { userId } },
-        select: { id: true, createdAt: true },
-      });
-      products.forEach((product) =>
-        entries.push({
-          type: 'product',
-          id: product.id,
-          date: product.createdAt,
-        }),
-      );
-    }
+    const products = await this.productRepository.find({
+      where: this.userProductsWhere(ownerId, publicOnly),
+      select: { id: true, createdAt: true },
+    });
+    products.forEach((product) =>
+      entries.push({
+        type: 'product',
+        id: product.id,
+        date: product.createdAt,
+      }),
+    );
 
-    return this.pageContent(entries, userId, query);
+    return this.pageContent(entries, viewerId, query);
+  }
+
+  // Productos de un usuario: en su perfil público solo los activos y de
+  // comunidades públicas.
+  async findUserProducts(
+    ownerId: string,
+    viewerId: string,
+    query: GetMyFeedQueryDto,
+  ) {
+    const [rows, total] = await this.productRepository.findAndCount({
+      where: this.userProductsWhere(ownerId, true),
+      select: { id: true, createdAt: true },
+      order: {
+        createdAt: query.order === SortOrder.ASC ? 'ASC' : 'DESC',
+        id: query.order === SortOrder.ASC ? 'ASC' : 'DESC',
+      },
+      skip: (query.page - 1) * query.limit,
+      take: query.limit,
+    });
+
+    return {
+      data: await this.buildProductCards(
+        rows.map((row) => row.id),
+        viewerId,
+      ),
+      pagination: this.buildPageInfo(query.page, query.limit, total),
+    };
+  }
+
+  private userProductsWhere(
+    ownerId: string,
+    publicOnly: boolean,
+  ): FindOptionsWhere<Product> | FindOptionsWhere<Product>[] {
+    return publicOnly
+      ? PUBLIC_COMMUNITY_ALTERNATIVES.map((alternative) => ({
+          ...alternative,
+          seller: { userId: ownerId },
+          status: ProductStatus.ACTIVE,
+          isVisible: true,
+        }))
+      : // Los borradores no cuentan como contenido publicado.
+        { seller: { userId: ownerId }, status: Not(ProductStatus.DRAFT) };
   }
 
   // Posts y productos guardados como favoritos por el usuario; la fecha es
@@ -859,6 +946,7 @@ export class ForumService {
             where: {
               id: In(productIds),
               status: In([ProductStatus.ACTIVE, ProductStatus.SOLD]),
+              isVisible: true,
             },
             select: { id: true },
           })
@@ -887,6 +975,56 @@ export class ForumService {
     }
 
     return this.pageContent(entries, userId, query);
+  }
+
+  // Búsqueda global de posts: título o cuerpo, solo comunidades públicas y
+  // activas. viewerId es opcional (los visitantes ven myVote/isSaved vacíos).
+  async searchPosts(
+    q: string,
+    page: number,
+    limit: number,
+    viewerId: string | undefined,
+  ) {
+    const base = this.postRepository
+      .createQueryBuilder('post')
+      .innerJoin('post.communityProfile', 'profile')
+      .innerJoin('profile.community', 'community')
+      .where('community.is_active = :isActive', { isActive: true })
+      .andWhere('community.is_private = :isPrivate', { isPrivate: false })
+      .andWhere('(post.title ILIKE :text OR post.body ILIKE :text)', {
+        text: `%${escapeLike(q)}%`,
+      });
+
+    const total = await base.clone().getCount();
+    const rows = await base
+      .select('post.id', 'id')
+      .orderBy('post.posted_at', 'DESC')
+      .addOrderBy('post.id', 'DESC')
+      .offset((page - 1) * limit)
+      .limit(limit)
+      .getRawMany<{ id: number }>();
+
+    return {
+      data: await this.buildPostCards(
+        rows.map((row) => Number(row.id)),
+        viewerId ?? '',
+      ),
+      pagination: this.buildPageInfo(page, limit, total),
+    };
+  }
+
+  // Solo los ids guardados (para pintar el corazón sin traer las tarjetas).
+  async findMyFavoriteIds(userId: string, query: GetFavoriteIdsQueryDto) {
+    const itemType =
+      query.type === FavoriteIdsType.POSTS
+        ? FavoriteItemType.POST
+        : FavoriteItemType.PRODUCT;
+    const favorites = await this.favoriteRepository.find({
+      where: { userId, itemType },
+      select: { itemId: true },
+      order: { createdAt: 'DESC', id: 'DESC' },
+    });
+    return { type: query.type, ids: favorites.map((f) => f.itemId) };
   }
 
   private async pageContent(
@@ -1033,6 +1171,8 @@ export class ForumService {
         id: product.id,
         title: product.title,
         price: product.price,
+        discountPercent: product.discountPercent,
+        finalPrice: computeFinalPrice(product.price, product.discountPercent),
         currency: product.currency,
         imageUrl: product.imageUrl,
         status: product.status,
@@ -1042,7 +1182,9 @@ export class ForumService {
           tagId: tag.tagId,
           name: tag.name,
         })),
-        community: { id: product.community.id, name: product.community.name },
+        community: product.community
+          ? { id: product.community.id, name: product.community.name }
+          : null,
         seller: {
           sellerId: product.seller.sellerId,
           displayName: product.seller.displayName,

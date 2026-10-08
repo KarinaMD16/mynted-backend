@@ -2,8 +2,11 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import { BadgeEvents } from '../badges/badge-events';
 import { In, QueryFailedError, Repository } from 'typeorm';
 import { Community } from '../community/entities/community.entity';
 import { CommunityTag } from '../community/entities/community-tag.entity';
@@ -50,6 +53,8 @@ export class UserCommunitiesService {
     private readonly userTagRepository: Repository<UserTag>,
     private readonly usersService: UsersService,
     private readonly communityService: CommunityService,
+    @Optional()
+    private readonly eventEmitter?: EventEmitter2,
   ) {}
 
   /**
@@ -164,7 +169,12 @@ export class UserCommunitiesService {
     });
 
     try {
-      await this.communityProfileRepository.save(profile);
+      const savedProfile = await this.communityProfileRepository.save(profile);
+      this.eventEmitter?.emit(BadgeEvents.MEMBER_JOINED, {
+        userId,
+        communityProfileId: savedProfile.communityProfileId,
+        communityId,
+      });
     } catch (error: unknown) {
       if (this.isUniqueViolation(error)) {
         // Se unió por una petición concurrente.

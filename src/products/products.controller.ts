@@ -1,7 +1,11 @@
 import {
+  applyDecorators,
   Body,
   Controller,
+  Delete,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   ParseIntPipe,
   Patch,
@@ -46,81 +50,147 @@ interface ProductFiles {
   images?: Express.Multer.File[];
 }
 
+// Campos comunes del multipart de crear/editar (solo para Swagger UI).
+const PRODUCT_BODY_PROPERTIES = {
+  title: {
+    type: 'string',
+    example: 'Figura de Charizard Funko Pop #123',
+  },
+  description: {
+    type: 'string',
+    example: 'Figura original, caja sellada, sin abrir',
+  },
+  price: { type: 'number', example: 25.99 },
+  discountPercent: {
+    type: 'number',
+    example: 15,
+    minimum: 0,
+    maximum: 100,
+    description:
+      'No modifica price: la respuesta trae finalPrice (precio con descuento)',
+  },
+  type: { type: 'string', enum: ['sale', 'exchange'], example: 'sale' },
+  condition: {
+    type: 'string',
+    enum: ['new', 'like_new', 'good_condition', 'used_with_details'],
+    example: 'new',
+  },
+  isVisible: {
+    type: 'boolean',
+    example: true,
+    description: 'false oculta el producto de los listados públicos',
+  },
+  shipsTo: {
+    type: 'array',
+    items: { type: 'string' },
+    example: ['CR', 'MX'],
+    description:
+      'Países de envío (ISO 3166-1 alfa-2). Puede enviarse como arreglo JSON o lista separada por comas',
+  },
+  relatedProductIds: {
+    type: 'array',
+    items: { type: 'integer' },
+    example: [10, 11],
+    maxItems: 6,
+    description:
+      'Productos relacionados elegidos por el vendedor (máximo 6, tuyos y activos)',
+  },
+};
+
+// Multipart de crear producto (compartido por las dos rutas de publicación).
+function CreateProductMultipart() {
+  return applyDecorators(
+    ApiBearerAuth(),
+    ApiConsumes('multipart/form-data'),
+    ApiBody({
+      schema: {
+        type: 'object',
+        required: ['title'],
+        properties: {
+          ...PRODUCT_BODY_PROPERTIES,
+          tagIds: {
+            type: 'array',
+            items: { type: 'integer' },
+            example: [1, 3, 5],
+            maxItems: 3,
+            description:
+              'Al publicar debe traer exactamente 3 tags; un borrador puede traer hasta 3. En multipart/form-data puede enviarse como arreglo JSON',
+          },
+          saveAsDraft: {
+            type: 'boolean',
+            example: false,
+            description:
+              'true guarda un borrador (solo exige title); se publica luego con POST /products/:id/publish',
+          },
+          image: {
+            type: 'string',
+            format: 'binary',
+            description: 'Imagen de portada (obligatoria al publicar)',
+          },
+          images: {
+            type: 'array',
+            items: { type: 'string', format: 'binary' },
+            description:
+              'Imágenes adicionales para la galería del detalle (opcional)',
+          },
+        },
+      },
+    }),
+    UseInterceptors(
+      FileFieldsInterceptor(
+        [
+          { name: 'image', maxCount: 1 },
+          { name: 'images', maxCount: MAX_GALLERY_IMAGES },
+        ],
+        { limits: { fileSize: IMAGE_FILE_SIZE_LIMIT } },
+      ),
+    ),
+  );
+}
+
 @ApiTags('products')
 @Controller()
 export class ProductsController {
   constructor(private readonly productsService: ProductsService) {}
 
+  @Post('products')
+  @UseGuards(JwtAuthGuard, SellerGuard)
+  @CreateProductMultipart()
+  @ApiOperation({
+    summary:
+      'Publicar un producto SIN comunidad (o guardarlo como borrador con saveAsDraft=true). ' +
+      'Requiere rol vendedor. Al publicar son obligatorios description, price, type, condition, 3 tags e image',
+  })
+  createWithoutCommunity(
+    @Body(
+      new ValidationPipe({
+        transform: true,
+        whitelist: true,
+        forbidNonWhitelisted: true,
+      }),
+    )
+    dto: CreateProductDto,
+    @UploadedFiles() files: ProductFiles,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.productsService.create(
+      null,
+      request.user.userId,
+      dto,
+      files?.image?.[0],
+      files?.images,
+    );
+  }
+
   @Post('communities/:communityId/products')
   @UseGuards(JwtAuthGuard, SellerGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Publicar un producto en una comunidad' })
-  @ApiParam({ name: 'communityId', type: Number, example: 5 })
-  @ApiConsumes('multipart/form-data')
-  @ApiBody({
-    schema: {
-      type: 'object',
-      required: [
-        'title',
-        'description',
-        'price',
-        'type',
-        'condition',
-        'tagIds',
-        'image',
-      ],
-      properties: {
-        title: {
-          type: 'string',
-          example: 'Figura de Charizard Funko Pop #123',
-        },
-        description: {
-          type: 'string',
-          example: 'Figura original, caja sellada, sin abrir',
-        },
-        price: { type: 'number', example: 25.99 },
-        type: {
-          type: 'string',
-          enum: ['sale', 'exchange'],
-          example: 'sale',
-        },
-        condition: {
-          type: 'string',
-          enum: ['new', 'like_new', 'good_condition', 'used_with_details'],
-          example: 'new',
-        },
-        tagIds: {
-          type: 'array',
-          items: { type: 'integer' },
-          example: [1, 3, 5],
-          minItems: 3,
-          maxItems: 3,
-          description:
-            'Debe traer exactamente 3 tags. En multipart/form-data puede enviarse como arreglo JSON',
-        },
-        image: {
-          type: 'string',
-          format: 'binary',
-          description: 'Imagen de portada (obligatoria)',
-        },
-        images: {
-          type: 'array',
-          items: { type: 'string', format: 'binary' },
-          description:
-            'Imágenes adicionales para la galería del detalle (opcional)',
-        },
-      },
-    },
+  @CreateProductMultipart()
+  @ApiOperation({
+    summary:
+      'Publicar un producto EN una comunidad (o guardarlo como borrador con saveAsDraft=true). ' +
+      'Requiere rol vendedor y ser miembro de esa comunidad. Mismos campos que POST /products',
   })
-  @UseInterceptors(
-    FileFieldsInterceptor(
-      [
-        { name: 'image', maxCount: 1 },
-        { name: 'images', maxCount: MAX_GALLERY_IMAGES },
-      ],
-      { limits: { fileSize: IMAGE_FILE_SIZE_LIMIT } },
-    ),
-  )
+  @ApiParam({ name: 'communityId', type: Number, example: 5 })
   create(
     @Param('communityId', ParseIntPipe) communityId: number,
     @Body(
@@ -150,7 +220,7 @@ export class ProductsController {
     summary:
       'Productos recomendados: combina los tags que sigue el usuario autenticado (si hay uno) ' +
       'y/o los tags y comunidad de currentProductId (si se pasa). Sin ninguna señal, ' +
-      'devuelve los productos activos más recientes',
+      'devuelve los productos activos más recientes. Funciona sin sesión',
   })
   findRecommended(
     @Req() request: OptionalAuthenticatedRequest,
@@ -164,9 +234,9 @@ export class ProductsController {
   @ApiBearerAuth()
   @ApiOperation({
     summary:
-      'Pantalla Shop: hasta 3 secciones (tag, cantidad de productos y productos con vendedor, foto y verificación). ' +
-      'Con usuario autenticado prioriza los tags de sus intereses y rellena con los más populares; ' +
-      'sin usuario o sin intereses muestra los tags más populares (más productos activos)',
+      'Pantalla Shop con scroll infinito: una sección por tag (page/limit paginan las secciones; ' +
+      'productsPage/productsLimit los productos de cada una). Con usuario autenticado primero van los tags de sus intereses; ' +
+      'sin usuario o sin intereses, los más populares. shipTo filtra por país de envío',
   })
   findShop(
     @Req() request: OptionalAuthenticatedRequest,
@@ -180,9 +250,9 @@ export class ProductsController {
   @ApiBearerAuth()
   @ApiOperation({
     summary:
-      'Productos publicados por el vendedor autenticado (cualquier estado), agrupados por tag. ' +
-      'Filtros opcionales: status, type, condition, priceMin, priceMax. ' +
-      'page/limit paginan los productos dentro de cada sección. Cada producto trae su comunidad (id y nombre)',
+      'Productos del vendedor autenticado (cualquier estado, borradores incluidos), agrupados por tag. ' +
+      'Filtros opcionales: status (draft|active|inactive|sold), q (título), type, condition, priceMin, priceMax, tagId. ' +
+      'page/limit paginan las secciones; productsPage/productsLimit los productos dentro de cada una',
   })
   findMine(
     @Req() request: AuthenticatedRequest,
@@ -196,78 +266,82 @@ export class ProductsController {
   @ApiBearerAuth()
   @ApiOperation({
     summary:
-      'Contadores de los productos del vendedor autenticado por estado (active, sold, inactive) y total',
+      'Contadores de los productos del vendedor autenticado por estado (draft, active, sold, inactive) y total',
   })
   countMine(@Req() request: AuthenticatedRequest) {
     return this.productsService.countMineByStatus(request.user.userId);
   }
 
   @Get('products')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(OptionalJwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({
     summary:
-      'Listar/buscar productos activos con filtros combinables (comunidad, tag, categoría, type, condition, rango de precio)',
+      'Listar/buscar productos activos y visibles con filtros combinables (comunidad, tag, categoría, type, condition, currency, rango de precio final, país de envío). ' +
+      'Funciona sin sesión; con sesión cada producto trae isSaved',
   })
-  findAll(@Query() query: GetProductsQueryDto) {
-    return this.productsService.findAll(query);
+  findAll(
+    @Query() query: GetProductsQueryDto,
+    @Req() request: OptionalAuthenticatedRequest,
+  ) {
+    return this.productsService.findAll(query, request.user?.userId);
   }
 
   @Get('products/:id')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Obtener el detalle de un producto' })
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.productsService.findOne(id);
-  }
-
-  @Get('products/:id/related')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(OptionalJwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({
     summary:
-      'Productos relacionados: comparten tag o comunidad con el producto actual',
+      'Detalle de un producto: precio, descuento y precio final, rating, datos públicos del vendedor (foto y rating) e isSaved. Funciona sin sesión; un borrador solo lo ve su dueño',
   })
-  findRelated(@Param('id', ParseIntPipe) id: number) {
-    return this.productsService.findRelated(id);
+  findOne(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() request: OptionalAuthenticatedRequest,
+  ) {
+    return this.productsService.findDetail(id, request.user?.userId);
+  }
+
+  @Get('products/:id/related')
+  @UseGuards(OptionalJwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary:
+      'Productos relacionados: primero los elegidos por el vendedor (isSellerChoice) y luego los automáticos por tags y comunidad',
+  })
+  findRelated(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() request: OptionalAuthenticatedRequest,
+  ) {
+    return this.productsService.findRelated(id, request.user?.userId);
   }
 
   @Patch('products/:id')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Editar un producto propio' })
+  @ApiOperation({
+    summary:
+      'Editar un producto propio (publicado o borrador). También permite mover el producto de comunidad (communityId) o dejarlo sin comunidad (communityId=null)',
+  })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
     schema: {
       type: 'object',
       properties: {
-        title: {
-          type: 'string',
-          example: 'Figura de Charizard Funko Pop #123',
-        },
-        description: {
-          type: 'string',
-          example: 'Figura original, caja sellada, sin abrir',
-        },
-        price: { type: 'number', example: 22.5 },
-        type: {
-          type: 'string',
-          enum: ['sale', 'exchange'],
-          example: 'sale',
-        },
-        condition: {
-          type: 'string',
-          enum: ['new', 'like_new', 'good_condition', 'used_with_details'],
-          example: 'like_new',
-        },
+        ...PRODUCT_BODY_PROPERTIES,
         tagIds: {
           type: 'array',
           items: { type: 'integer' },
           example: [1, 3, 5],
-          minItems: 3,
           maxItems: 3,
           description:
-            'Reemplaza por completo los tags. Debe traer exactamente 3 si se incluye. En multipart/form-data puede enviarse como arreglo JSON',
+            'Reemplaza por completo los tags. Un producto publicado debe quedar con exactamente 3; un borrador, con hasta 3. En multipart/form-data puede enviarse como arreglo JSON',
+        },
+        communityId: {
+          type: 'integer',
+          nullable: true,
+          example: 5,
+          description:
+            'Mueve el producto a esta comunidad (debes ser miembro). El texto "null" lo deja sin comunidad. Si se omite, no cambia',
         },
         image: {
           type: 'string',
@@ -314,12 +388,42 @@ export class ProductsController {
     );
   }
 
+  @Post('products/:id/view')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary:
+      'Registrar que el usuario vio este producto (alimenta las recomendaciones). Las vistas del propio vendedor no cuentan',
+  })
+  async recordView(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    await this.productsService.recordView(id, request.user.userId);
+  }
+
+  @Post('products/:id/publish')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard, SellerGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary:
+      'Publicar un borrador propio: valida description, price, type, condition, 3 tags e imagen, y lo pasa a active',
+  })
+  publish(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.productsService.publish(id, request.user.userId);
+  }
+
   @Patch('products/:id/status')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({
     summary:
-      'Cambiar el status de un producto propio (active solo para reactivar uno inactivo)',
+      'Cambiar el status de un producto propio. active reactiva uno inactive (o publica un borrador); un sold no puede volver a active',
   })
   updateStatus(
     @Param('id', ParseIntPipe) id: number,
@@ -327,5 +431,20 @@ export class ProductsController {
     @Req() request: AuthenticatedRequest,
   ) {
     return this.productsService.updateStatus(id, request.user.userId, dto);
+  }
+
+  @Delete('products/:id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @UseGuards(JwtAuthGuard, SellerGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary:
+      'Borrar un producto propio (borrado lógico: se conservan favoritos y conversaciones; los listados lo ignoran)',
+  })
+  async remove(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    await this.productsService.remove(id, request.user.userId);
   }
 }

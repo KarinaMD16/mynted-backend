@@ -1,6 +1,7 @@
 import { ForbiddenException } from '@nestjs/common';
 import { Repository } from 'typeorm';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
+import { Seller } from '../sellers/entities/seller.entity';
 import { UserOAuthAccount } from './entities/user-oauth-account.entity';
 import { User } from './entities/user.entity';
 import { UsersService } from './users.service';
@@ -24,6 +25,7 @@ describe('UsersService', () => {
       usersRepository as unknown as Repository<User>,
       {} as Repository<UserOAuthAccount>,
       cloudinaryService as unknown as CloudinaryService,
+      {} as Repository<Seller>,
     );
   });
 

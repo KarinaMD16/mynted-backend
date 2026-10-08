@@ -22,6 +22,7 @@ import { ReplyVote } from './entities/reply-vote.entity';
 import { Favorite } from './entities/favorite.entity';
 import { Product } from '../products/entities/product.entity';
 import { ForumController } from './forum.controller';
+import { PublicProfileController } from './public-profile.controller';
 import { ForumService } from './forum.service';
 import { CategorySeed } from './seeds/category.seed';
 import { TagSeed } from './seeds/tag.seed';
@@ -48,7 +49,7 @@ import { TagSeed } from './seeds/tag.seed';
     CloudinaryModule,
     UsersModule,
   ],
-  controllers: [CommunityController, ForumController],
+  controllers: [CommunityController, ForumController, PublicProfileController],
   providers: [
     CommunityService,
     ForumService,
@@ -57,6 +58,6 @@ import { TagSeed } from './seeds/tag.seed';
     SuperAdminGuard,
     CommunityRoleGuard,
   ],
-  exports: [CommunityService],
+  exports: [CommunityService, ForumService],
 })
 export class CommunityModule {}

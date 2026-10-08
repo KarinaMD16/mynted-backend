@@ -30,6 +30,7 @@ import { CreateReplyDto } from './dto/create-reply.dto';
 import { GetPostsQueryDto } from './dto/get-posts-query.dto';
 import { GetGlobalPostsQueryDto } from './dto/get-global-posts-query.dto';
 import { GetMyPostsQueryDto } from './dto/get-my-posts-query.dto';
+import { GetFavoriteIdsQueryDto } from './dto/get-favorite-ids-query.dto';
 import { GetMyFeedQueryDto } from './dto/get-my-feed-query.dto';
 import { GetMyContentQueryDto } from './dto/get-my-content-query.dto';
 import { VoteDto } from './dto/vote.dto';
@@ -129,6 +130,19 @@ export class ForumController {
     @Req() request: AuthenticatedRequest,
   ) {
     return this.forumService.findMyFavorites(request.user.userId, query);
+  }
+
+  @Get('favorites/me/ids')
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({
+    summary:
+      'Solo los ids de los productos (type=products) o posts (type=posts) guardados como favoritos',
+  })
+  findMyFavoriteIds(
+    @Query() query: GetFavoriteIdsQueryDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.forumService.findMyFavoriteIds(request.user.userId, query);
   }
 
   @Get('posts/:postId')

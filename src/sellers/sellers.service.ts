@@ -4,8 +4,11 @@ import {
   Injectable,
   InternalServerErrorException,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import { BadgeEvents } from '../badges/badge-events';
 import { DataSource, QueryFailedError, Repository } from 'typeorm';
 import {
   SellerRequestStatus,
@@ -29,6 +32,8 @@ export class SellersService {
     private readonly sellerRepository: Repository<Seller>,
     private readonly usersService: UsersService,
     private readonly dataSource: DataSource,
+    @Optional()
+    private readonly eventEmitter?: EventEmitter2,
   ) {}
 
   async requestSeller(userId: string, dto: RequestSellerDto): Promise<User> {
@@ -98,9 +103,13 @@ export class SellersService {
     }
   }
 
-  async findPendingRequests(): Promise<Seller[]> {
+  // Lista solicitudes por estado (pending por defecto, para no romper a los
+  // clientes existentes).
+  async findRequests(
+    status: SellerRequestStatus = SellerRequestStatus.PENDING,
+  ): Promise<Seller[]> {
     return this.sellerRepository.find({
-      where: { user: { sellerRequestStatus: SellerRequestStatus.PENDING } },
+      where: { user: { sellerRequestStatus: status } },
       relations: { user: true, paymentInfo: true },
       order: { user: { sellerRequestedAt: 'ASC' } },
     });
@@ -136,6 +145,12 @@ export class SellersService {
       );
     }
 
+    if (dto.status === SellerRequestStatus.APPROVED && !user.currency) {
+      throw new BadRequestException(
+        'El usuario debe tener una moneda (currency) configurada antes de aprobarlo como vendedor',
+      );
+    }
+
     const seller = await this.sellerRepository.findOne({
       where: { userId: targetUserId },
     });
@@ -145,7 +160,7 @@ export class SellersService {
       );
     }
 
-    return this.dataSource.transaction(async (manager) => {
+    const updated = await this.dataSource.transaction(async (manager) => {
       if (dto.status === SellerRequestStatus.APPROVED) {
         await manager.update(Seller, seller.sellerId, { isVerified: true });
         await manager.update(User, targetUserId, {
@@ -168,5 +183,13 @@ export class SellersService {
       }
       return updatedUser;
     });
+
+    if (dto.status === SellerRequestStatus.APPROVED) {
+      this.eventEmitter?.emit(BadgeEvents.SELLER_APPROVED, {
+        userId: targetUserId,
+      });
+    }
+
+    return updated;
   }
 }

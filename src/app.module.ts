@@ -10,10 +10,16 @@ import { UserTagsModule } from './user-tags/user-tags.module';
 import { UserCommunitiesModule } from './user-communities/user-communities.module';
 import { SellersModule } from './sellers/sellers.module';
 import { ProductsModule } from './products/products.module';
+import { SearchModule } from './search/search.module';
+import { BadgesModule } from './badges/badges.module';
+import { EventEmitterModule } from '@nestjs/event-emitter';
+import { ScheduleModule } from '@nestjs/schedule';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    EventEmitterModule.forRoot(),
+    ScheduleModule.forRoot(),
 
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
@@ -44,6 +50,8 @@ import { ProductsModule } from './products/products.module';
     UserTagsModule,
     UserCommunitiesModule,
     ProductsModule,
+    SearchModule,
+    BadgesModule,
   ],
   controllers: [AppController],
   providers: [AppService],

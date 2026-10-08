@@ -18,7 +18,18 @@ import {
 export class GetMyProductsQueryDto {
   @ApiPropertyOptional({
     example: 'pikachu',
-    description: 'Busca por título (contiene, sin distinguir mayúsculas)',
+    description:
+      'Busca entre mis productos por título (contiene, sin distinguir mayúsculas)',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  q?: string;
+
+  @ApiPropertyOptional({
+    example: 'pikachu',
+    deprecated: true,
+    description: 'Alias antiguo de q',
   })
   @IsOptional()
   @IsString()
@@ -40,10 +51,13 @@ export class GetMyProductsQueryDto {
   @ApiPropertyOptional({
     enum: ProductStatus,
     example: ProductStatus.ACTIVE,
-    description: 'Si se omite, trae productos de cualquier estado',
+    description:
+      'draft, active, sold o inactive (pausado). Si se omite, trae productos de cualquier estado, borradores incluidos',
   })
   @IsOptional()
-  @IsEnum(ProductStatus, { message: 'status debe ser active, sold o inactive' })
+  @IsEnum(ProductStatus, {
+    message: 'status debe ser draft, active, sold o inactive',
+  })
   status?: ProductStatus;
 
   @ApiPropertyOptional({ enum: ProductType, example: ProductType.SALE })
