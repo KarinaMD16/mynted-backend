@@ -145,11 +145,13 @@ export class ForumService {
     userId: string,
     query: GetPostsQueryDto,
   ) {
-    await this.getActiveCommunity(communityId);
-    const profile = await this.communityProfileRepository.findOne({
-      where: { userId, communityId },
-      select: { communityProfileId: true },
-    });
+    const community = await this.getActiveCommunity(communityId);
+    const profile = community.isPrivate
+      ? await this.getMemberProfile(userId, communityId)
+      : await this.communityProfileRepository.findOne({
+          where: { userId, communityId },
+          select: { communityProfileId: true },
+        });
     const [posts, total] = await this.postRepository.findAndCount({
       where: { communityProfile: { communityId } },
       relations: {
@@ -407,20 +409,22 @@ export class ForumService {
       throw new NotFoundException('Publicación no encontrada');
     }
 
-    const profile = await this.communityProfileRepository.findOne({
-      where: {
-        userId,
-        communityId: community.id,
-      },
-      select: { communityProfileId: true },
-    });
+    const profile = community.isPrivate
+      ? await this.getMemberProfile(userId, community.id)
+      : await this.communityProfileRepository.findOne({
+          where: {
+            userId,
+            communityId: community.id,
+          },
+          select: { communityProfileId: true },
+        });
     const metrics = await this.getPostMetrics(
       [post.id],
       profile?.communityProfileId,
       userId,
     );
     const replyCounts = await this.getReplyCounts([post.id]);
-    const replies = await this.findReplies(post.id, userId);
+    const replies = await this.findReplies(post.id, userId, profile);
 
     return {
       ...this.mapPost(
@@ -460,16 +464,31 @@ export class ForumService {
     return this.findReplyResponse(savedReply.id, userId);
   }
 
-  async findReplies(postId: number, userId: string) {
+  async findReplies(
+    postId: number,
+    userId: string,
+    knownProfile?: CommunityProfile | null,
+  ) {
     const post = await this.getActivePost(postId);
+    const profile =
+      knownProfile !== undefined
+        ? knownProfile
+        : post.communityProfile.community.isPrivate
+          ? await this.getMemberProfile(
+              userId,
+              post.communityProfile.communityId,
+            )
+          : await this.communityProfileRepository.findOne({
+              where: {
+                userId,
+                communityId: post.communityProfile.communityId,
+              },
+              select: { communityProfileId: true },
+            });
     const replies = await this.replyRepository.find({
       where: { postId },
       relations: { communityProfile: { user: true } },
       order: { postedAt: 'ASC', id: 'ASC' },
-    });
-    const profile = await this.communityProfileRepository.findOne({
-      where: { userId, communityId: post.communityProfile.communityId },
-      select: { communityProfileId: true },
     });
     const metrics = await this.getReplyMetrics(
       replies.map((reply) => reply.id),

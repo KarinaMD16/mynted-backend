@@ -212,6 +212,7 @@ describe('ForumService', () => {
     ctx.communityRepository.findOne.mockResolvedValue({
       id: 7,
       isActive: true,
+      isPrivate: true,
     });
     ctx.profileRepository.findOne.mockResolvedValue({
       communityProfileId: 4,
@@ -229,6 +230,21 @@ describe('ForumService', () => {
       role: 'member',
       photoUrl: 'https://img.test/author.png',
     });
+  });
+
+  it('rejects a non-member from posts in a private community', async () => {
+    const ctx = setup();
+    ctx.communityRepository.findOne.mockResolvedValue({
+      id: 7,
+      isActive: true,
+      isPrivate: true,
+    });
+    ctx.profileRepository.findOne.mockResolvedValue(null);
+
+    await expect(
+      ctx.service.findPosts(7, 'user-id', { page: 1, limit: 10 }),
+    ).rejects.toThrow('Debes pertenecer a la comunidad');
+    expect(ctx.postRepository.findAndCount).not.toHaveBeenCalled();
   });
 
   it('includes null author photos in replies', async () => {
@@ -265,6 +281,23 @@ describe('ForumService', () => {
       role: 'member',
       photoUrl: null,
     });
+  });
+
+  it('rejects a non-member from replies in a private community', async () => {
+    const ctx = setup();
+    ctx.postRepository.findOne.mockResolvedValue({
+      id: 10,
+      communityProfile: {
+        communityId: 7,
+        community: { isActive: true, isPrivate: true },
+      },
+    });
+    ctx.profileRepository.findOne.mockResolvedValue(null);
+
+    await expect(ctx.service.findReplies(10, 'user-id')).rejects.toThrow(
+      'Debes pertenecer a la comunidad',
+    );
+    expect(ctx.replyRepository.find).not.toHaveBeenCalled();
   });
 
   it('includes photos in post detail and embedded replies', async () => {
@@ -314,6 +347,23 @@ describe('ForumService', () => {
       displayName: 'Reply author',
       photoUrl: 'https://img.test/reply-author.png',
     });
+  });
+
+  it('rejects a non-member from a private post before loading its replies', async () => {
+    const ctx = setup();
+    ctx.postRepository.findOne.mockResolvedValue({
+      id: 10,
+      communityProfile: {
+        communityId: 7,
+        community: { id: 7, isActive: true, isPrivate: true },
+      },
+    });
+    ctx.profileRepository.findOne.mockResolvedValue(null);
+
+    await expect(ctx.service.findPost(10, 'user-id')).rejects.toThrow(
+      'Debes pertenecer a la comunidad',
+    );
+    expect(ctx.replyRepository.find).not.toHaveBeenCalled();
   });
 
   it('recommends posts by UserTag and returns matchedTagCount', async () => {
