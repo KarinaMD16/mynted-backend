@@ -212,6 +212,7 @@ describe('ForumService', () => {
     ctx.communityRepository.findOne.mockResolvedValue({
       id: 7,
       isActive: true,
+      isPrivate: true,
     });
     ctx.profileRepository.findOne.mockResolvedValue({
       communityProfileId: 4,
@@ -229,6 +230,21 @@ describe('ForumService', () => {
       role: 'member',
       photoUrl: 'https://img.test/author.png',
     });
+  });
+
+  it('rejects a non-member from posts in a private community', async () => {
+    const ctx = setup();
+    ctx.communityRepository.findOne.mockResolvedValue({
+      id: 7,
+      isActive: true,
+      isPrivate: true,
+    });
+    ctx.profileRepository.findOne.mockResolvedValue(null);
+
+    await expect(
+      ctx.service.findPosts(7, 'user-id', { page: 1, limit: 10 }),
+    ).rejects.toThrow('Debes pertenecer a la comunidad');
+    expect(ctx.postRepository.findAndCount).not.toHaveBeenCalled();
   });
 
   it('includes null author photos in replies', async () => {
@@ -265,6 +281,23 @@ describe('ForumService', () => {
       role: 'member',
       photoUrl: null,
     });
+  });
+
+  it('rejects a non-member from replies in a private community', async () => {
+    const ctx = setup();
+    ctx.postRepository.findOne.mockResolvedValue({
+      id: 10,
+      communityProfile: {
+        communityId: 7,
+        community: { isActive: true, isPrivate: true },
+      },
+    });
+    ctx.profileRepository.findOne.mockResolvedValue(null);
+
+    await expect(ctx.service.findReplies(10, 'user-id')).rejects.toThrow(
+      'Debes pertenecer a la comunidad',
+    );
+    expect(ctx.replyRepository.find).not.toHaveBeenCalled();
   });
 
   it('includes photos in post detail and embedded replies', async () => {
@@ -314,6 +347,23 @@ describe('ForumService', () => {
       displayName: 'Reply author',
       photoUrl: 'https://img.test/reply-author.png',
     });
+  });
+
+  it('rejects a non-member from a private post before loading its replies', async () => {
+    const ctx = setup();
+    ctx.postRepository.findOne.mockResolvedValue({
+      id: 10,
+      communityProfile: {
+        communityId: 7,
+        community: { id: 7, isActive: true, isPrivate: true },
+      },
+    });
+    ctx.profileRepository.findOne.mockResolvedValue(null);
+
+    await expect(ctx.service.findPost(10, 'user-id')).rejects.toThrow(
+      'Debes pertenecer a la comunidad',
+    );
+    expect(ctx.replyRepository.find).not.toHaveBeenCalled();
   });
 
   it('recommends posts by UserTag and returns matchedTagCount', async () => {
@@ -456,6 +506,7 @@ describe('ForumService', () => {
       '(post.title ILIKE :search OR post.body ILIKE :search)',
       { search: '%pokemon%' },
     );
+    expect(builder.distinct).toHaveBeenCalledWith(true);
     expect(result).toMatchObject({
       data: [
         {
@@ -468,6 +519,31 @@ describe('ForumService', () => {
       pagination: { page: 1, limit: 20, total: 1, totalPages: 1 },
     });
     expect(result.data[0]).not.toHaveProperty('matchedTagCount');
+  });
+
+  it('lists the global feed without requiring tagIds', async () => {
+    const ctx = setup();
+    const builder = ctx.postRepository.createQueryBuilder();
+    ctx.postRepository.createQueryBuilder.mockReturnValue(builder);
+    builder.getManyAndCount.mockResolvedValue([[], 0]);
+
+    const result = await ctx.service.findGlobalPosts('user-id', {
+      page: 1,
+      limit: 10,
+    });
+
+    expect(builder.andWhere).toHaveBeenCalledWith(
+      'community.is_private = :isPrivate',
+      { isPrivate: false },
+    );
+    expect(builder.andWhere).not.toHaveBeenCalledWith(
+      expect.stringContaining('global_feed_filter_post_tag'),
+      expect.anything(),
+    );
+    expect(result).toEqual({
+      data: [],
+      pagination: { page: 1, limit: 10, total: 0, totalPages: 0 },
+    });
   });
 
   it('does not add a text filter when search only contains spaces', async () => {
