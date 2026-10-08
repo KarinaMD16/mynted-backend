@@ -65,4 +65,68 @@ describe('ForumController', () => {
       limit: 20,
     });
   });
+
+  it('protects and passes the authenticated user to recommended posts', async () => {
+    const service = { findRecommendedPosts: jest.fn().mockResolvedValue({}) };
+    const controller = new ForumController(service as never);
+    const request = { user: { userId: 'user-id' } };
+    const method = Object.getOwnPropertyDescriptor(
+      ForumController.prototype,
+      'findRecommendedPosts',
+    )?.value as (...args: never[]) => unknown;
+
+    await controller.findRecommendedPosts(
+      { page: 1, limit: 10 },
+      request as never,
+    );
+
+    expect(Reflect.getMetadata(GUARDS_METADATA, method)).toEqual(
+      expect.arrayContaining([JwtAuthGuard]),
+    );
+    expect(service.findRecommendedPosts).toHaveBeenCalledWith('user-id', {
+      page: 1,
+      limit: 10,
+    });
+  });
+
+  it('protects the explore forum feed and reuses recommended posts', async () => {
+    const response = {
+      data: [
+        {
+          id: 15,
+          matchedTagCount: 2,
+          author: {
+            communityProfileId: 18,
+            displayName: 'Usuario',
+            role: 'member',
+            photoUrl: null,
+          },
+        },
+      ],
+      pagination: { page: 2, limit: 10, total: 1, totalPages: 1 },
+    };
+    const service = {
+      findRecommendedPosts: jest.fn().mockResolvedValue(response),
+    };
+    const controller = new ForumController(service as never);
+    const request = { user: { userId: 'user-id' } };
+    const method = Object.getOwnPropertyDescriptor(
+      ForumController.prototype,
+      'findExploreForumPosts',
+    )?.value as (...args: never[]) => unknown;
+
+    const result = await controller.findExploreForumPosts(
+      { page: 2, limit: 10 },
+      request as never,
+    );
+
+    expect(Reflect.getMetadata(GUARDS_METADATA, method)).toEqual(
+      expect.arrayContaining([JwtAuthGuard]),
+    );
+    expect(service.findRecommendedPosts).toHaveBeenCalledWith('user-id', {
+      page: 2,
+      limit: 10,
+    });
+    expect(result).toBe(response);
+  });
 });

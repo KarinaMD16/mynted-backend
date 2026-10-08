@@ -464,16 +464,18 @@ export class CommunityService {
       throw new NotFoundException('Comunidad no encontrada');
     }
 
-    const [memberCount, recentPostCount, membership, forumPosts] =
-      await Promise.all([
-        this.communityProfileRepository.count({ where: { communityId } }),
-        this.countRecentPosts(communityId),
-        this.communityProfileRepository.findOne({
-          where: { userId, communityId },
-          select: { communityProfileId: true, role: true },
-        }),
-        this.findRecentForumPosts(communityId),
-      ]);
+    const [memberCount, recentPostCount, membership] = await Promise.all([
+      this.communityProfileRepository.count({ where: { communityId } }),
+      this.countRecentPosts(communityId),
+      this.communityProfileRepository.findOne({
+        where: { userId, communityId },
+        select: { communityProfileId: true, role: true },
+      }),
+    ]);
+    const forumPosts =
+      community.isPrivate && !membership
+        ? []
+        : await this.findRecentForumPosts(communityId);
 
     const forumPostMetrics = await this.getForumPostMetrics(
       forumPosts,
@@ -540,7 +542,7 @@ export class CommunityService {
       throw new NotFoundException('Comunidad no encontrada');
     }
 
-    const [memberCount, recentPostCount, membership, forumPosts] =
+    const [memberCount, recentPostCount, membership, latestJoinRequest] =
       await Promise.all([
         this.communityProfileRepository.count({
           where: { communityId: community.id },
@@ -550,8 +552,15 @@ export class CommunityService {
           where: { userId, communityId: community.id },
           select: { communityProfileId: true, role: true },
         }),
-        this.findRecentForumPosts(community.id),
+        this.communityJoinRequestRepository.findOne({
+          where: { userId, communityId: community.id },
+          order: { createdAt: 'DESC' },
+        }),
       ]);
+    const forumPosts =
+      community.isPrivate && !membership
+        ? []
+        : await this.findRecentForumPosts(community.id);
 
     const forumPostMetrics = await this.getForumPostMetrics(
       forumPosts,
@@ -587,6 +596,7 @@ export class CommunityService {
       ),
       isMember: membership !== null,
       membershipRole: membership?.role ?? null,
+      joinRequestStatus: latestJoinRequest?.status ?? null,
       forumPosts: forumPosts.map((post) => ({
         id: post.id,
         title: post.title,

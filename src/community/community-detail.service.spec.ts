@@ -10,6 +10,7 @@ import {
   CommunityProfileRole,
 } from './entities/community-profile.entity';
 import { CommunityRule } from './entities/community-rule.entity';
+import { CommunityJoinRequestStatus } from './entities/community-join-request.entity';
 import { Post } from './entities/post.entity';
 import { Tag } from './entities/tag.entity';
 
@@ -17,6 +18,9 @@ describe('CommunityService.findCommunityDetail', () => {
   const communityRepository = { findOne: jest.fn() };
   const communityProfileRepository = {
     count: jest.fn(),
+    findOne: jest.fn(),
+  };
+  const communityJoinRequestRepository = {
     findOne: jest.fn(),
   };
   const countQueryBuilder = {
@@ -48,7 +52,7 @@ describe('CommunityService.findCommunityDetail', () => {
     {} as CloudinaryService,
     {} as UsersService,
     communityProfileRepository as unknown as Repository<CommunityProfile>,
-    {} as never,
+    communityJoinRequestRepository as never,
     postRepository as unknown as Repository<Post>,
   );
 
@@ -83,6 +87,7 @@ describe('CommunityService.findCommunityDetail', () => {
     });
     communityProfileRepository.count.mockResolvedValue(3);
     communityProfileRepository.findOne.mockResolvedValue(profile);
+    communityJoinRequestRepository.findOne.mockResolvedValue(null);
     countQueryBuilder.getCount.mockResolvedValue(2);
     postQueryBuilder.getMany.mockResolvedValue([
       {
@@ -134,6 +139,37 @@ describe('CommunityService.findCommunityDetail', () => {
     expect(result.membershipRole).toBeNull();
   });
 
+  it('hides forum posts for non-members of private communities by id and slug', async () => {
+    communityRepository.findOne.mockResolvedValue({
+      id: 7,
+      name: 'Private community',
+      description: 'Private',
+      slug: 'private-community',
+      isActive: true,
+      isPrivate: true,
+      imageUrl: null,
+      bannerUrl: null,
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      category: { categoryId: 1, name: 'Tecnología' },
+      communityTags: [],
+      rules: [],
+    });
+    communityProfileRepository.findOne.mockResolvedValue(null);
+
+    const byId = await service.findCommunityDetail(7, 'user-id');
+    postRepository.createQueryBuilder
+      .mockReset()
+      .mockReturnValue(countQueryBuilder);
+    const bySlug = await service.findCommunityDetailBySlug(
+      'private-community',
+      'user-id',
+    );
+
+    expect(byId.forumPosts).toEqual([]);
+    expect(bySlug.forumPosts).toEqual([]);
+    expect(postRepository.createQueryBuilder).toHaveBeenCalledTimes(1);
+  });
+
   it('returns the same detail shape when searching by an existing slug', async () => {
     const byIdResult = await service.findCommunityDetail(7, 'user-id');
     communityRepository.findOne.mockClear();
@@ -154,7 +190,51 @@ describe('CommunityService.findCommunityDetail', () => {
         rules: true,
       },
     });
-    expect(bySlugResult).toEqual(byIdResult);
+    expect(bySlugResult).toMatchObject(byIdResult);
+    expect(bySlugResult.joinRequestStatus).toBeNull();
+    expect(communityJoinRequestRepository.findOne).toHaveBeenCalledWith({
+      where: { userId: 'user-id', communityId: 7 },
+      order: { createdAt: 'DESC' },
+    });
+  });
+
+  it.each([
+    [CommunityJoinRequestStatus.PENDING],
+    [CommunityJoinRequestStatus.REJECTED],
+    [CommunityJoinRequestStatus.ACCEPTED],
+  ])('returns the latest join request status: %s', async (status) => {
+    communityJoinRequestRepository.findOne.mockResolvedValue({
+      status,
+      createdAt: new Date('2026-01-03T00:00:00.000Z'),
+    });
+
+    const result = await service.findCommunityDetailBySlug(
+      'developers-cr',
+      'user-id',
+    );
+
+    expect(result.joinRequestStatus).toBe(status);
+    expect(result.isMember).toBe(true);
+    expect(result.membershipRole).toBe(CommunityProfileRole.MODERATOR);
+  });
+
+  it('returns null for a member without a join request, including an owner', async () => {
+    communityProfileRepository.findOne.mockResolvedValue({
+      communityProfileId: 21,
+      role: CommunityProfileRole.OWNER,
+    });
+    communityJoinRequestRepository.findOne.mockResolvedValue(null);
+
+    const result = await service.findCommunityDetailBySlug(
+      'developers-cr',
+      'user-id',
+    );
+
+    expect(result).toMatchObject({
+      isMember: true,
+      membershipRole: CommunityProfileRole.OWNER,
+      joinRequestStatus: null,
+    });
   });
 
   it('rejects a missing or inactive slug', async () => {
