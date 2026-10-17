@@ -2,13 +2,14 @@ import { Injectable, Logger } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import {
   BadgeEvents,
-  CommunityCreatedEvent,
+  FavoriteSavedEvent,
   MemberJoinedEvent,
-  ModeratorAssignedEvent,
   PostCreatedEvent,
+  PostUpvotedEvent,
   ProductPublishedEvent,
   ReplyCreatedEvent,
   SellerApprovedEvent,
+  UserRegisteredEvent,
 } from './badge-events';
 import { BadgesService } from './badges.service';
 
@@ -18,27 +19,31 @@ export class BadgesListener {
 
   constructor(private readonly badgesService: BadgesService) {}
 
+  @OnEvent(BadgeEvents.USER_REGISTERED, { async: true })
+  onUserRegistered(event: UserRegisteredEvent) {
+    return this.safely(BadgeEvents.USER_REGISTERED, () =>
+      this.badgesService.evaluateUserRegistered(event.userId),
+    );
+  }
+
   @OnEvent(BadgeEvents.POST_CREATED, { async: true })
   onPostCreated(event: PostCreatedEvent) {
     return this.safely(BadgeEvents.POST_CREATED, () =>
-      this.badgesService.evaluatePostCreated(
-        event.userId,
-        event.communityProfileId,
-      ),
+      this.badgesService.evaluatePostCreated(event.communityProfileId),
     );
   }
 
   @OnEvent(BadgeEvents.REPLY_CREATED, { async: true })
   onReplyCreated(event: ReplyCreatedEvent) {
     return this.safely(BadgeEvents.REPLY_CREATED, () =>
-      this.badgesService.evaluateReplyCreated(event.userId),
+      this.badgesService.evaluateReplyCreated(event.communityProfileId),
     );
   }
 
-  @OnEvent(BadgeEvents.COMMUNITY_CREATED, { async: true })
-  onCommunityCreated(event: CommunityCreatedEvent) {
-    return this.safely(BadgeEvents.COMMUNITY_CREATED, () =>
-      this.badgesService.evaluateCommunityCreated(event.communityProfileId),
+  @OnEvent(BadgeEvents.POST_UPVOTED, { async: true })
+  onPostUpvoted(event: PostUpvotedEvent) {
+    return this.safely(BadgeEvents.POST_UPVOTED, () =>
+      this.badgesService.evaluatePostUpvoted(event.postId),
     );
   }
 
@@ -52,13 +57,6 @@ export class BadgesListener {
     );
   }
 
-  @OnEvent(BadgeEvents.MODERATOR_ASSIGNED, { async: true })
-  onModeratorAssigned(event: ModeratorAssignedEvent) {
-    return this.safely(BadgeEvents.MODERATOR_ASSIGNED, () =>
-      this.badgesService.evaluateModeratorAssigned(event.communityProfileId),
-    );
-  }
-
   @OnEvent(BadgeEvents.SELLER_APPROVED, { async: true })
   onSellerApproved(event: SellerApprovedEvent) {
     return this.safely(BadgeEvents.SELLER_APPROVED, () =>
@@ -69,15 +67,27 @@ export class BadgesListener {
   @OnEvent(BadgeEvents.PRODUCT_PUBLISHED, { async: true })
   onProductPublished(event: ProductPublishedEvent) {
     return this.safely(BadgeEvents.PRODUCT_PUBLISHED, () =>
-      this.badgesService.evaluateFranchiseCollector(event.userId),
+      this.badgesService.evaluateProductPublished(
+        event.userId,
+        event.communityId,
+      ),
     );
   }
 
-  // Un fallo evaluando badges nunca debe afectar a quien emitió el evento.
-  private async safely(
-    event: string,
-    handler: () => Promise<void>,
-  ): Promise<void> {
+  @OnEvent(BadgeEvents.FAVORITE_SAVED, { async: true })
+  onFavoriteSaved(event: FavoriteSavedEvent) {
+    return this.safely(BadgeEvents.FAVORITE_SAVED, () =>
+      this.badgesService.evaluateFavoriteSaved(
+        event.userId,
+        event.itemType,
+        event.itemId,
+      ),
+    );
+  }
+
+  // REGLA CRÍTICA: un fallo evaluando badges nunca debe afectar la acción
+  // principal que emitió el evento (publicar, comentar, registrarse...).
+  async safely(event: string, handler: () => Promise<void>): Promise<void> {
     try {
       await handler();
     } catch (error: unknown) {

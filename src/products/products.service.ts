@@ -345,7 +345,10 @@ export class ProductsService {
     });
 
     if (!saveAsDraft) {
-      this.eventEmitter?.emit(BadgeEvents.PRODUCT_PUBLISHED, { userId });
+      this.eventEmitter?.emit(BadgeEvents.PRODUCT_PUBLISHED, {
+        userId,
+        communityId,
+      });
     }
 
     return this.findDetail(productId, userId);
@@ -1000,7 +1003,10 @@ export class ProductsService {
     product.currency = currency;
     product.publishedAt = new Date();
     await this.productRepository.save(product);
-    this.eventEmitter?.emit(BadgeEvents.PRODUCT_PUBLISHED, { userId });
+    this.eventEmitter?.emit(BadgeEvents.PRODUCT_PUBLISHED, {
+      userId,
+      communityId: product.communityId,
+    });
 
     return this.findDetail(id, userId);
   }

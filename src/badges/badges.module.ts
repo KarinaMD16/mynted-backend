@@ -1,10 +1,9 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { SuperAdminGuard } from '../auth/guards/super-admin.guard';
 import { CommunityProfile } from '../community/entities/community-profile.entity';
-import { Post } from '../community/entities/post.entity';
-import { Reply } from '../community/entities/reply.entity';
 import { UsersModule } from '../users/users.module';
-import { BadgesController } from './badges.controller';
+import { AdminBadgesController, BadgesController } from './badges.controller';
 import { BadgesListener } from './badges.listener';
 import { BadgesSeed } from './badges.seed';
 import { BadgesService } from './badges.service';
@@ -18,14 +17,12 @@ import { UserBadge } from './entities/user-badge.entity';
       Badge,
       UserBadge,
       CommunityProfileBadge,
-      Post,
-      Reply,
       CommunityProfile,
     ]),
     UsersModule,
   ],
-  controllers: [BadgesController],
-  providers: [BadgesService, BadgesListener, BadgesSeed],
+  controllers: [BadgesController, AdminBadgesController],
+  providers: [BadgesService, BadgesListener, BadgesSeed, SuperAdminGuard],
   exports: [BadgesService],
 })
 export class BadgesModule {}
