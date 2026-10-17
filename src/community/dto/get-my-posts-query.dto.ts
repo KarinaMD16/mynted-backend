@@ -8,6 +8,8 @@ export enum SortOrder {
 }
 
 export enum MyPostsSortBy {
+  // Votos + frescura (por defecto).
+  HOT = 'hot',
   DATE = 'date',
   UPVOTES = 'upvotes',
   DOWNVOTES = 'downvotes',
@@ -17,15 +19,15 @@ export enum MyPostsSortBy {
 export class GetMyPostsQueryDto {
   @ApiPropertyOptional({
     enum: MyPostsSortBy,
-    default: MyPostsSortBy.DATE,
+    default: MyPostsSortBy.HOT,
     description:
-      'Criterio de orden: fecha, upvotes, downvotes o veces guardado',
+      'Criterio de orden: hot (votos + frescura), date, upvotes, downvotes o saves',
   })
   @IsOptional()
   @IsEnum(MyPostsSortBy, {
-    message: 'sortBy debe ser date, upvotes, downvotes o saves',
+    message: 'sortBy debe ser hot, date, upvotes, downvotes o saves',
   })
-  sortBy: MyPostsSortBy = MyPostsSortBy.DATE;
+  sortBy: MyPostsSortBy = MyPostsSortBy.HOT;
 
   @ApiPropertyOptional({
     enum: SortOrder,

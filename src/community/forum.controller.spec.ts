@@ -3,6 +3,7 @@ import { CommunityProfileRole } from './entities/community-profile.entity';
 import { CommunityRoleGuard } from './guards/community-role.guard';
 import { COMMUNITY_ROLES_KEY } from './decorators/require-community-role.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
 import { ForumController } from './forum.controller';
 
 describe('ForumController', () => {
@@ -46,7 +47,7 @@ describe('ForumController', () => {
     });
   });
 
-  it('protects and passes the authenticated user to the global feed', async () => {
+  it('allows anonymous access and passes the user to the global feed', async () => {
     const service = { findGlobalPosts: jest.fn().mockResolvedValue({}) };
     const controller = new ForumController(service as never);
     const request = { user: { userId: 'user-id' } };
@@ -58,7 +59,7 @@ describe('ForumController', () => {
     await controller.findGlobalPosts({ page: 1, limit: 20 }, request as never);
 
     expect(Reflect.getMetadata(GUARDS_METADATA, method)).toEqual(
-      expect.arrayContaining([JwtAuthGuard]),
+      expect.arrayContaining([OptionalJwtAuthGuard]),
     );
     expect(service.findGlobalPosts).toHaveBeenCalledWith('user-id', {
       page: 1,
@@ -89,7 +90,7 @@ describe('ForumController', () => {
     });
   });
 
-  it('protects the explore forum feed and reuses recommended posts', async () => {
+  it('allows anonymous access to the explore forum feed and reuses recommended posts', async () => {
     const response = {
       data: [
         {
@@ -121,12 +122,47 @@ describe('ForumController', () => {
     );
 
     expect(Reflect.getMetadata(GUARDS_METADATA, method)).toEqual(
-      expect.arrayContaining([JwtAuthGuard]),
+      expect.arrayContaining([OptionalJwtAuthGuard]),
     );
     expect(service.findRecommendedPosts).toHaveBeenCalledWith('user-id', {
       page: 2,
       limit: 10,
     });
     expect(result).toBe(response);
+  });
+  it('allows anonymous access to the home feed and passes the user', async () => {
+    const service = { findHomePosts: jest.fn().mockResolvedValue({}) };
+    const controller = new ForumController(service as never);
+    const method = Object.getOwnPropertyDescriptor(
+      ForumController.prototype,
+      'findHomePosts',
+    )?.value as (...args: never[]) => unknown;
+
+    await controller.findHomePosts(
+      { page: 1, limit: 10, sort: 'hot' } as never,
+      {
+        user: undefined,
+      } as never,
+    );
+    await controller.findHomePosts(
+      { page: 1, limit: 10, sort: 'hot' } as never,
+      {
+        user: { userId: 'user-id' },
+      } as never,
+    );
+
+    expect(Reflect.getMetadata(GUARDS_METADATA, method)).toEqual(
+      expect.arrayContaining([OptionalJwtAuthGuard]),
+    );
+    expect(service.findHomePosts).toHaveBeenNthCalledWith(1, undefined, {
+      page: 1,
+      limit: 10,
+      sort: 'hot',
+    });
+    expect(service.findHomePosts).toHaveBeenNthCalledWith(2, 'user-id', {
+      page: 1,
+      limit: 10,
+      sort: 'hot',
+    });
   });
 });

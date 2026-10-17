@@ -12,6 +12,7 @@ import { DataSource, FindOptionsWhere, In, Not, Repository } from 'typeorm';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
 import { Product, ProductStatus } from '../products/entities/product.entity';
 import { escapeLike } from '../common/escape-like';
+import { PostEvents } from './post-events';
 import {
   PUBLIC_COMMUNITY_ALTERNATIVES,
   computeFinalPrice,
@@ -20,6 +21,16 @@ import { CreatePostDto } from './dto/create-post.dto';
 import { CreateReplyDto } from './dto/create-reply.dto';
 import { GetPostsQueryDto } from './dto/get-posts-query.dto';
 import { GetGlobalPostsQueryDto } from './dto/get-global-posts-query.dto';
+import { GetCommunityPostsQueryDto } from './dto/get-community-posts-query.dto';
+import {
+  FEED,
+  HOME,
+  PostSort,
+  exploreScoreSql,
+  hotScoreSql,
+  jitterSeed,
+  sortScoreSql,
+} from './post-ranking';
 import {
   GetMyPostsQueryDto,
   MyPostsSortBy,
@@ -151,83 +162,61 @@ export class ForumService {
     });
 
     this.eventEmitter?.emit(BadgeEvents.POST_CREATED, {
-      userId,
       communityProfileId: profile.communityProfileId,
     });
 
     return this.findPost(postId, userId, community);
   }
 
+  // Posts de una comunidad. Orden por sort: hot (votos + frescura, por
+  // defecto), new o top.
   async findPosts(
     communityId: number,
     userId: string,
-    query: GetPostsQueryDto,
+    query: GetCommunityPostsQueryDto,
   ) {
     const community = await this.getActiveCommunity(communityId);
-    const profile = community.isPrivate
-      ? await this.getMemberProfile(userId, communityId)
-      : await this.communityProfileRepository.findOne({
-          where: { userId, communityId },
-          select: { communityProfileId: true },
-        });
-    const [posts, total] = await this.postRepository.findAndCount({
-      where: { communityProfile: { communityId } },
-      relations: {
-        communityProfile: { user: true },
-        postTags: { tag: true },
-        images: true,
-      },
-      order: { postedAt: 'DESC', id: 'DESC' },
-      skip: (query.page - 1) * query.limit,
-      take: query.limit,
-    });
+    if (community.isPrivate) {
+      await this.getMemberProfile(userId, communityId);
+    }
 
-    const metrics = await this.getPostMetrics(
-      posts.map((post) => post.id),
-      profile?.communityProfileId,
+    const base = this.rankedPostsBase().andWhere(
+      'community.id = :communityId',
+      {
+        communityId,
+      },
+    );
+    const { data, pagination } = await this.pageRankedPosts(
+      base,
+      sortScoreSql(query.sort ?? PostSort.HOT, FEED.HALF_LIFE_DAYS),
+      {},
+      query,
       userId,
     );
-    const replyCounts = await this.getReplyCounts(posts.map((post) => post.id));
-
-    return {
-      data: posts.map((post) =>
-        this.mapPost(post, metrics.get(post.id), replyCounts.get(post.id) ?? 0),
-      ),
-      pagination: {
-        page: query.page,
-        limit: query.limit,
-        total,
-        totalPages: Math.ceil(total / query.limit),
-      },
-    };
+    return { data, pagination };
   }
 
-  async findGlobalPosts(userId: string, query: GetGlobalPostsQueryDto) {
-    const queryBuilder = this.postRepository
-      .createQueryBuilder('post')
-      .innerJoinAndSelect('post.communityProfile', 'communityProfile')
-      .innerJoinAndSelect('communityProfile.user', 'user')
-      .innerJoinAndSelect('communityProfile.community', 'community')
-      .leftJoinAndSelect('post.postTags', 'postTag')
-      .leftJoinAndSelect('postTag.tag', 'tag')
-      .leftJoinAndSelect('post.images', 'image')
-      // Política actual del feed global: solo comunidades públicas activas.
-      .where('community.is_active = :isActive', { isActive: true })
-      .andWhere('community.is_private = :isPrivate', { isPrivate: false })
-      .distinct(true)
-      .orderBy('post.posted_at', 'DESC')
-      .addOrderBy('post.id', 'DESC');
+  // Feed global de comunidades públicas (sirve también sin sesión). Mismo
+  // criterio de orden que findPosts.
+  async findGlobalPosts(
+    userId: string | undefined,
+    query: GetGlobalPostsQueryDto,
+  ) {
+    // Política del feed global: solo comunidades públicas activas.
+    const base = this.rankedPostsBase().andWhere(
+      'community.is_private = :isPrivate',
+      { isPrivate: false },
+    );
 
     const search = query.search?.trim();
     if (search) {
-      queryBuilder.andWhere(
-        '(post.title ILIKE :search OR post.body ILIKE :search)',
-        { search: `%${search}%` },
-      );
+      base.andWhere('(post.title ILIKE :search OR post.body ILIKE :search)', {
+        search: `%${escapeLike(search)}%`,
+      });
     }
 
     if (query.tagIds && query.tagIds.length > 0) {
-      queryBuilder.andWhere(
+      base.andWhere(
         `EXISTS (
           SELECT 1
           FROM post_tag global_feed_filter_post_tag
@@ -238,142 +227,165 @@ export class ForumService {
       );
     }
 
-    const [posts, total] = await queryBuilder
-      .skip((query.page - 1) * query.limit)
-      .take(query.limit)
-      .getManyAndCount();
-
-    const data = await this.mapFeedPosts(posts, userId);
-
-    return {
-      data,
-      pagination: {
-        page: query.page,
-        limit: query.limit,
-        total,
-        totalPages: Math.ceil(total / query.limit),
-      },
-    };
-  }
-
-  async findRecommendedPosts(userId: string, query: GetPostsQueryDto) {
-    if (!this.userTagRepository) {
-      return this.emptyPostPagination(query);
-    }
-
-    const userTags = await this.userTagRepository.find({
-      where: { userId },
-      select: { tagId: true },
-    });
-    const tagIds = [...new Set(userTags.map((userTag) => userTag.tagId))];
-    if (tagIds.length === 0) {
-      return this.emptyPostPagination(query);
-    }
-
-    const matchedTagCount = `(SELECT COUNT(DISTINCT matching_post_tag.tag_id)
-      FROM post_tag matching_post_tag
-      WHERE matching_post_tag.post_id = post.id
-        AND matching_post_tag.tag_id IN (:...userTagIds))`;
-    const queryBuilder = this.postRepository
-      .createQueryBuilder('post')
-      .innerJoinAndSelect('post.communityProfile', 'communityProfile')
-      .innerJoinAndSelect('communityProfile.user', 'user')
-      .innerJoinAndSelect('communityProfile.community', 'community')
-      .leftJoinAndSelect('post.postTags', 'postTag')
-      .leftJoinAndSelect('postTag.tag', 'tag')
-      .leftJoinAndSelect('post.images', 'image')
-      .where('community.is_active = :isActive', { isActive: true })
-      .andWhere('community.is_private = :isPrivate', { isPrivate: false })
-      .andWhere(`${matchedTagCount} > 0`, { userTagIds: tagIds })
-      .addSelect(matchedTagCount, 'matched_tag_count')
-      .distinct(true)
-      .orderBy('matched_tag_count', 'DESC')
-      .addOrderBy('post.posted_at', 'DESC')
-      .addOrderBy('post.id', 'DESC');
-
-    const [posts, total] = await queryBuilder
-      .setParameter('userTagIds', tagIds)
-      .skip((query.page - 1) * query.limit)
-      .take(query.limit)
-      .getManyAndCount();
-    const matchedCounts = await this.getMatchedTagCounts(
-      posts.map((post) => post.id),
-      tagIds,
+    const { data, pagination } = await this.pageRankedPosts(
+      base,
+      sortScoreSql(query.sort ?? PostSort.HOT, FEED.HALF_LIFE_DAYS),
+      {},
+      query,
+      userId,
     );
-    const data = await this.mapFeedPosts(posts, userId, matchedCounts);
+    return { data, pagination };
+  }
+
+  /**
+   * Explore ("para ti"): mezcla afinidad con los intereses del usuario,
+   * popularidad (upvotes - downvotes, escala logarítmica) y frescura (vida
+   * media de 7 días), con un bonus a comunidades a las que todavía no
+   * pertenece y una variación estable por hora. Sin sesión (o sin
+   * intereses) queda popularidad + frescura. Se recalcula en cada petición.
+   */
+  async findRecommendedPosts(
+    userId: string | undefined,
+    query: GetPostsQueryDto,
+  ) {
+    const [userTags, profiles] = await Promise.all([
+      userId && this.userTagRepository
+        ? this.userTagRepository.find({
+            where: { userId },
+            select: { tagId: true },
+          })
+        : Promise.resolve([]),
+      userId
+        ? this.communityProfileRepository.find({
+            where: { userId },
+            select: { communityId: true },
+          })
+        : Promise.resolve([]),
+    ]);
+    const userTagIds = [...new Set(userTags.map((userTag) => userTag.tagId))];
+    const joinedIds = profiles.map((profile) => profile.communityId);
+
+    const base = this.rankedPostsBase().andWhere(
+      'community.is_private = :isPrivate',
+      { isPrivate: false },
+    );
+    const { ids, data, pagination } = await this.pageRankedPosts(
+      base,
+      exploreScoreSql(),
+      { userTagIds, joinedIds, jitterSeed: jitterSeed(userId) },
+      query,
+      userId,
+    );
+
+    const matchedCounts =
+      userTagIds.length > 0
+        ? await this.getMatchedTagCounts(ids, userTagIds)
+        : new Map<number, number>();
 
     return {
-      data,
-      pagination: {
-        page: query.page,
-        limit: query.limit,
-        total,
-        totalPages: Math.ceil(total / query.limit),
-      },
+      data: data.map((post) => ({
+        ...post,
+        matchedTagCount: matchedCounts.get(post.id) ?? 0,
+      })),
+      pagination,
+      meta: { personalized: userTagIds.length > 0 },
     };
   }
 
-  private async mapFeedPosts(
-    posts: Post[],
-    userId: string,
-    matchedCounts?: Map<number, number>,
+  /**
+   * Home: con sesión, posts de las comunidades a las que el usuario
+   * pertenece (incluidas las privadas); sin sesión, o si todavía no está en
+   * ninguna, posts de comunidades públicas. Orden por sort: hot (por
+   * defecto) pesa mucho la frescura (vida media 1.5 días) y usa los votos
+   * como empuje, a diferencia de Explore.
+   */
+  async findHomePosts(
+    userId: string | undefined,
+    query: GetCommunityPostsQueryDto,
   ) {
-    const communityIds = [
-      ...new Set(
-        posts
-          .map((post) => post.communityProfile?.communityId)
-          .filter(
-            (communityId): communityId is number => communityId !== undefined,
-          ),
-      ),
-    ];
-    const profiles = communityIds.length
+    const profiles = userId
       ? await this.communityProfileRepository.find({
-          where: { userId, communityId: In(communityIds) },
-          select: { communityProfileId: true, communityId: true },
+          where: { userId },
+          select: { communityId: true },
         })
       : [];
-    const profileByCommunityId = new Map(
-      profiles.map((profile) => [
-        profile.communityId,
-        profile.communityProfileId,
-      ]),
-    );
-    const profileByPostId = new Map(
-      posts.map((post) => [
-        post.id,
-        profileByCommunityId.get(post.communityProfile.communityId),
-      ]),
-    );
-    const metrics = await this.getPostMetrics(
-      posts.map((post) => post.id),
-      undefined,
-      userId,
-      profileByPostId,
-    );
-    const replyCounts = await this.getReplyCounts(posts.map((post) => post.id));
+    const joinedIds = profiles.map((profile) => profile.communityId);
+    const score = sortScoreSql(query.sort ?? PostSort.HOT, HOME.HALF_LIFE_DAYS);
 
-    return posts.map((post) => {
-      const response = {
-        ...this.mapPost(
-          post,
-          metrics.get(post.id),
-          replyCounts.get(post.id) ?? 0,
+    if (joinedIds.length > 0) {
+      const joined = await this.pageRankedPosts(
+        this.rankedPostsBase().andWhere(
+          'community.id = ANY(CAST(:joinedIds AS int[]))',
+          { joinedIds },
         ),
-        community: post.communityProfile.community
-          ? {
-              id: post.communityProfile.community.id,
-              name: post.communityProfile.community.name,
-              slug: post.communityProfile.community.slug,
-              imageUrl: post.communityProfile.community.imageUrl,
-            }
-          : null,
-      };
+        score,
+        {},
+        query,
+        userId,
+      );
+      if (joined.pagination.total > 0) {
+        return {
+          data: joined.data,
+          pagination: joined.pagination,
+          meta: { source: 'joined' as const },
+        };
+      }
+    }
 
-      return matchedCounts
-        ? { ...response, matchedTagCount: matchedCounts.get(post.id) ?? 0 }
-        : response;
-    });
+    const publicPosts = await this.pageRankedPosts(
+      this.rankedPostsBase().andWhere('community.is_private = :isPrivate', {
+        isPrivate: false,
+      }),
+      score,
+      {},
+      query,
+      userId,
+    );
+    return {
+      data: publicPosts.data,
+      pagination: publicPosts.pagination,
+      meta: { source: 'public' as const },
+    };
+  }
+
+  // Base de las consultas de feed: posts de comunidades activas. Los alias
+  // `post`, `profile` y `community` son los que usan las fórmulas de
+  // post-ranking.
+  private rankedPostsBase() {
+    return this.postRepository
+      .createQueryBuilder('post')
+      .innerJoin('post.communityProfile', 'profile')
+      .innerJoin('profile.community', 'community')
+      .where('community.is_active = :isActive', { isActive: true });
+  }
+
+  // Pagina por puntaje (ids primero, sin joins que rompan skip/take) e
+  // hidrata solo los posts de la página.
+  private async pageRankedPosts(
+    base: ReturnType<ForumService['rankedPostsBase']>,
+    scoreSql: string,
+    params: Record<string, unknown>,
+    paging: { page: number; limit: number },
+    viewerId: string | undefined,
+  ) {
+    const total = await base.clone().getCount();
+    const rows = await base
+      .select('post.id', 'id')
+      .addSelect(scoreSql, 'rank_score')
+      .setParameters(params)
+      .orderBy('rank_score', 'DESC')
+      .addOrderBy('post.posted_at', 'DESC')
+      .addOrderBy('post.id', 'DESC')
+      .offset((paging.page - 1) * paging.limit)
+      .limit(paging.limit)
+      .getRawMany<{ id: number }>();
+
+    const ids = rows.map((row) => Number(row.id));
+    return {
+      ids,
+      data: await this.buildPostCards(ids, viewerId),
+      pagination: this.buildPageInfo(paging.page, paging.limit, total),
+    };
   }
 
   private async getMatchedTagCounts(
@@ -394,18 +406,6 @@ export class ForumService {
 
     rows.forEach((row) => counts.set(Number(row.post_id), Number(row.count)));
     return counts;
-  }
-
-  private emptyPostPagination(query: GetPostsQueryDto) {
-    return {
-      data: [],
-      pagination: {
-        page: query.page,
-        limit: query.limit,
-        total: 0,
-        totalPages: 0,
-      },
-    };
   }
 
   async findPost(postId: number, userId: string, knownCommunity?: Community) {
@@ -479,7 +479,10 @@ export class ForumService {
       parentReplyId: dto.parentReplyId ?? null,
     });
     const savedReply = await this.replyRepository.save(reply);
-    this.eventEmitter?.emit(BadgeEvents.REPLY_CREATED, { userId });
+    void this.publishPostMetrics(postId);
+    this.eventEmitter?.emit(BadgeEvents.REPLY_CREATED, {
+      communityProfileId: profile.communityProfileId,
+    });
     return this.findReplyResponse(savedReply.id, userId);
   }
 
@@ -588,7 +591,9 @@ export class ForumService {
       where: { postId, communityProfileId: profile.communityProfileId },
     });
 
-    if (existing && existing.voteType === dto.voteType) {
+    // El voto se quita si se repite; si no, queda el voto pedido.
+    const voteRemoved = existing?.voteType === dto.voteType;
+    if (existing && voteRemoved) {
       await this.postVoteRepository.remove(existing);
     } else if (existing) {
       existing.voteType = dto.voteType;
@@ -601,6 +606,11 @@ export class ForumService {
           voteType: dto.voteType,
         }),
       );
+    }
+
+    void this.publishPostMetrics(postId);
+    if (!voteRemoved && dto.voteType === VoteType.UP) {
+      this.eventEmitter?.emit(BadgeEvents.POST_UPVOTED, { postId });
     }
 
     return this.getPostMetricsResponse(
@@ -655,7 +665,15 @@ export class ForumService {
       await this.favoriteRepository.save(
         this.favoriteRepository.create({ userId, itemId, itemType }),
       );
+      // Puede sumar al badge community_collector.
+      this.eventEmitter?.emit(BadgeEvents.FAVORITE_SAVED, {
+        userId,
+        itemType,
+        itemId,
+      });
     }
+    if (itemType === FavoriteItemType.POST)
+      void this.publishPostMetrics(itemId);
     return { itemId, itemType, isSaved: true };
   }
 
@@ -666,6 +684,8 @@ export class ForumService {
   ) {
     await this.validateFavoriteTarget(itemType, itemId);
     await this.favoriteRepository.delete({ userId, itemId, itemType });
+    if (itemType === FavoriteItemType.POST)
+      void this.publishPostMetrics(itemId);
     return { itemId, itemType, isSaved: false };
   }
 
@@ -854,6 +874,29 @@ export class ForumService {
     return { replyId, ...(metrics.get(replyId) ?? this.emptyMetric()) };
   }
 
+  // Publica los contadores actuales de un post para los clientes conectados
+  // al stream en vivo (GET /posts/live). Nunca debe romper la operación que
+  // lo originó.
+  private async publishPostMetrics(postId: number): Promise<void> {
+    if (!this.eventEmitter) return;
+    try {
+      const [metrics, replyCounts] = await Promise.all([
+        this.getPostMetrics([postId], undefined, ''),
+        this.getReplyCounts([postId]),
+      ]);
+      const metric = metrics.get(postId);
+      this.eventEmitter.emit(PostEvents.METRICS_UPDATED, {
+        postId,
+        upVotes: metric?.upVotes ?? 0,
+        downVotes: metric?.downVotes ?? 0,
+        timesSaved: metric?.timesSaved ?? 0,
+        replyCount: replyCounts.get(postId) ?? 0,
+      });
+    } catch {
+      // El tiempo real es opcional.
+    }
+  }
+
   private async validateFavoriteTarget(
     itemType: FavoriteItemType,
     itemId: number,
@@ -930,6 +973,7 @@ export class ForumService {
   ) {
     const direction = query.order === SortOrder.ASC ? 'ASC' : 'DESC';
     const sortExpressions: Record<MyPostsSortBy, string> = {
+      [MyPostsSortBy.HOT]: hotScoreSql(FEED.HALF_LIFE_DAYS),
       [MyPostsSortBy.DATE]: 'post.posted_at',
       [MyPostsSortBy.UPVOTES]: `(SELECT COUNT(*) FROM post_vote sort_vote WHERE sort_vote.post_id = post.id AND sort_vote."voteType" = 'UP')`,
       [MyPostsSortBy.DOWNVOTES]: `(SELECT COUNT(*) FROM post_vote sort_vote WHERE sort_vote.post_id = post.id AND sort_vote."voteType" = 'DOWN')`,
@@ -1135,22 +1179,15 @@ export class ForumService {
         text: `%${escapeLike(q)}%`,
       });
 
-    const total = await base.clone().getCount();
-    const rows = await base
-      .select('post.id', 'id')
-      .orderBy('post.posted_at', 'DESC')
-      .addOrderBy('post.id', 'DESC')
-      .offset((page - 1) * limit)
-      .limit(limit)
-      .getRawMany<{ id: number }>();
-
-    return {
-      data: await this.buildPostCards(
-        rows.map((row) => Number(row.id)),
-        viewerId ?? '',
-      ),
-      pagination: this.buildPageInfo(page, limit, total),
-    };
+    // Coincidencias ordenadas por votos y frescura (vida media 14 días).
+    const { data, pagination } = await this.pageRankedPosts(
+      base,
+      hotScoreSql(14),
+      {},
+      { page, limit },
+      viewerId,
+    );
+    return { data, pagination };
   }
 
   // Solo los ids guardados (para pintar el corazón sin traer las tarjetas).
@@ -1221,13 +1258,18 @@ export class ForumService {
 
   // Hidrata posts por id respetando el orden recibido, con métricas y
   // estado del usuario (myVote / isSaved) como en el feed global.
-  private async buildPostCards(postIds: number[], userId: string) {
+  // userId es opcional: sin sesión no hay myVote ni isSaved.
+  private async buildPostCards(
+    postIds: number[],
+    viewerId: string | undefined,
+  ) {
+    const userId = viewerId ?? '';
     if (postIds.length === 0) return [];
 
     const posts = await this.postRepository.find({
       where: { id: In(postIds) },
       relations: {
-        communityProfile: { community: true },
+        communityProfile: { community: true, user: true },
         postTags: { tag: true },
         images: true,
       },
@@ -1240,12 +1282,13 @@ export class ForumService {
     const communityIds = [
       ...new Set(ordered.map((post) => post.communityProfile.communityId)),
     ];
-    const profiles = communityIds.length
-      ? await this.communityProfileRepository.find({
-          where: { userId, communityId: In(communityIds) },
-          select: { communityProfileId: true, communityId: true },
-        })
-      : [];
+    const profiles =
+      viewerId && communityIds.length
+        ? await this.communityProfileRepository.find({
+            where: { userId, communityId: In(communityIds) },
+            select: { communityProfileId: true, communityId: true },
+          })
+        : [];
     const profileByCommunityId = new Map(
       profiles.map((profile) => [
         profile.communityId,
