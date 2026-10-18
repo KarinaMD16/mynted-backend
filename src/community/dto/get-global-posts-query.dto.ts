@@ -11,8 +11,9 @@ import {
 } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { parseIntegerArray } from './create-community.dto';
+import { GetCommunityPostsQueryDto } from './get-community-posts-query.dto';
 
-export class GetGlobalPostsQueryDto {
+export class GetGlobalPostsQueryDto extends GetCommunityPostsQueryDto {
   @ApiPropertyOptional({ type: Number, default: 1, minimum: 1 })
   @Type(() => Number)
   @IsOptional()

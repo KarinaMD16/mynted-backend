@@ -225,10 +225,6 @@ export class CommunityService {
       });
 
       if (creatorProfileId !== undefined) {
-        this.eventEmitter?.emit(BadgeEvents.COMMUNITY_CREATED, {
-          userId,
-          communityProfileId: creatorProfileId,
-        });
         this.eventEmitter?.emit(BadgeEvents.MEMBER_JOINED, {
           userId,
           communityProfileId: creatorProfileId,
@@ -658,11 +654,8 @@ export class CommunityService {
     }
 
     profile.role = CommunityProfileRole.MODERATOR;
-    const savedModerator = await this.communityProfileRepository.save(profile);
-    this.eventEmitter?.emit(BadgeEvents.MODERATOR_ASSIGNED, {
-      communityProfileId: savedModerator.communityProfileId,
-    });
-    return savedModerator;
+    // moderator es un badge derivado del rol: no se guarda, no hay evento.
+    return this.communityProfileRepository.save(profile);
   }
 
   async removeModerator(

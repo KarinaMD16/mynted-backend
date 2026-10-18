@@ -14,6 +14,7 @@ import { Tag } from './entities/tag.entity';
 import { ForumService } from './forum.service';
 import { VoteType } from './entities/vote-type.enum';
 import { UserTag } from '../user-tags/entities/user-tag.entity';
+import { PostSort } from './post-ranking';
 
 /* eslint-disable @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return */
 
@@ -42,6 +43,12 @@ describe('ForumService', () => {
       take: jest.fn().mockReturnThis(),
       getManyAndCount: jest.fn().mockResolvedValue([[], 0]),
       setParameter: jest.fn().mockReturnThis(),
+      setParameters: jest.fn().mockReturnThis(),
+      innerJoin: jest.fn().mockReturnThis(),
+      clone: jest.fn().mockReturnThis(),
+      getCount: jest.fn().mockResolvedValue(0),
+      offset: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockReturnThis(),
     })),
   });
 
@@ -192,46 +199,103 @@ describe('ForumService', () => {
     expect(ctx.postVoteRepository.remove).toHaveBeenCalled();
   });
 
-  it('includes the author photo in posts listed by community', async () => {
-    const ctx = setup();
-    const post = {
-      id: 11,
-      title: 'Community post',
+  const feedPost = (id: number, communityId = 7) =>
+    ({
+      id,
+      title: `Post ${id}`,
       body: 'Body',
       postedAt: new Date(),
       communityProfileId: 4,
       communityProfile: {
         communityProfileId: 4,
+        communityId,
         displayName: 'Author',
         role: 'member',
         user: { photoUrl: 'https://img.test/author.png' },
+        community: {
+          id: communityId,
+          name: 'Public community',
+          slug: 'public-community',
+          imageUrl: null,
+          isActive: true,
+          isPrivate: false,
+        },
       },
       postTags: [],
       images: [],
-    } as unknown as Post;
+    }) as unknown as Post;
+
+  const rankedBuilder = (
+    ctx: ReturnType<typeof setup>,
+    ids: number[],
+    total = ids.length,
+  ) => {
+    const builder = ctx.postRepository.createQueryBuilder();
+    ctx.postRepository.createQueryBuilder.mockReturnValue(builder);
+    builder.getCount.mockResolvedValue(total);
+    builder.getRawMany.mockResolvedValue(ids.map((id) => ({ id })));
+    ctx.postRepository.find.mockResolvedValue(ids.map((id) => feedPost(id)));
+    return builder;
+  };
+
+  it('lists community posts ranked by votes and freshness with the author photo', async () => {
+    const ctx = setup();
     ctx.communityRepository.findOne.mockResolvedValue({
       id: 7,
       isActive: true,
-      isPrivate: true,
+      isPrivate: false,
     });
-    ctx.profileRepository.findOne.mockResolvedValue({
-      communityProfileId: 4,
-    });
-    ctx.postRepository.findAndCount.mockResolvedValue([[post], 1]);
+    const builder = rankedBuilder(ctx, [11, 12]);
 
     const result = await ctx.service.findPosts(7, 'user-id', {
       page: 1,
       limit: 10,
     });
 
+    expect(builder.andWhere).toHaveBeenCalledWith(
+      'community.id = :communityId',
+      { communityId: 7 },
+    );
+    expect(builder.addSelect).toHaveBeenCalledWith(
+      expect.stringContaining('post_vote'),
+      'rank_score',
+    );
+    expect(builder.orderBy).toHaveBeenCalledWith('rank_score', 'DESC');
+    expect(result.data.map((post) => post.id)).toEqual([11, 12]);
     expect(result.data[0].author).toMatchObject({
       communityProfileId: 4,
       displayName: 'Author',
       role: 'member',
       photoUrl: 'https://img.test/author.png',
     });
+    expect(result.pagination).toEqual({
+      page: 1,
+      limit: 10,
+      total: 2,
+      totalPages: 1,
+    });
   });
 
+  it('orders community posts chronologically with sort=new', async () => {
+    const ctx = setup();
+    ctx.communityRepository.findOne.mockResolvedValue({
+      id: 7,
+      isActive: true,
+      isPrivate: false,
+    });
+    const builder = rankedBuilder(ctx, [11]);
+
+    await ctx.service.findPosts(7, 'user-id', {
+      page: 1,
+      limit: 10,
+      sort: PostSort.NEW,
+    });
+
+    expect(builder.addSelect).toHaveBeenCalledWith(
+      expect.not.stringContaining('post_vote'),
+      'rank_score',
+    );
+  });
   it('rejects a non-member from posts in a private community', async () => {
     const ctx = setup();
     ctx.communityRepository.findOne.mockResolvedValue({
@@ -244,7 +308,7 @@ describe('ForumService', () => {
     await expect(
       ctx.service.findPosts(7, 'user-id', { page: 1, limit: 10 }),
     ).rejects.toThrow('Debes pertenecer a la comunidad');
-    expect(ctx.postRepository.findAndCount).not.toHaveBeenCalled();
+    expect(ctx.postRepository.createQueryBuilder).not.toHaveBeenCalled();
   });
 
   it('includes null author photos in replies', async () => {
@@ -366,122 +430,132 @@ describe('ForumService', () => {
     expect(ctx.replyRepository.find).not.toHaveBeenCalled();
   });
 
-  it('recommends posts by UserTag and returns matchedTagCount', async () => {
+  it('ranks explore by interests, votes and discovery for an authenticated user', async () => {
     const ctx = setup();
-    const postBuilder = ctx.postRepository.createQueryBuilder();
+    const builder = rankedBuilder(ctx, [12, 13]);
     const postTagBuilder = ctx.postTagRepository.createQueryBuilder();
-    ctx.postRepository.createQueryBuilder.mockReturnValue(postBuilder);
     ctx.postTagRepository.createQueryBuilder.mockReturnValue(postTagBuilder);
-    ctx.userTagRepository.find.mockResolvedValue([{ tagId: 1 }, { tagId: 3 }]);
-    const post = {
-      id: 12,
-      title: 'Recommended post',
-      body: 'Body',
-      postedAt: new Date(),
-      communityProfileId: 4,
-      communityProfile: {
-        communityProfileId: 4,
-        communityId: 7,
-        displayName: 'Author',
-        role: 'member',
-        user: { photoUrl: null },
-        community: {
-          id: 7,
-          name: 'Public community',
-          slug: 'public-community',
-          imageUrl: null,
-          isActive: true,
-          isPrivate: false,
-        },
-      },
-      postTags: [],
-      images: [],
-    } as unknown as Post;
-    const lowerMatchPost = {
-      ...post,
-      id: 13,
-      title: 'Lower match post',
-    };
-    postBuilder.getManyAndCount.mockResolvedValue([[post, lowerMatchPost], 2]);
     postTagBuilder.getRawMany.mockResolvedValue([
       { post_id: '12', count: '2' },
       { post_id: '13', count: '1' },
     ]);
-    ctx.profileRepository.find.mockResolvedValue([]);
+    ctx.userTagRepository.find.mockResolvedValue([{ tagId: 1 }, { tagId: 3 }]);
+    ctx.profileRepository.find.mockResolvedValue([{ communityId: 9 }]);
 
     const result = await ctx.service.findRecommendedPosts('user-id', {
       page: 1,
       limit: 10,
     });
 
-    expect(ctx.userTagRepository.find).toHaveBeenCalledWith({
-      where: { userId: 'user-id' },
-      select: { tagId: true },
-    });
-    expect(postBuilder.orderBy).toHaveBeenCalledWith(
-      'matched_tag_count',
-      'DESC',
+    expect(builder.andWhere).toHaveBeenCalledWith(
+      'community.is_private = :isPrivate',
+      { isPrivate: false },
     );
+    expect(builder.setParameters).toHaveBeenCalledWith(
+      expect.objectContaining({ userTagIds: [1, 3], joinedIds: [9] }),
+    );
+    expect(builder.addSelect).toHaveBeenCalledWith(
+      expect.stringContaining('POWER'),
+      'rank_score',
+    );
+    expect(result.meta).toEqual({ personalized: true });
     expect(result.data[0]).toMatchObject({
       id: 12,
       matchedTagCount: 2,
       community: { id: 7 },
     });
-    expect(result.data[1]).toMatchObject({
-      id: 13,
-      matchedTagCount: 1,
-    });
-    expect(typeof result.data[0].matchedTagCount).toBe('number');
+    expect(result.data[1]).toMatchObject({ id: 13, matchedTagCount: 1 });
   });
 
-  it('returns an empty paginated result when the user has no interests', async () => {
+  it('ranks explore by popularity alone without a session', async () => {
     const ctx = setup();
-    ctx.userTagRepository.find.mockResolvedValue([]);
+    const builder = rankedBuilder(ctx, [12]);
 
-    const result = await ctx.service.findRecommendedPosts('user-id', {
-      page: 2,
+    const result = await ctx.service.findRecommendedPosts(undefined, {
+      page: 1,
       limit: 10,
     });
 
-    expect(result).toEqual({
-      data: [],
-      pagination: { page: 2, limit: 10, total: 0, totalPages: 0 },
-    });
-    expect(ctx.postRepository.createQueryBuilder).not.toHaveBeenCalled();
+    expect(ctx.userTagRepository.find).not.toHaveBeenCalled();
+    expect(builder.setParameters).toHaveBeenCalledWith(
+      expect.objectContaining({ userTagIds: [], joinedIds: [] }),
+    );
+    expect(result.meta).toEqual({ personalized: false });
+    expect(result.data[0]).toMatchObject({ id: 12, matchedTagCount: 0 });
   });
 
+  it('lists the global feed without a session or tagIds', async () => {
+    const ctx = setup();
+    const builder = rankedBuilder(ctx, [], 0);
+
+    const result = await ctx.service.findGlobalPosts(undefined, {
+      page: 1,
+      limit: 10,
+    });
+
+    expect(builder.andWhere).toHaveBeenCalledTimes(1);
+    expect(builder.andWhere).toHaveBeenCalledWith(
+      'community.is_private = :isPrivate',
+      { isPrivate: false },
+    );
+    expect(result).toEqual({
+      data: [],
+      pagination: { page: 1, limit: 10, total: 0, totalPages: 0 },
+    });
+  });
+
+  it('shows the home feed from the communities the user belongs to', async () => {
+    const ctx = setup();
+    const builder = rankedBuilder(ctx, [21, 22]);
+    ctx.profileRepository.find.mockResolvedValue([
+      { communityId: 3 },
+      { communityId: 7 },
+    ]);
+
+    const result = await ctx.service.findHomePosts('user-id', {
+      page: 1,
+      limit: 10,
+      sort: PostSort.HOT,
+    });
+
+    expect(builder.andWhere).toHaveBeenCalledWith(
+      'community.id = ANY(CAST(:joinedIds AS int[]))',
+      { joinedIds: [3, 7] },
+    );
+    expect(result.meta).toEqual({ source: 'joined' });
+    expect(result.data.map((post) => post.id)).toEqual([21, 22]);
+  });
+
+  it('falls back to public communities in home without a session or memberships', async () => {
+    const ctx = setup();
+    const builder = rankedBuilder(ctx, [31]);
+
+    const anonymous = await ctx.service.findHomePosts(undefined, {
+      page: 1,
+      limit: 10,
+      sort: PostSort.HOT,
+    });
+
+    expect(ctx.profileRepository.find).not.toHaveBeenCalled();
+    expect(builder.andWhere).toHaveBeenCalledWith(
+      'community.is_private = :isPrivate',
+      { isPrivate: false },
+    );
+    expect(anonymous.meta).toEqual({ source: 'public' });
+
+    // Con sesión pero sin posts en sus comunidades también cae a público.
+    ctx.profileRepository.find.mockResolvedValue([{ communityId: 3 }]);
+    builder.getCount.mockResolvedValueOnce(0).mockResolvedValue(1);
+    const empty = await ctx.service.findHomePosts('user-id', {
+      page: 1,
+      limit: 10,
+      sort: PostSort.HOT,
+    });
+    expect(empty.meta).toEqual({ source: 'public' });
+  });
   it('lists the global feed with public-community and tag filters', async () => {
     const ctx = setup();
-    const builder = ctx.postRepository.createQueryBuilder();
-    ctx.postRepository.createQueryBuilder.mockReturnValue(builder);
-    const post = {
-      id: 10,
-      title: 'Global post',
-      body: 'Body',
-      postedAt: new Date(),
-      communityProfileId: 4,
-      communityProfile: {
-        communityProfileId: 4,
-        communityId: 7,
-        displayName: 'Author',
-        role: 'member',
-        user: { photoUrl: 'https://img.test/author.png' },
-        community: {
-          id: 7,
-          name: 'Public community',
-          slug: 'public-community',
-          imageUrl: null,
-          isActive: true,
-          isPrivate: false,
-        },
-      },
-      postTags: [],
-      images: [],
-    } as unknown as Post;
-    builder.getManyAndCount.mockResolvedValue([[post], 1]);
-    ctx.profileRepository.find.mockResolvedValue([
-      { communityProfileId: 4, communityId: 7 },
-    ]);
+    const builder = rankedBuilder(ctx, [10]);
 
     const result = await ctx.service.findGlobalPosts('user-id', {
       page: 1,
@@ -506,7 +580,6 @@ describe('ForumService', () => {
       '(post.title ILIKE :search OR post.body ILIKE :search)',
       { search: '%pokemon%' },
     );
-    expect(builder.distinct).toHaveBeenCalledWith(true);
     expect(result).toMatchObject({
       data: [
         {
@@ -520,32 +593,6 @@ describe('ForumService', () => {
     });
     expect(result.data[0]).not.toHaveProperty('matchedTagCount');
   });
-
-  it('lists the global feed without requiring tagIds', async () => {
-    const ctx = setup();
-    const builder = ctx.postRepository.createQueryBuilder();
-    ctx.postRepository.createQueryBuilder.mockReturnValue(builder);
-    builder.getManyAndCount.mockResolvedValue([[], 0]);
-
-    const result = await ctx.service.findGlobalPosts('user-id', {
-      page: 1,
-      limit: 10,
-    });
-
-    expect(builder.andWhere).toHaveBeenCalledWith(
-      'community.is_private = :isPrivate',
-      { isPrivate: false },
-    );
-    expect(builder.andWhere).not.toHaveBeenCalledWith(
-      expect.stringContaining('global_feed_filter_post_tag'),
-      expect.anything(),
-    );
-    expect(result).toEqual({
-      data: [],
-      pagination: { page: 1, limit: 10, total: 0, totalPages: 0 },
-    });
-  });
-
   it('does not add a text filter when search only contains spaces', async () => {
     const ctx = setup();
     const builder = ctx.postRepository.createQueryBuilder();

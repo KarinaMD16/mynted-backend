@@ -6,7 +6,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { Optional } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { In, Repository } from 'typeorm';
+import { BadgeEvents } from '../badges/badge-events';
 import * as bcrypt from 'bcrypt';
 import { SellerRequestStatus, User, UserRole } from './entities/user.entity';
 import {
@@ -33,6 +36,7 @@ export class UsersService {
     private readonly cloudinaryService: CloudinaryService,
     @InjectRepository(Seller)
     private readonly sellersRepository: Repository<Seller>,
+    @Optional() private readonly eventEmitter?: EventEmitter2,
   ) {}
 
   async create(dto: CreateUserDto): Promise<User> {
@@ -56,7 +60,9 @@ export class UsersService {
       passwordHash,
     });
 
-    return this.usersRepository.save(user);
+    const saved = await this.usersRepository.save(user);
+    this.eventEmitter?.emit(BadgeEvents.USER_REGISTERED, { userId: saved.id });
+    return saved;
   }
 
   async findById(id: string): Promise<User> {
@@ -407,7 +413,9 @@ export class UsersService {
       sellerRequestStatus: SellerRequestStatus.NONE,
     });
 
-    return this.usersRepository.save(user);
+    const saved = await this.usersRepository.save(user);
+    this.eventEmitter?.emit(BadgeEvents.USER_REGISTERED, { userId: saved.id });
+    return saved;
   }
 
   private async generateUniqueUsername(seed: string): Promise<string> {

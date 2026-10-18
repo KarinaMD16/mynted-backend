@@ -3,17 +3,21 @@ import {
   Controller,
   Delete,
   Get,
+  Optional,
   Param,
   ParseIntPipe,
   Post,
   Put,
   Query,
   Req,
+  Sse,
   UploadedFiles,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { FileFieldsInterceptor } from '@nestjs/platform-express';
+import { Observable, fromEvent, interval, map, merge } from 'rxjs';
 import {
   ApiBearerAuth,
   ApiConsumes,
@@ -21,7 +25,13 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { AuthenticatedRequest } from '../auth/types/authenticated-request';
+import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
+import {
+  AuthenticatedRequest,
+  OptionalAuthenticatedRequest,
+} from '../auth/types/authenticated-request';
+import { PostEvents, PostMetricsUpdatedEvent } from './post-events';
+import { GetCommunityPostsQueryDto } from './dto/get-community-posts-query.dto';
 import { CommunityProfileRole } from './entities/community-profile.entity';
 import { CommunityRoleGuard } from './guards/community-role.guard';
 import { RequireCommunityRole } from './decorators/require-community-role.decorator';
@@ -45,7 +55,10 @@ interface ForumFiles {
 @ApiBearerAuth()
 @Controller()
 export class ForumController {
-  constructor(private readonly forumService: ForumService) {}
+  constructor(
+    private readonly forumService: ForumService,
+    @Optional() private readonly eventEmitter?: EventEmitter2,
+  ) {}
 
   @Post('communities/:communityId/posts')
   @UseGuards(JwtAuthGuard, CommunityRoleGuard)
@@ -76,21 +89,68 @@ export class ForumController {
 
   @Get('communities/:communityId/posts')
   @UseGuards(JwtAuthGuard)
+  @ApiOperation({
+    summary:
+      'Posts de una comunidad. sort=hot (por defecto, upvotes/downvotes + frescura), new o top',
+  })
   findPosts(
     @Param('communityId', ParseIntPipe) communityId: number,
-    @Query() query: GetPostsQueryDto,
+    @Query() query: GetCommunityPostsQueryDto,
     @Req() request: AuthenticatedRequest,
   ) {
     return this.forumService.findPosts(communityId, request.user.userId, query);
   }
 
   @Get('posts')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(OptionalJwtAuthGuard)
+  @ApiOperation({
+    summary:
+      'Feed global de comunidades públicas (funciona sin sesión). sort=hot (por defecto, upvotes/downvotes + frescura), new o top; search y tagIds filtran',
+  })
   findGlobalPosts(
     @Query() query: GetGlobalPostsQueryDto,
-    @Req() request: AuthenticatedRequest,
+    @Req() request: OptionalAuthenticatedRequest,
   ) {
-    return this.forumService.findGlobalPosts(request.user.userId, query);
+    return this.forumService.findGlobalPosts(request.user?.userId, query);
+  }
+
+  @Get('home/posts')
+  @UseGuards(OptionalJwtAuthGuard)
+  @ApiOperation({
+    summary:
+      'Home: con sesión, posts de las comunidades a las que perteneces (meta.source = "joined"); sin sesión, o si aún no estás en ninguna, posts de comunidades públicas (meta.source = "public"). ' +
+      'sort=hot (por defecto) pesa mucho lo reciente y usa los votos como empuje; new = solo recientes; top = más votos netos',
+  })
+  findHomePosts(
+    @Query() query: GetCommunityPostsQueryDto,
+    @Req() request: OptionalAuthenticatedRequest,
+  ) {
+    return this.forumService.findHomePosts(request.user?.userId, query);
+  }
+
+  // Stream en vivo (Server-Sent Events) con los contadores de los posts que
+  // cambian. Debe ir antes de 'posts/:postId'.
+  @Sse('posts/live')
+  @ApiOperation({
+    summary:
+      'Stream en vivo (SSE, EventSource): evento "post-metrics" con { postId, upVotes, downVotes, timesSaved, replyCount } cada vez que cambian votos, guardados o respuestas de un post, más un "ping" cada 25 s. No reordena nada: el orden se recalcula al volver a pedir el feed',
+  })
+  liveMetrics(): Observable<MessageEvent> {
+    const metrics = this.eventEmitter
+      ? fromEvent(this.eventEmitter, PostEvents.METRICS_UPDATED).pipe(
+          map(
+            (event) =>
+              ({
+                type: 'post-metrics',
+                data: event as PostMetricsUpdatedEvent,
+              }) as MessageEvent,
+          ),
+        )
+      : new Observable<MessageEvent>();
+    const heartbeat = interval(25_000).pipe(
+      map(() => ({ type: 'ping', data: {} }) as MessageEvent),
+    );
+    return merge(metrics, heartbeat);
   }
 
   @Get('forums/me')
@@ -142,12 +202,16 @@ export class ForumController {
   }
 
   @Get('explore/forums/posts')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(OptionalJwtAuthGuard)
+  @ApiOperation({
+    summary:
+      'Explore "para ti" (funciona sin sesión): mezcla tus intereses, la popularidad (upvotes/downvotes) y la frescura, con bonus a comunidades que aún no conoces. Sin sesión o sin intereses, popularidad + frescura. Se recalcula en cada petición',
+  })
   findExploreForumPosts(
     @Query() query: GetPostsQueryDto,
-    @Req() request: AuthenticatedRequest,
+    @Req() request: OptionalAuthenticatedRequest,
   ) {
-    return this.forumService.findRecommendedPosts(request.user.userId, query);
+    return this.forumService.findRecommendedPosts(request.user?.userId, query);
   }
 
   @Get('favorites/me/ids')

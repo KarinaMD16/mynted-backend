@@ -4,8 +4,10 @@ import { Repository } from 'typeorm';
 import { BASE_BADGES } from './badges.config';
 import { Badge } from './entities/badge.entity';
 
-// Siembra los badges base. Inserta solo los que faltan (por code), así los
-// cambios manuales posteriores (nombre, ícono, isActive) no se pisan.
+// Seed idempotente del catálogo (upsert por `code`, mismo patrón que el seed
+// de Interests). Crea los que faltan y actualiza textos, scope, rareza y
+// métrica de los existentes, pero NO pisa `threshold` ni `isActive`: así los
+// umbrales se ajustan en la base sin tocar código.
 @Injectable()
 export class BadgesSeed implements OnApplicationBootstrap {
   constructor(
@@ -18,14 +20,8 @@ export class BadgesSeed implements OnApplicationBootstrap {
       .createQueryBuilder()
       .insert()
       .into(Badge)
-      .values(
-        BASE_BADGES.map((badge) => ({
-          ...badge,
-          icon: null,
-          isActive: true,
-        })),
-      )
-      .orIgnore()
+      .values(BASE_BADGES.map((badge) => ({ ...badge, isActive: true })))
+      .orUpdate(['name', 'description', 'scope', 'rarity', 'metric'], ['code'])
       .execute();
   }
 }

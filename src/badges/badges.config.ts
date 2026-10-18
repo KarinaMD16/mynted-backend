@@ -1,136 +1,161 @@
-import { BadgeRarity, BadgeScope } from './entities/badge.entity';
+import { BadgeMetric, BadgeRarity, BadgeScope } from './entities/badge.entity';
 
-// Umbrales para otorgar badges. Son valores propuestos: se ajustan aquí sin
-// tocar la lógica.
-export const BADGE_THRESHOLDS = {
-  // Posts publicados en una misma comunidad.
-  COMMUNITY_VOICE_MIN_POSTS: 20,
-  // Respuestas escritas en total (todas las comunidades).
-  CONVERSATIONALIST_MIN_REPLIES: 50,
-  // Posts + productos publicados que comparten un mismo tag (la "franquicia").
-  FRANCHISE_COLLECTOR_MIN_ITEMS: 5,
-  // Se es miembro fundador si se está entre los primeros N de la comunidad.
-  FOUNDING_MEMBER_LIMIT: 10,
-  // Años desde que se creó la cuenta.
-  ANNIVERSARY_YEARS: 1,
-  // TODO: depende del módulo de transacciones (no existe aún); sin
-  // otorgamiento automático por ahora.
-  TRUSTED_SELLER_MIN_SALES: 5,
-} as const;
-
+// Los `code` son el contrato estable con el frontend (ahí viven los SVG):
+// no se renombran una vez sembrados.
 export const BADGE_CODES = {
-  FIRST_POST: 'first_post',
-  COMMUNITY_VOICE: 'community_voice',
-  CONVERSATIONALIST: 'conversationalist',
-  FRANCHISE_COLLECTOR: 'franchise_collector',
-  COMMUNITY_FOUNDER: 'community_founder',
-  MODERATOR: 'moderator',
+  // scope user
   VERIFIED_SELLER: 'verified_seller',
-  FOUNDING_MEMBER: 'founding_member',
-  ANNIVERSARY: 'anniversary',
-  // Sin otorgamiento automático hasta que exista el módulo de transacciones.
   TRUSTED_SELLER: 'trusted_seller',
   SUCCESSFUL_EXCHANGE: 'successful_exchange',
+  FOUNDING_MEMBER: 'founding_member',
+  ANNIVERSARY: 'anniversary',
+  // scope community
+  FIRST_POST: 'first_post',
+  TALKATIVE: 'talkative',
+  COMMUNITY_VOICE: 'community_voice',
+  COMMUNITY_COLLECTOR: 'community_collector',
+  COMMUNITY_FOUNDING_MEMBER: 'community_founding_member',
+  COMMUNITY_FOUNDER: 'community_founder',
+  MODERATOR: 'moderator',
 } as const;
+
+// Badges derivados del rol del communityProfile: existen en el catálogo pero
+// NO se guardan en tablas intermedias (se calcularían desincronizados al
+// cambiar el rol). owner -> community_founder, moderator -> moderator.
+export const DERIVED_BADGE_CODES: ReadonlySet<string> = new Set([
+  BADGE_CODES.COMMUNITY_FOUNDER,
+  BADGE_CODES.MODERATOR,
+]);
 
 export interface BadgeDefinition {
   code: string;
   name: string;
   description: string;
-  criteria: string;
-  rarity: BadgeRarity;
   scope: BadgeScope;
+  rarity: BadgeRarity;
+  metric: BadgeMetric | null;
+  threshold: number | null;
 }
 
+// Catálogo base. threshold es el valor inicial: después se ajusta en la base
+// de datos sin tocar código (el seed no lo pisa).
 export const BASE_BADGES: BadgeDefinition[] = [
-  {
-    code: BADGE_CODES.FIRST_POST,
-    name: 'Primera publicación',
-    description: 'Compartió su primera publicación en una comunidad.',
-    criteria: 'Publica tu primer post en cualquier comunidad.',
-    rarity: BadgeRarity.LOW,
-    scope: BadgeScope.USER,
-  },
-  {
-    code: BADGE_CODES.COMMUNITY_VOICE,
-    name: 'Voz de la comunidad',
-    description: 'Es una voz activa de esta comunidad.',
-    criteria: `Publica ${BADGE_THRESHOLDS.COMMUNITY_VOICE_MIN_POSTS} posts en una misma comunidad.`,
-    rarity: BadgeRarity.MEDIUM,
-    scope: BadgeScope.COMMUNITY_PROFILE,
-  },
-  {
-    code: BADGE_CODES.CONVERSATIONALIST,
-    name: 'Conversador',
-    description: 'Siempre tiene algo que aportar a la conversación.',
-    criteria: `Escribe ${BADGE_THRESHOLDS.CONVERSATIONALIST_MIN_REPLIES} respuestas en las comunidades.`,
-    rarity: BadgeRarity.MEDIUM,
-    scope: BadgeScope.USER,
-  },
-  {
-    code: BADGE_CODES.FRANCHISE_COLLECTOR,
-    name: 'Coleccionista de franquicia',
-    description: 'Dedicado a una franquicia en particular.',
-    criteria: `Publica ${BADGE_THRESHOLDS.FRANCHISE_COLLECTOR_MIN_ITEMS} posts o productos con un mismo tag.`,
-    rarity: BadgeRarity.MEDIUM,
-    scope: BadgeScope.USER,
-  },
-  {
-    code: BADGE_CODES.COMMUNITY_FOUNDER,
-    name: 'Fundador de comunidad',
-    description: 'Creó esta comunidad.',
-    criteria: 'Crea una comunidad (propietario).',
-    rarity: BadgeRarity.HIGH,
-    scope: BadgeScope.COMMUNITY_PROFILE,
-  },
-  {
-    code: BADGE_CODES.MODERATOR,
-    name: 'Moderador',
-    description: 'Ayuda a cuidar esta comunidad.',
-    criteria: 'Ser nombrado moderador de una comunidad.',
-    rarity: BadgeRarity.MEDIUM,
-    scope: BadgeScope.COMMUNITY_PROFILE,
-  },
+  // ---- scope user
   {
     code: BADGE_CODES.VERIFIED_SELLER,
     name: 'Vendedor verificado',
-    description: 'Su cuenta de vendedor fue verificada por el equipo.',
-    criteria: 'Que se apruebe tu solicitud de vendedor.',
-    rarity: BadgeRarity.MEDIUM,
+    description:
+      'Su solicitud de vendedor fue aprobada por el equipo de Mynted.',
     scope: BadgeScope.USER,
+    rarity: BadgeRarity.UNCOMMON,
+    metric: null,
+    threshold: null,
+  },
+  {
+    // TODO: sin otorgamiento hasta que exista el módulo de transacciones
+    // (ventas completadas + rating).
+    code: BADGE_CODES.TRUSTED_SELLER,
+    name: 'Vendedor confiable',
+    description: 'Un vendedor con ventas completadas y buena reputación.',
+    scope: BadgeScope.USER,
+    rarity: BadgeRarity.RARE,
+    metric: null,
+    threshold: null,
+  },
+  {
+    // TODO: sin otorgamiento hasta que exista el módulo de transacciones.
+    code: BADGE_CODES.SUCCESSFUL_EXCHANGE,
+    name: 'Intercambio exitoso',
+    description: 'Completó un intercambio con otro coleccionista.',
+    scope: BadgeScope.USER,
+    rarity: BadgeRarity.UNCOMMON,
+    metric: null,
+    threshold: null,
   },
   {
     code: BADGE_CODES.FOUNDING_MEMBER,
     name: 'Miembro fundador',
-    description: 'Estuvo entre los primeros miembros de esta comunidad.',
-    criteria: `Ser uno de los primeros ${BADGE_THRESHOLDS.FOUNDING_MEMBER_LIMIT} miembros de una comunidad.`,
-    rarity: BadgeRarity.HIGH,
-    scope: BadgeScope.COMMUNITY_PROFILE,
+    description: 'Estuvo entre los primeros usuarios registrados en Mynted.',
+    scope: BadgeScope.USER,
+    rarity: BadgeRarity.LEGENDARY,
+    metric: BadgeMetric.REGISTRATION_RANK,
+    threshold: 100,
   },
   {
     code: BADGE_CODES.ANNIVERSARY,
     name: 'Aniversario',
-    description: 'Cumplió años en Mynted.',
-    criteria: `Mantén tu cuenta ${BADGE_THRESHOLDS.ANNIVERSARY_YEARS} año o más.`,
-    rarity: BadgeRarity.LOW,
+    description: 'Cumplió un año en Mynted.',
     scope: BadgeScope.USER,
+    rarity: BadgeRarity.RARE,
+    metric: BadgeMetric.ACCOUNT_AGE_DAYS,
+    threshold: 365,
+  },
+  // ---- scope community
+  {
+    code: BADGE_CODES.FIRST_POST,
+    name: 'Primera publicación',
+    description: 'Hizo su primera publicación en esta comunidad.',
+    scope: BadgeScope.COMMUNITY,
+    rarity: BadgeRarity.COMMON,
+    metric: BadgeMetric.COMMUNITY_POSTS,
+    threshold: 1,
   },
   {
-    // TODO: otorgar automáticamente cuando exista el módulo de transacciones.
-    code: BADGE_CODES.TRUSTED_SELLER,
-    name: 'Vendedor confiable',
-    description: 'Un vendedor con ventas completadas y buena reputación.',
-    criteria: `Completa ${BADGE_THRESHOLDS.TRUSTED_SELLER_MIN_SALES} ventas o más.`,
-    rarity: BadgeRarity.HIGH,
-    scope: BadgeScope.USER,
+    code: BADGE_CODES.TALKATIVE,
+    name: 'Conversador',
+    description: 'Siempre tiene algo que aportar a la conversación.',
+    scope: BadgeScope.COMMUNITY,
+    rarity: BadgeRarity.UNCOMMON,
+    metric: BadgeMetric.COMMUNITY_REPLIES,
+    threshold: 25,
   },
   {
-    // TODO: otorgar automáticamente cuando exista el módulo de transacciones.
-    code: BADGE_CODES.SUCCESSFUL_EXCHANGE,
-    name: 'Intercambio exitoso',
-    description: 'Completó un intercambio con otro coleccionista.',
-    criteria: 'Completa un intercambio.',
-    rarity: BadgeRarity.MEDIUM,
-    scope: BadgeScope.USER,
+    code: BADGE_CODES.COMMUNITY_VOICE,
+    name: 'Voz de la comunidad',
+    description: 'Sus publicaciones acumulan muchos upvotes en esta comunidad.',
+    scope: BadgeScope.COMMUNITY,
+    rarity: BadgeRarity.RARE,
+    metric: BadgeMetric.COMMUNITY_UPVOTES,
+    threshold: 50,
+  },
+  {
+    // Plantilla: al otorgarse al communityProfile queda ligado a la
+    // comunidad/franquicia ("Coleccionista de [Franquicia]").
+    code: BADGE_CODES.COMMUNITY_COLLECTOR,
+    name: 'Coleccionista',
+    description: 'Dedicado a la colección de esta comunidad.',
+    scope: BadgeScope.COMMUNITY,
+    rarity: BadgeRarity.RARE,
+    metric: BadgeMetric.COMMUNITY_COLLECTION,
+    threshold: 10,
+  },
+  {
+    code: BADGE_CODES.COMMUNITY_FOUNDING_MEMBER,
+    name: 'Miembro fundador de la comunidad',
+    description: 'Estuvo entre los primeros miembros de esta comunidad.',
+    scope: BadgeScope.COMMUNITY,
+    rarity: BadgeRarity.EPIC,
+    metric: BadgeMetric.COMMUNITY_MEMBER_RANK,
+    threshold: 25,
+  },
+  {
+    // Derivado de communityProfile.role = owner.
+    code: BADGE_CODES.COMMUNITY_FOUNDER,
+    name: 'Fundador de la comunidad',
+    description: 'Creó esta comunidad.',
+    scope: BadgeScope.COMMUNITY,
+    rarity: BadgeRarity.EPIC,
+    metric: null,
+    threshold: null,
+  },
+  {
+    // Derivado de communityProfile.role = moderator.
+    code: BADGE_CODES.MODERATOR,
+    name: 'Moderador',
+    description: 'Ayuda a cuidar esta comunidad.',
+    scope: BadgeScope.COMMUNITY,
+    rarity: BadgeRarity.RARE,
+    metric: null,
+    threshold: null,
   },
 ];
