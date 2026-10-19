@@ -25,6 +25,9 @@ export class Seller {
   @Column({ name: 'is_verified', default: false })
   isVerified!: boolean;
 
+  @Column({ name: 'completed_sales_count', type: 'int', default: 0 })
+  completedSalesCount!: number;
+
   @Column({ name: 'user_id', unique: true })
   userId!: string;
 
