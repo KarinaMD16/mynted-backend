@@ -15,6 +15,7 @@ import { BadgesModule } from './badges/badges.module';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ScheduleModule } from '@nestjs/schedule';
 import { PaymentsModule } from './payments/payments.module';
+import { ConversationsModule } from './conversations/conversations.module';
 
 @Module({
   imports: [
@@ -54,6 +55,7 @@ import { PaymentsModule } from './payments/payments.module';
     SearchModule,
     BadgesModule,
     PaymentsModule,
+    ConversationsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
