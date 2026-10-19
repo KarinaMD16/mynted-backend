@@ -17,6 +17,8 @@ import { UsersModule } from '../users/users.module';
 import { PaymentsController } from './payments.controller';
 import { PaymentsService } from './payments.service';
 import { PaymentHistoryService } from './payment-history.service';
+import { CommissionCatalogService } from './commission/commission-catalog.service';
+import { CommissionTiersController } from './commission-tiers.controller';
 
 @Module({
   imports: [
@@ -30,7 +32,7 @@ import { PaymentHistoryService } from './payment-history.service';
       User,
     ]),
   ],
-  controllers: [PaymentsController],
+  controllers: [PaymentsController, CommissionTiersController],
   providers: [
     CommissionTierSeed,
     BccrExchangeRateProvider,
@@ -38,6 +40,7 @@ import { PaymentHistoryService } from './payment-history.service';
     CommissionService,
     PaymentsService,
     PaymentHistoryService,
+    CommissionCatalogService,
     SimulatedPaymentGateway,
     { provide: EXCHANGE_RATE_PROVIDER, useExisting: BccrExchangeRateProvider },
     { provide: PAYMENT_GATEWAY, useExisting: SimulatedPaymentGateway },
@@ -48,6 +51,7 @@ import { PaymentHistoryService } from './payment-history.service';
     CommissionService,
     PaymentsService,
     PaymentHistoryService,
+    CommissionCatalogService,
     PAYMENT_GATEWAY,
   ],
 })
