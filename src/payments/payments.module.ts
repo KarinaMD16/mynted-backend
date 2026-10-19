@@ -19,6 +19,11 @@ import { PaymentsService } from './payments.service';
 import { PaymentHistoryService } from './payment-history.service';
 import { CommissionCatalogService } from './commission/commission-catalog.service';
 import { CommissionTiersController } from './commission-tiers.controller';
+import { AdminCommissionTiersController } from './admin-commission-tiers.controller';
+import { AdminPaymentsController } from './admin-payments.controller';
+import { AdminCommissionTiersService } from './admin-commission-tiers.service';
+import { AdminPaymentSummaryService } from './admin-payment-summary.service';
+import { SuperAdminGuard } from '../auth/guards/super-admin.guard';
 
 @Module({
   imports: [
@@ -32,7 +37,12 @@ import { CommissionTiersController } from './commission-tiers.controller';
       User,
     ]),
   ],
-  controllers: [PaymentsController, CommissionTiersController],
+  controllers: [
+    PaymentsController,
+    CommissionTiersController,
+    AdminCommissionTiersController,
+    AdminPaymentsController,
+  ],
   providers: [
     CommissionTierSeed,
     BccrExchangeRateProvider,
@@ -41,6 +51,9 @@ import { CommissionTiersController } from './commission-tiers.controller';
     PaymentsService,
     PaymentHistoryService,
     CommissionCatalogService,
+    AdminCommissionTiersService,
+    AdminPaymentSummaryService,
+    SuperAdminGuard,
     SimulatedPaymentGateway,
     { provide: EXCHANGE_RATE_PROVIDER, useExisting: BccrExchangeRateProvider },
     { provide: PAYMENT_GATEWAY, useExisting: SimulatedPaymentGateway },
