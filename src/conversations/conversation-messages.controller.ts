@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Optional,
   Patch,
   Post,
   Query,
@@ -10,6 +11,7 @@ import {
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   ApiBadGatewayResponse,
   ApiBadRequestResponse,
@@ -27,6 +29,7 @@ import {
 } from '@nestjs/swagger';
 import 'multer';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { ConversationEvents } from './conversation-events';
 import { conversationsValidationPipe } from './conversations.controller';
 import { CreateTextMessageDto } from './dto/create-text-message.dto';
 import { GetMessagesQueryDto } from './dto/get-messages-query.dto';
@@ -48,6 +51,8 @@ import { MessagesService } from './messages.service';
 // Todas las rutas exigen ser comprador o vendedor de :conversationId; el
 // guard deja la conversación en req.conversation. Los guards corren antes que
 // los interceptores, así que a un no participante ni se le procesa el archivo.
+// Tras persistir emite eventos de dominio (ConversationEvents) que ChatGateway
+// reenvía por socket; MessagesService no sabe que existen.
 @ApiTags('conversations')
 @Controller('conversations/:conversationId')
 @UseGuards(JwtAuthGuard, ConversationParticipantGuard)
@@ -56,7 +61,10 @@ import { MessagesService } from './messages.service';
 @ApiForbiddenResponse({ description: 'No participas en esta conversación' })
 @ApiNotFoundResponse({ description: 'Conversación no encontrada' })
 export class ConversationMessagesController {
-  constructor(private readonly messagesService: MessagesService) {}
+  constructor(
+    private readonly messagesService: MessagesService,
+    @Optional() private readonly eventEmitter?: EventEmitter2,
+  ) {}
 
   @Get('messages')
   @ApiOperation({
@@ -90,12 +98,13 @@ export class ConversationMessagesController {
     @Body(conversationsValidationPipe) dto: CreateTextMessageDto,
     @Req() request: ConversationParticipantRequest,
   ): Promise<MessageResponseDto> {
-    const { message } = await this.messagesService.sendText(
+    const result = await this.messagesService.sendText(
       request.conversation,
       request.user.userId,
       dto,
     );
-    return message;
+    this.eventEmitter?.emit(ConversationEvents.MESSAGE_CREATED, result);
+    return result.message;
   }
 
   @Post('messages/image')
@@ -132,12 +141,13 @@ export class ConversationMessagesController {
     @UploadedFile() file: Express.Multer.File | undefined,
     @Req() request: ConversationParticipantRequest,
   ): Promise<MessageResponseDto> {
-    const { message } = await this.messagesService.sendImage(
+    const result = await this.messagesService.sendImage(
       request.conversation,
       request.user.userId,
       file,
     );
-    return message;
+    this.eventEmitter?.emit(ConversationEvents.MESSAGE_CREATED, result);
+    return result.message;
   }
 
   @Patch('read')
@@ -149,11 +159,15 @@ export class ConversationMessagesController {
   async markAsRead(
     @Req() request: ConversationParticipantRequest,
   ): Promise<MarkReadResponseDto> {
-    const { conversationId, markedCount, readAt } =
-      await this.messagesService.markAsRead(
-        request.conversation,
-        request.user.userId,
-      );
+    const result = await this.messagesService.markAsRead(
+      request.conversation,
+      request.user.userId,
+    );
+    // Si no se marcó nada no cambió ningún estado: no hay qué avisar.
+    if (result.markedCount > 0) {
+      this.eventEmitter?.emit(ConversationEvents.MESSAGES_READ, result);
+    }
+    const { conversationId, markedCount, readAt } = result;
     return { conversationId, markedCount, readAt };
   }
 }

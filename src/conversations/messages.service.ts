@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import 'multer';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, IsNull, Not, Repository } from 'typeorm';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
 import { Seller } from '../sellers/entities/seller.entity';
 import {
@@ -50,6 +50,9 @@ export interface MessagesReadResult {
   markedCount: number;
   messageIds: number[];
   readAt: Date | null;
+  // No leídos del lector en esta conversación después de marcar (0 salvo que
+  // haya llegado un mensaje entre el UPDATE y el conteo).
+  unreadCount: number;
 }
 
 // Todos los métodos reciben la conversación ya validada por
@@ -174,6 +177,18 @@ export class MessagesService {
       .execute();
     const rows = (result.raw ?? []) as { id: number; read_at: Date }[];
 
+    // Si no se marcó nada es porque no había pendientes: no hace falta contar.
+    const unreadCount =
+      rows.length === 0
+        ? 0
+        : await this.messageRepository.count({
+            where: {
+              conversationId: conversation.id,
+              senderId: Not(readerId),
+              readAt: IsNull(),
+            },
+          });
+
     return {
       conversationId: conversation.id,
       readerId,
@@ -181,6 +196,7 @@ export class MessagesService {
       markedCount: rows.length,
       messageIds: rows.map((row) => row.id),
       readAt: rows[0]?.read_at ?? null,
+      unreadCount,
     };
   }
 

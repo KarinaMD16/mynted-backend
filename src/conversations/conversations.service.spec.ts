@@ -233,6 +233,32 @@ describe('ConversationsService', () => {
     });
   });
 
+  describe('getTotalUnread', () => {
+    it("counts the other participants' unread messages in a single query", async () => {
+      dataSource.query.mockResolvedValueOnce([{ total: 4 }]);
+
+      await expect(service.getTotalUnread(buyerId)).resolves.toBe(4);
+
+      expect(dataSource.query).toHaveBeenCalledTimes(1);
+      const [sql, params] = dataSource.query.mock.calls[0] as [
+        string,
+        unknown[],
+      ];
+      expect(params).toEqual([buyerId]);
+      expect(sql).toMatch(/COUNT\(\*\)/);
+      expect(sql).toMatch(/JOIN message m ON m\.conversation_id = c\.id/);
+      expect(sql).toMatch(/\(c\.buyer_id = \$1 OR c\.seller_id = \$1\)/);
+      expect(sql).toMatch(/m\.sender_id <> \$1/);
+      expect(sql).toMatch(/m\.read_at IS NULL/);
+    });
+
+    it('returns 0 when the query yields no row', async () => {
+      dataSource.query.mockResolvedValueOnce([]);
+
+      await expect(service.getTotalUnread(buyerId)).resolves.toBe(0);
+    });
+  });
+
   describe('getInbox', () => {
     const inboxRow = (overrides: Record<string, unknown> = {}) => ({
       id: 15,

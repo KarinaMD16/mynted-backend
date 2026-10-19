@@ -4,10 +4,22 @@ import { ConfigService } from '@nestjs/config';
 import { Strategy } from 'passport-jwt';
 import { Request } from 'express';
 
-const cookieExtractor = (req: Request): string | null => {
+export interface AccessTokenPayload {
+  sub: string;
+  email: string;
+}
+
+// Exportados para que el handshake de socket.io (WsJwtAuthenticator) lea y
+// valide el token exactamente igual que las rutas HTTP.
+export const cookieExtractor = (req: Request): string | null => {
   const cookies = req.cookies as Record<string, string> | undefined;
   return cookies?.['access_token'] ?? null;
 };
+
+export const toAuthenticatedUser = (payload: AccessTokenPayload) => ({
+  userId: payload.sub,
+  email: payload.email,
+});
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
@@ -19,7 +31,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     });
   }
 
-  validate(payload: { sub: string; email: string }) {
-    return { userId: payload.sub, email: payload.email };
+  validate(payload: AccessTokenPayload) {
+    return toAuthenticatedUser(payload);
   }
 }

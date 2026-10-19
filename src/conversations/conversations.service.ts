@@ -214,6 +214,37 @@ export class ConversationsService {
     return conversation;
   }
 
+  // Total de no leídos del usuario en todas sus conversaciones (badge del
+  // nav): mensajes del otro participante con read_at null. Un solo COUNT; las
+  // conversaciones salen por los índices de buyer_id/seller_id y sus mensajes
+  // por IDX_message_conversation_id_created_at.
+  async getTotalUnread(userId: string): Promise<number> {
+    const rows = await this.dataSource.query<{ total: number }[]>(
+      `SELECT COUNT(*)::int AS total
+         FROM conversation c
+         JOIN message m ON m.conversation_id = c.id
+        WHERE (c.buyer_id = $1 OR c.seller_id = $1)
+          AND m.sender_id <> $1
+          AND m.read_at IS NULL`,
+      [userId],
+    );
+    return rows[0]?.total ?? 0;
+  }
+
+  // Usuarios con los que userId comparte al menos una conversación (para
+  // avisarles de su presencia).
+  async findCounterpartIds(userId: string): Promise<string[]> {
+    const rows = await this.dataSource.query<{ user_id: string }[]>(
+      `SELECT DISTINCT
+              CASE WHEN c.buyer_id = $1 THEN c.seller_id ELSE c.buyer_id END
+                AS user_id
+         FROM conversation c
+        WHERE c.buyer_id = $1 OR c.seller_id = $1`,
+      [userId],
+    );
+    return rows.map((row) => row.user_id);
+  }
+
   toResponse(conversation: Conversation): ConversationResponseDto {
     return {
       id: conversation.id,

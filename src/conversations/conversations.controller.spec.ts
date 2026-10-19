@@ -1,6 +1,7 @@
 import { HttpStatus } from '@nestjs/common';
 import { GUARDS_METADATA } from '@nestjs/common/constants';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { ConversationEvents } from './conversation-events';
 import { ConversationMessagesController } from './conversation-messages.controller';
 import { ConversationsController } from './conversations.controller';
 import { ConversationParticipantGuard } from './guards/conversation-participant.guard';
@@ -74,6 +75,18 @@ describe('ConversationsController', () => {
     expect(res.status).toHaveBeenCalledWith(HttpStatus.CREATED);
   });
 
+  it('returns the total unread of the authenticated user', async () => {
+    const getTotalUnread = jest.fn().mockResolvedValue(5);
+    const controller = new ConversationsController({
+      getTotalUnread,
+    } as never);
+
+    await expect(controller.getUnreadCount(request)).resolves.toEqual({
+      totalUnread: 5,
+    });
+    expect(getTotalUnread).toHaveBeenCalledWith('buyer-1');
+  });
+
   it('responds 200 when the conversation already existed', async () => {
     const findOrCreate = jest
       .fn()
@@ -85,5 +98,83 @@ describe('ConversationsController', () => {
       controller.create({ productId: 42 }, request, res as never),
     ).resolves.toBe(conversation);
     expect(res.status).toHaveBeenCalledWith(HttpStatus.OK);
+  });
+
+  describe('domain events for the gateway', () => {
+    const guardedRequest = {
+      user: { userId: 'buyer-1' },
+      conversation: { id: 15, buyerId: 'buyer-1', sellerId: 'seller-1' },
+    } as never;
+    const created = {
+      message: { id: 120, content: 'Hola' },
+      conversationId: 15,
+      senderId: 'buyer-1',
+      recipientId: 'seller-1',
+    };
+
+    it('emits MESSAGE_CREATED after persisting a text message', async () => {
+      const sendText = jest.fn().mockResolvedValue(created);
+      const eventEmitter = { emit: jest.fn() };
+      const controller = new ConversationMessagesController(
+        { sendText } as never,
+        eventEmitter as never,
+      );
+
+      await expect(
+        controller.sendText({ content: 'Hola' }, guardedRequest),
+      ).resolves.toBe(created.message);
+      expect(eventEmitter.emit).toHaveBeenCalledWith(
+        ConversationEvents.MESSAGE_CREATED,
+        created,
+      );
+    });
+
+    it('does not emit when persisting fails', async () => {
+      const sendImage = jest.fn().mockRejectedValue(new Error('upload'));
+      const eventEmitter = { emit: jest.fn() };
+      const controller = new ConversationMessagesController(
+        { sendImage } as never,
+        eventEmitter as never,
+      );
+
+      await expect(
+        controller.sendImage(undefined, guardedRequest),
+      ).rejects.toThrow('upload');
+      expect(eventEmitter.emit).not.toHaveBeenCalled();
+    });
+
+    it('emits MESSAGES_READ only when something was marked', async () => {
+      const read = {
+        conversationId: 15,
+        readerId: 'buyer-1',
+        senderId: 'seller-1',
+        messageIds: [1],
+        markedCount: 1,
+        readAt: new Date(),
+      };
+      const markAsRead = jest
+        .fn()
+        .mockResolvedValueOnce(read)
+        .mockResolvedValueOnce({
+          ...read,
+          messageIds: [],
+          markedCount: 0,
+          readAt: null,
+        });
+      const eventEmitter = { emit: jest.fn() };
+      const controller = new ConversationMessagesController(
+        { markAsRead } as never,
+        eventEmitter as never,
+      );
+
+      await controller.markAsRead(guardedRequest);
+      await controller.markAsRead(guardedRequest);
+
+      expect(eventEmitter.emit).toHaveBeenCalledTimes(1);
+      expect(eventEmitter.emit).toHaveBeenCalledWith(
+        ConversationEvents.MESSAGES_READ,
+        read,
+      );
+    });
   });
 });

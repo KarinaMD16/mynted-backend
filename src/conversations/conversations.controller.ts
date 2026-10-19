@@ -28,6 +28,7 @@ import { ConversationResponseDto } from './dto/conversation-response.dto';
 import { CreateConversationDto } from './dto/create-conversation.dto';
 import { GetInboxQueryDto } from './dto/get-inbox-query.dto';
 import { InboxResponseDto } from './dto/inbox-response.dto';
+import { UnreadCountResponseDto } from './dto/unread-count-response.dto';
 
 // El ValidationPipe global no transforma: sin transform los defaults y
 // @Type/@Transform de los DTOs no llegarían al handler.
@@ -88,5 +89,24 @@ export class ConversationsController {
     @Req() request: AuthenticatedRequest,
   ): Promise<InboxResponseDto> {
     return this.conversationsService.getInbox(request.user.userId, query);
+  }
+
+  // Ruta literal: hoy no hay GET /conversations/:conversationId, pero si se
+  // agrega debe declararse después de esta (Express matchea en orden de
+  // registro) para que 'unread-count' no se tome como un id.
+  @Get('unread-count')
+  @ApiOperation({
+    summary:
+      'Total de mensajes sin leer del usuario en todas sus conversaciones (badge del nav)',
+  })
+  @ApiOkResponse({ type: UnreadCountResponseDto })
+  async getUnreadCount(
+    @Req() request: AuthenticatedRequest,
+  ): Promise<UnreadCountResponseDto> {
+    return {
+      totalUnread: await this.conversationsService.getTotalUnread(
+        request.user.userId,
+      ),
+    };
   }
 }

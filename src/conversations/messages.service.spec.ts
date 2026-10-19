@@ -3,7 +3,7 @@ import {
   BadRequestException,
   InternalServerErrorException,
 } from '@nestjs/common';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, IsNull, Not, Repository } from 'typeorm';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
 import { ProductStatus } from '../products/entities/product.entity';
 import { Seller } from '../sellers/entities/seller.entity';
@@ -60,6 +60,7 @@ describe('MessagesService', () => {
     const messageRepository = {
       createQueryBuilder: jest.fn(),
       exists: jest.fn().mockResolvedValue(true),
+      count: jest.fn().mockResolvedValue(0),
     };
     const conversationRepository = {
       findOneOrFail: jest.fn().mockResolvedValue({
@@ -270,6 +271,14 @@ describe('MessagesService', () => {
         markedCount: 2,
         messageIds: [120, 121],
         readAt: now,
+        unreadCount: 0,
+      });
+      expect(h.messageRepository.count).toHaveBeenCalledWith({
+        where: {
+          conversationId: 15,
+          senderId: Not(buyerId),
+          readAt: IsNull(),
+        },
       });
       const [values] = qb.set.mock.calls[0] as [{ readAt: () => string }];
       expect(values.readAt()).toBe('now()');
@@ -290,6 +299,21 @@ describe('MessagesService', () => {
       expect(result.markedCount).toBe(0);
       expect(result.messageIds).toEqual([]);
       expect(result.readAt).toBeNull();
+      expect(result.unreadCount).toBe(0);
+      expect(h.messageRepository.count).not.toHaveBeenCalled();
+    });
+
+    it('reports a message that arrived right after marking as still unread', async () => {
+      const h = createHarness();
+      h.messageRepository.createQueryBuilder.mockReturnValue(
+        buildQb({ execute: { raw: [{ id: 120, read_at: now }], affected: 1 } }),
+      );
+      h.messageRepository.count.mockResolvedValue(1);
+
+      const result = await h.service.markAsRead(conversation, buyerId);
+
+      expect(result.markedCount).toBe(1);
+      expect(result.unreadCount).toBe(1);
     });
   });
 

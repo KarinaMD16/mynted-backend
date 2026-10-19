@@ -1,41 +1,22 @@
-import {
-  ClassSerializerInterceptor,
-  INestApplication,
-  ValidationPipe,
-} from '@nestjs/common';
-import { ConfigModule, ConfigService } from '@nestjs/config';
-import { Reflector } from '@nestjs/core';
-import { JwtService } from '@nestjs/jwt';
-import { PassportModule } from '@nestjs/passport';
-import { Test } from '@nestjs/testing';
-import { TypeOrmModule } from '@nestjs/typeorm';
-import cookieParser from 'cookie-parser';
-import { join } from 'node:path';
+import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { DataSource } from 'typeorm';
-import { JwtStrategy } from '../src/auth/strategies/jwt.strategy';
-import { CloudinaryService } from '../src/cloudinary/cloudinary.service';
-import { ConversationsModule } from '../src/conversations/conversations.module';
 import {
   Product,
-  ProductCondition,
   ProductStatus,
-  ProductType,
 } from '../src/products/entities/product.entity';
-import {
-  PaymentInfo,
-  PaymentType,
-} from '../src/sellers/entities/payment-info.entity';
-import { Seller } from '../src/sellers/entities/seller.entity';
 import { User } from '../src/users/entities/user.entity';
+import {
+  CLOUDINARY_URL,
+  ChatTestApp,
+  createChatTestApp,
+} from './utils/chat-test-app';
 
 /**
- * Flujo completo del chat con dos usuarios (más un tercero para los casos de
- * acceso). Corre contra una base PROPIA: E2E_DB_NAME o `${DB_NAME}_e2e`; se
- * crea si no existe y su esquema se recrea en cada corrida (dropSchema), así
- * que nunca debe apuntar a la base de desarrollo. Cloudinary se reemplaza por
- * un fake: no se sube nada real.
+ * Flujo HTTP completo del chat con dos usuarios (más un tercero para los
+ * casos de acceso), sobre la base e2e (ver e2e-env.ts). Cloudinary es un
+ * fake: no se sube nada real.
  */
 jest.setTimeout(60_000);
 
@@ -74,55 +55,18 @@ interface HistoryBody {
   nextCursor: number | null;
 }
 
-const CLOUDINARY_URL =
-  'https://res.cloudinary.com/mynted/image/upload/v1/chat/e2e.png';
-
-async function ensureE2eDatabase(config: ConfigService): Promise<string> {
-  const devDb = config.get<string>('DB_NAME');
-  const e2eDb = config.get<string>('E2E_DB_NAME') ?? `${devDb}_e2e`;
-  if (e2eDb === devDb || !/^[a-z0-9_]+$/i.test(e2eDb)) {
-    throw new Error(
-      `Base e2e inválida (${e2eDb}): debe ser distinta de DB_NAME`,
-    );
-  }
-
-  // Conexión de mantenimiento a la base 'postgres' solo para crear la de e2e.
-  const admin = new DataSource({
-    type: 'postgres',
-    host: config.get<string>('DB_HOST'),
-    port: Number(config.get<string>('DB_PORT')),
-    username: config.get<string>('DB_USERNAME'),
-    password: String(config.get('DB_PASSWORD')),
-    database: 'postgres',
-  });
-  await admin.initialize();
-  try {
-    const existing = await admin.query<unknown[]>(
-      'SELECT 1 FROM pg_database WHERE datname = $1',
-      [e2eDb],
-    );
-    if (existing.length === 0) {
-      await admin.query(`CREATE DATABASE "${e2eDb}"`);
-    }
-  } finally {
-    await admin.destroy();
-  }
-  return e2eDb;
-}
-
 describe('Conversations (e2e)', () => {
+  let ctx: ChatTestApp;
   let app: INestApplication<App>;
   let dataSource: DataSource;
-  const cloudinary = { uploadImage: jest.fn() };
-
+  let cloudinary: ChatTestApp['cloudinary'];
   let buyer: User;
   let seller: User;
   let outsider: User;
   let product: Product;
-  const cookies = new Map<string, string>();
 
   const http = () => request(app.getHttpServer());
-  const as = (user: User) => ({ Cookie: cookies.get(user.id)! });
+  const as = (user: User) => ({ Cookie: ctx.cookieFor(user) });
 
   // Estado compartido entre los pasos del flujo (corren en orden).
   let conversationId: number;
@@ -131,91 +75,8 @@ describe('Conversations (e2e)', () => {
   let imageMessageId: number;
 
   beforeAll(async () => {
-    const bootstrap = await Test.createTestingModule({
-      imports: [ConfigModule.forRoot()],
-    }).compile();
-    const e2eDb = await ensureE2eDatabase(bootstrap.get(ConfigService));
-    await bootstrap.close();
-
-    const moduleRef = await Test.createTestingModule({
-      imports: [
-        ConfigModule.forRoot({ isGlobal: true }),
-        TypeOrmModule.forRootAsync({
-          inject: [ConfigService],
-          useFactory: (config: ConfigService) => ({
-            type: 'postgres',
-            host: config.get<string>('DB_HOST'),
-            port: Number(config.get<string>('DB_PORT')),
-            username: config.get<string>('DB_USERNAME'),
-            password: String(config.get('DB_PASSWORD')),
-            database: e2eDb,
-            entities: [join(__dirname, '../src/**/*.entity.ts')],
-            synchronize: true,
-            dropSchema: true,
-          }),
-        }),
-        PassportModule,
-        ConversationsModule,
-      ],
-      providers: [JwtStrategy],
-    })
-      .overrideProvider(CloudinaryService)
-      .useValue(cloudinary)
-      .compile();
-
-    // Mismo bootstrap que main.ts.
-    app = moduleRef.createNestApplication();
-    app.use(cookieParser());
-    app.useGlobalPipes(
-      new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }),
-    );
-    app.useGlobalInterceptors(
-      new ClassSerializerInterceptor(app.get(Reflector)),
-    );
-    await app.init();
-
-    dataSource = app.get(DataSource);
-    const users = dataSource.getRepository(User);
-    [buyer, seller, outsider] = await users.save([
-      users.create({ email: 'buyer@e2e.test', username: 'comprador' }),
-      users.create({ email: 'seller@e2e.test', username: 'karina' }),
-      users.create({ email: 'outsider@e2e.test', username: 'curioso' }),
-    ]);
-
-    const paymentInfo = await dataSource.getRepository(PaymentInfo).save({
-      ownerFullName: 'Karina Mora',
-      name: 'BN',
-      number: 'CR000000000000000000',
-      type: PaymentType.BANK_ACCOUNT,
-    });
-    const store = await dataSource.getRepository(Seller).save({
-      displayName: 'Funko Corner CR',
-      description: 'Funkos',
-      location: 'San José',
-      isVerified: true,
-      userId: seller.id,
-      paymentId: paymentInfo.paymentInfoId,
-    });
-    product = await dataSource.getRepository(Product).save({
-      title: 'Funko Pop Goku SSJ',
-      description: 'Nuevo en caja',
-      price: 25000,
-      discountPercent: 10,
-      currency: 'CRC',
-      imageUrl: 'https://res.cloudinary.com/mynted/cover.png',
-      status: ProductStatus.ACTIVE,
-      type: ProductType.SALE,
-      condition: ProductCondition.NEW,
-      sellerId: store.sellerId,
-    });
-
-    const jwt = new JwtService({
-      secret: app.get(ConfigService).get<string>('JWT_SECRET'),
-    });
-    for (const user of [buyer, seller, outsider]) {
-      const token = jwt.sign({ sub: user.id, email: user.email });
-      cookies.set(user.id, `access_token=${token}`);
-    }
+    ctx = await createChatTestApp();
+    ({ app, dataSource, cloudinary, buyer, seller, outsider, product } = ctx);
   });
 
   afterAll(async () => {
