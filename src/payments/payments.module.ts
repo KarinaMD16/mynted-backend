@@ -13,11 +13,14 @@ import { SimulatedPaymentGateway } from './gateway/simulated-payment.gateway';
 import { Product } from '../products/entities/product.entity';
 import { Seller } from '../sellers/entities/seller.entity';
 import { User } from '../users/entities/user.entity';
+import { UsersModule } from '../users/users.module';
 import { PaymentsController } from './payments.controller';
 import { PaymentsService } from './payments.service';
+import { PaymentHistoryService } from './payment-history.service';
 
 @Module({
   imports: [
+    UsersModule,
     TypeOrmModule.forFeature([
       CommissionTier,
       PaymentTransaction,
@@ -34,6 +37,7 @@ import { PaymentsService } from './payments.service';
     ExchangeRateService,
     CommissionService,
     PaymentsService,
+    PaymentHistoryService,
     SimulatedPaymentGateway,
     { provide: EXCHANGE_RATE_PROVIDER, useExisting: BccrExchangeRateProvider },
     { provide: PAYMENT_GATEWAY, useExisting: SimulatedPaymentGateway },
@@ -43,6 +47,7 @@ import { PaymentsService } from './payments.service';
     ExchangeRateService,
     CommissionService,
     PaymentsService,
+    PaymentHistoryService,
     PAYMENT_GATEWAY,
   ],
 })
