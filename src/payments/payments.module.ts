@@ -8,6 +8,8 @@ import { BccrExchangeRateProvider } from './exchange-rate/bccr-exchange-rate.pro
 import { ExchangeRateService } from './exchange-rate/exchange-rate.service';
 import { EXCHANGE_RATE_PROVIDER } from './exchange-rate/exchange-rate.constants';
 import { CommissionService } from './commission/commission.service';
+import { PAYMENT_GATEWAY } from './gateway/payment-gateway.constants';
+import { SimulatedPaymentGateway } from './gateway/simulated-payment.gateway';
 
 @Module({
   imports: [
@@ -22,8 +24,15 @@ import { CommissionService } from './commission/commission.service';
     BccrExchangeRateProvider,
     ExchangeRateService,
     CommissionService,
+    SimulatedPaymentGateway,
     { provide: EXCHANGE_RATE_PROVIDER, useExisting: BccrExchangeRateProvider },
+    { provide: PAYMENT_GATEWAY, useExisting: SimulatedPaymentGateway },
   ],
-  exports: [TypeOrmModule, ExchangeRateService, CommissionService],
+  exports: [
+    TypeOrmModule,
+    ExchangeRateService,
+    CommissionService,
+    PAYMENT_GATEWAY,
+  ],
 })
 export class PaymentsModule {}
