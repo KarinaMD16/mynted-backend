@@ -20,6 +20,8 @@ import { Seller } from './entities/seller.entity';
 import { PaymentInfo } from './entities/payment-info.entity';
 import { RequestSellerDto } from './dto/request-seller.dto';
 import { UpdateSellerStatusDto } from './dto/update-seller-status.dto';
+import { CommissionService } from '../payments/commission/commission.service';
+import { CommissionEstimateResponseDto } from './dto/commission-estimate-response.dto';
 
 interface PostgresError {
   code?: string;
@@ -31,10 +33,50 @@ export class SellersService {
     @InjectRepository(Seller)
     private readonly sellerRepository: Repository<Seller>,
     private readonly usersService: UsersService,
+    private readonly commissionService: CommissionService,
     private readonly dataSource: DataSource,
     @Optional()
     private readonly eventEmitter?: EventEmitter2,
   ) {}
+
+  async estimateCommission(
+    userId: string,
+    amount: number,
+  ): Promise<CommissionEstimateResponseDto> {
+    const seller = await this.sellerRepository.findOne({
+      where: { userId },
+    });
+    if (!seller) {
+      throw new NotFoundException(
+        'No se encontrÃ³ el registro de vendedor para este usuario',
+      );
+    }
+
+    const user = await this.usersService.findById(userId);
+    if (typeof user.currency !== 'string' || user.currency.trim() === '') {
+      throw new BadRequestException(
+        'Configura tu moneda antes de estimar una comisiÃ³n',
+      );
+    }
+    const currency = user.currency.trim().toUpperCase();
+    const calculation = await this.commissionService.calculate(
+      amount,
+      currency,
+      seller.completedSalesCount,
+    );
+
+    return {
+      amount,
+      currency,
+      commissionRate: calculation.rate,
+      commissionAmount: calculation.commissionAmount,
+      sellerNet: calculation.sellerNet,
+      salesTierName: calculation.salesTier,
+      priceTierName: calculation.priceTier,
+      salesDiscount: calculation.salesDiscount,
+      priceDiscount: calculation.priceDiscount,
+    };
+  }
 
   async requestSeller(userId: string, dto: RequestSellerDto): Promise<User> {
     const user = await this.usersService.findById(userId);

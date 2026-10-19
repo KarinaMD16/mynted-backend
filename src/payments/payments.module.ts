@@ -12,6 +12,7 @@ import { PAYMENT_GATEWAY } from './gateway/payment-gateway.constants';
 import { SimulatedPaymentGateway } from './gateway/simulated-payment.gateway';
 import { Product } from '../products/entities/product.entity';
 import { Seller } from '../sellers/entities/seller.entity';
+import { User } from '../users/entities/user.entity';
 import { PaymentsController } from './payments.controller';
 import { PaymentsService } from './payments.service';
 
@@ -23,6 +24,7 @@ import { PaymentsService } from './payments.service';
       ExchangeRateSnapshot,
       Product,
       Seller,
+      User,
     ]),
   ],
   controllers: [PaymentsController],

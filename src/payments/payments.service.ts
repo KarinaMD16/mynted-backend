@@ -17,6 +17,7 @@ import {
   ProductType,
 } from '../products/entities/product.entity';
 import { Seller } from '../sellers/entities/seller.entity';
+import { User } from '../users/entities/user.entity';
 import { PaymentTransaction } from './entities/payment-transaction.entity';
 import { TransactionStatus } from './enums/transaction-status.enum';
 import { CommissionService } from './commission/commission.service';
@@ -28,6 +29,8 @@ import {
 import { PaymentCardValidationError } from './gateway/card-validation';
 import { CheckoutDto } from './dto/checkout.dto';
 import { CheckoutResponseDto } from './dto/checkout-response.dto';
+import { QuoteResponseDto } from './dto/quote-response.dto';
+import { ExchangeRateService } from './exchange-rate/exchange-rate.service';
 
 type CheckoutResult =
   | { kind: 'completed'; transaction: PaymentTransaction }
@@ -48,7 +51,70 @@ export class PaymentsService {
     private readonly commissionService: CommissionService,
     @Inject(PAYMENT_GATEWAY)
     private readonly paymentGateway: PaymentGateway,
+    @InjectRepository(User)
+    private readonly userRepository: Repository<User>,
+    private readonly exchangeRateService: ExchangeRateService,
   ) {}
+
+  async quote(productId: number, userId: string): Promise<QuoteResponseDto> {
+    const product = await this.productRepository.findOne({
+      where: { id: productId },
+    });
+    if (!product) throw new NotFoundException('Producto no encontrado');
+    this.validateQuoteProduct(product);
+
+    const seller = await this.sellerRepository.findOne({
+      where: { sellerId: product.sellerId },
+    });
+    if (!seller) {
+      throw new InternalServerErrorException(
+        'El producto tiene un vendedor inconsistente',
+      );
+    }
+
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user) throw new NotFoundException('Usuario no encontrado');
+
+    const currency = this.normalizeProductCurrency(product.currency);
+    const commission = await this.commissionService.calculate(
+      product.price,
+      currency,
+      seller.completedSalesCount,
+    );
+    const response: QuoteResponseDto = {
+      productId: product.id,
+      amount: product.price,
+      currency,
+    };
+
+    const userCurrency = this.normalizeOptionalCurrency(user.currency);
+    if (userCurrency && userCurrency !== currency) {
+      const converted = await this.exchangeRateService.convert(
+        product.price,
+        currency,
+        userCurrency,
+      );
+      response.convertedAmount = {
+        amount: converted.amount,
+        currency: converted.currency,
+        exchangeRate: converted.rate,
+        rateDate: converted.rateDate,
+      };
+    }
+
+    if (seller.userId === userId) {
+      response.commission = {
+        rate: commission.rate,
+        amount: commission.commissionAmount,
+        sellerNet: commission.sellerNet,
+        salesTierName: commission.salesTier,
+        priceTierName: commission.priceTier,
+        salesDiscount: commission.salesDiscount,
+        priceDiscount: commission.priceDiscount,
+      };
+    }
+    return response;
+  }
 
   async checkout(
     dto: CheckoutDto,
@@ -330,6 +396,29 @@ export class PaymentsService {
       throw new BadRequestException('La moneda del producto es inválida');
     }
     return value.trim().toUpperCase();
+  }
+
+  private normalizeOptionalCurrency(value: string | null): string | null {
+    if (typeof value !== 'string' || value.trim() === '') return null;
+    return value.trim().toUpperCase();
+  }
+
+  private validateQuoteProduct(product: Product): void {
+    if (product.status !== ProductStatus.ACTIVE) {
+      throw new ConflictException('El producto no está disponible');
+    }
+    if (product.type !== ProductType.SALE) {
+      throw new BadRequestException(
+        'Solo se pueden cotizar productos de venta',
+      );
+    }
+    if (
+      product.price === null ||
+      !Number.isFinite(product.price) ||
+      product.price <= 0
+    ) {
+      throw new BadRequestException('El precio del producto es inválido');
+    }
   }
 
   private isPostgresUniqueViolation(error: unknown): boolean {

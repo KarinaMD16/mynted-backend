@@ -22,6 +22,27 @@ describe('PaymentsController', () => {
     ) as unknown[];
 
     expect(guards).toContain(JwtAuthGuard);
+    expect(
+      Reflect.getMetadata(
+        GUARDS_METADATA,
+        // eslint-disable-next-line @typescript-eslint/unbound-method
+        PaymentsController.prototype.quote,
+      ) as unknown[],
+    ).toContain(JwtAuthGuard);
+  });
+
+  it('passes productId and authenticated userId to quote', async () => {
+    const quote = jest.fn().mockResolvedValue({
+      productId: 7,
+      amount: 100,
+      currency: 'USD',
+    });
+    const controller = new PaymentsController({ quote } as never);
+
+    await expect(
+      controller.quote(7, { user: { userId: 'buyer-1' } } as never),
+    ).resolves.toEqual({ productId: 7, amount: 100, currency: 'USD' });
+    expect(quote).toHaveBeenCalledWith(7, 'buyer-1');
   });
 
   it('passes userId, DTO and Idempotency-Key to PaymentsService', async () => {

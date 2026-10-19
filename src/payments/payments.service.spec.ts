@@ -60,6 +60,17 @@ describe('PaymentsService', () => {
       findOne: jest.fn().mockResolvedValue(seller),
       save: jest.fn(async (value) => value),
     };
+    const userRepo = {
+      findOne: jest.fn().mockResolvedValue({ id: buyerId, currency: 'CRC' }),
+    };
+    const exchangeRateService = {
+      convert: jest.fn().mockResolvedValue({
+        amount: 240,
+        currency: 'USD',
+        rate: 0.002,
+        rateDate: '2026-10-19',
+      }),
+    };
     const manager = {
       getRepository: jest.fn((entity) => {
         if (entity === Product) return productRepo;
@@ -98,6 +109,8 @@ describe('PaymentsService', () => {
       txRepo as never,
       commissionService as never,
       paymentGateway,
+      userRepo as never,
+      exchangeRateService as never,
     );
     return {
       service,
@@ -110,6 +123,8 @@ describe('PaymentsService', () => {
       manager,
       commissionService,
       paymentGateway,
+      userRepo,
+      exchangeRateService,
     };
   };
 
@@ -456,5 +471,134 @@ describe('PaymentsService', () => {
       expect(JSON.stringify(body)).not.toContain('cardNumber');
       expect(JSON.stringify(body)).not.toContain('cvv');
     }
+  });
+
+  describe('quote', () => {
+    it('returns a CRC quote for a buyer without commission internals', async () => {
+      const h = createHarness();
+
+      const result = await h.service.quote(7, buyerId);
+
+      expect(result).toEqual({
+        productId: 7,
+        amount: 120000,
+        currency: 'CRC',
+      });
+      expect(result).not.toHaveProperty('commission');
+      expect(h.exchangeRateService.convert).not.toHaveBeenCalled();
+      expect(h.paymentGateway.charge).not.toHaveBeenCalled();
+      expect(h.txRepo.create).not.toHaveBeenCalled();
+      expect(h.product.status).toBe(ProductStatus.ACTIVE);
+      expect(h.seller.completedSalesCount).toBe(9);
+    });
+
+    it('returns a USD quote without converting when buyer currency is USD', async () => {
+      const h = createHarness({ product: { currency: 'USD' } });
+      h.userRepo.findOne.mockResolvedValue({ id: buyerId, currency: 'USD' });
+
+      await expect(h.service.quote(7, buyerId)).resolves.toMatchObject({
+        productId: 7,
+        amount: 120000,
+        currency: 'USD',
+      });
+      expect(h.exchangeRateService.convert).not.toHaveBeenCalled();
+    });
+
+    it('exposes commission only to the product owner', async () => {
+      const h = createHarness({ seller: { userId: buyerId } });
+
+      await expect(h.service.quote(7, buyerId)).resolves.toMatchObject({
+        productId: 7,
+        commission: {
+          rate: 0.03,
+          amount: 3600,
+          sellerNet: 116400,
+          salesTierName: 'Bronce',
+          priceTierName: 'Alto',
+          salesDiscount: 0,
+          priceDiscount: 0.01,
+        },
+      });
+      expect(h.commissionService.calculate).toHaveBeenCalledWith(
+        120000,
+        'CRC',
+        9,
+      );
+    });
+
+    it('converts only for display when user currency differs', async () => {
+      const h = createHarness();
+      h.userRepo.findOne.mockResolvedValue({ id: buyerId, currency: 'USD' });
+
+      const result = await h.service.quote(7, buyerId);
+
+      expect(result).toMatchObject({
+        amount: 120000,
+        currency: 'CRC',
+        convertedAmount: {
+          amount: 240,
+          currency: 'USD',
+          exchangeRate: 0.002,
+          rateDate: '2026-10-19',
+        },
+      });
+      expect(h.exchangeRateService.convert).toHaveBeenCalledWith(
+        120000,
+        'CRC',
+        'USD',
+      );
+      expect(result.amount).toBe(120000);
+    });
+
+    it('omits display conversion when user currency is absent', async () => {
+      const h = createHarness();
+      h.userRepo.findOne.mockResolvedValue({ id: buyerId, currency: null });
+
+      await expect(h.service.quote(7, buyerId)).resolves.toEqual({
+        productId: 7,
+        amount: 120000,
+        currency: 'CRC',
+      });
+      expect(h.exchangeRateService.convert).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['missing product', null, NotFoundException],
+      ['sold product', { status: ProductStatus.SOLD }, ConflictException],
+      [
+        'inactive product',
+        { status: ProductStatus.INACTIVE },
+        ConflictException,
+      ],
+      ['exchange product', { type: ProductType.EXCHANGE }, BadRequestException],
+      ['null price', { price: null }, BadRequestException],
+      ['zero price', { price: 0 }, BadRequestException],
+      ['empty currency', { currency: ' ' }, BadRequestException],
+    ])('rejects %s', async (_name, productOverride, exception) => {
+      const h = createHarness();
+      if (productOverride === null) {
+        h.productRepo.findOne.mockResolvedValue(null);
+      } else {
+        Object.assign(h.product, productOverride);
+      }
+
+      await expect(h.service.quote(7, buyerId)).rejects.toBeInstanceOf(
+        exception,
+      );
+      expect(h.paymentGateway.charge).not.toHaveBeenCalled();
+      expect(h.txRepo.create).not.toHaveBeenCalled();
+    });
+
+    it('propagates exchange-rate unavailability for display conversion', async () => {
+      const h = createHarness();
+      h.userRepo.findOne.mockResolvedValue({ id: buyerId, currency: 'USD' });
+      h.exchangeRateService.convert.mockRejectedValue(
+        new ServiceUnavailableException('rate unavailable'),
+      );
+
+      await expect(h.service.quote(7, buyerId)).rejects.toBeInstanceOf(
+        ServiceUnavailableException,
+      );
+    });
   });
 });
