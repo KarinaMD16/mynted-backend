@@ -10,6 +10,10 @@ import { EXCHANGE_RATE_PROVIDER } from './exchange-rate/exchange-rate.constants'
 import { CommissionService } from './commission/commission.service';
 import { PAYMENT_GATEWAY } from './gateway/payment-gateway.constants';
 import { SimulatedPaymentGateway } from './gateway/simulated-payment.gateway';
+import { Product } from '../products/entities/product.entity';
+import { Seller } from '../sellers/entities/seller.entity';
+import { PaymentsController } from './payments.controller';
+import { PaymentsService } from './payments.service';
 
 @Module({
   imports: [
@@ -17,13 +21,17 @@ import { SimulatedPaymentGateway } from './gateway/simulated-payment.gateway';
       CommissionTier,
       PaymentTransaction,
       ExchangeRateSnapshot,
+      Product,
+      Seller,
     ]),
   ],
+  controllers: [PaymentsController],
   providers: [
     CommissionTierSeed,
     BccrExchangeRateProvider,
     ExchangeRateService,
     CommissionService,
+    PaymentsService,
     SimulatedPaymentGateway,
     { provide: EXCHANGE_RATE_PROVIDER, useExisting: BccrExchangeRateProvider },
     { provide: PAYMENT_GATEWAY, useExisting: SimulatedPaymentGateway },
@@ -32,6 +40,7 @@ import { SimulatedPaymentGateway } from './gateway/simulated-payment.gateway';
     TypeOrmModule,
     ExchangeRateService,
     CommissionService,
+    PaymentsService,
     PAYMENT_GATEWAY,
   ],
 })
