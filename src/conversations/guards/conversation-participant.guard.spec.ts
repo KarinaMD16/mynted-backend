@@ -75,7 +75,7 @@ describe('ConversationParticipantGuard', () => {
     ).rejects.toThrow(NotFoundException);
   });
 
-  it.each(['abc', '0', '-3', '1.5'])(
+  it.each(['abc', '0', '-3', '1.5', '2147483648'])(
     'rejects an invalid conversationId (%s) before querying',
     async (conversationId) => {
       await expect(

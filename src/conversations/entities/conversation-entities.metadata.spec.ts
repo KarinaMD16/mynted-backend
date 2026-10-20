@@ -30,16 +30,29 @@ describe('conversation entity metadata', () => {
 
   it('maps Message with a (conversation, createdAt) index and cascade', () => {
     const entity = storage.tables.find((table) => table.target === Message);
-    const index = storage.indices.find((i) => i.target === Message);
+    const index = storage.indices.find(
+      (i) =>
+        i.target === Message &&
+        i.name === 'IDX_message_conversation_id_created_at',
+    );
     const conversationRelation = storage.relations.find(
       (relation) =>
         relation.target === Message && relation.propertyName === 'conversation',
     );
 
     expect(entity?.name).toBe('message');
-    expect(index?.name).toBe('IDX_message_conversation_id_created_at');
     expect(index?.columns).toEqual(['conversationId', 'createdAt']);
     expect(conversationRelation?.options.onDelete).toBe('CASCADE');
     expect(Object.values(MessageType)).toEqual(['text', 'image']);
+  });
+
+  it('keeps a partial index over unread messages for the unread counts', () => {
+    const unread = storage.indices.find(
+      (i) =>
+        i.target === Message && i.name === 'IDX_message_unread_conversation_id',
+    );
+
+    expect(unread?.columns).toEqual(['conversationId']);
+    expect(unread?.where).toBe('"read_at" IS NULL');
   });
 });

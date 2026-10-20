@@ -42,13 +42,13 @@ describe('ChatGateway (e2e)', () => {
 
   const http = () => request(ctx.app.getHttpServer());
 
-  const connect = (cookie?: string) =>
+  const connect = (cookie?: string, headers: Record<string, string> = {}) =>
     new Promise<Socket>((resolve, reject) => {
       const socket = io(baseUrl, {
         transports: ['websocket'],
         reconnection: false,
         forceNew: true,
-        extraHeaders: cookie ? { Cookie: cookie } : undefined,
+        extraHeaders: { ...(cookie ? { Cookie: cookie } : {}), ...headers },
       });
       opened.push(socket);
       socket.once('connect', () => resolve(socket));
@@ -138,6 +138,16 @@ describe('ChatGateway (e2e)', () => {
     );
   });
 
+  it('rejects browser handshakes from other origins even with a valid cookie (CSWSH)', async () => {
+    await expect(
+      connect(ctx.cookieFor(buyer), { Origin: 'http://localhost:6666' }),
+    ).rejects.toThrow('Origen no permitido');
+    // El frontend permitido sí conecta.
+    await expect(
+      connect(ctx.cookieFor(buyer), { Origin: 'http://localhost:5173' }),
+    ).resolves.toBeDefined();
+  });
+
   it("denies joining someone else's conversation and validates the payload", async () => {
     const intruder = await connectAs(outsider);
 
@@ -149,11 +159,18 @@ describe('ChatGateway (e2e)', () => {
       ok: false,
       error: { status: 404 },
     });
-    for (const invalid of ['15', -1, 0, 1.5, undefined]) {
+    // 2147483648 no entra en int4: debe ser 400, no un error de base (500).
+    for (const invalid of ['15', -1, 0, 1.5, undefined, 2147483648]) {
       await expect(join(intruder, invalid)).resolves.toMatchObject({
         ok: false,
         error: { status: 400 },
       });
+    }
+    // Payloads que ni siquiera son un objeto.
+    for (const raw of [null, 'texto', 15]) {
+      await expect(
+        intruder.timeout(3000).emitWithAck('conversation:join', raw),
+      ).resolves.toMatchObject({ ok: false, error: { status: 400 } });
     }
 
     // No quedó en la sala: un mensaje nuevo no le llega.

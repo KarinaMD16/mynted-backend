@@ -12,13 +12,20 @@ import { User } from '../../users/entities/user.entity';
 import { MessageType } from '../enums/message-type.enum';
 import { Conversation } from './conversation.entity';
 
-// Un mensaje de texto exige content; uno de imagen exige image_url (content
-// queda libre como pie de foto).
+// Un mensaje de texto exige content; uno de imagen exige image_url. La base
+// admitiría content en una imagen, pero la app las crea siempre con content
+// null (ver message-payload.ts).
 @Entity('message')
 @Index('IDX_message_conversation_id_created_at', [
   'conversationId',
   'createdAt',
 ])
+// Parcial: solo los no leídos. Los conteos de no leídos (bandeja, badge,
+// totalUnread de los eventos) y el UPDATE de marcar como leído tocan solo
+// estas filas en vez de recorrer todo el historial de cada conversación.
+@Index('IDX_message_unread_conversation_id', ['conversationId'], {
+  where: '"read_at" IS NULL',
+})
 @Check(
   'CHK_message_payload_by_type',
   `("type" = 'text' AND "content" IS NOT NULL) OR ("type" = 'image' AND "image_url" IS NOT NULL)`,

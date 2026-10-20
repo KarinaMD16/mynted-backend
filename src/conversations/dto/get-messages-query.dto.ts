@@ -1,6 +1,7 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { IsInt, IsOptional, Max, Min } from 'class-validator';
+import { MAX_INT4_ID } from './int-id';
 
 export class GetMessagesQueryDto {
   @ApiPropertyOptional({
@@ -14,6 +15,7 @@ export class GetMessagesQueryDto {
   @IsOptional()
   @IsInt({ message: 'cursor debe ser un entero positivo' })
   @Min(1, { message: 'cursor debe ser un entero positivo' })
+  @Max(MAX_INT4_ID, { message: 'cursor fuera de rango' })
   cursor?: number;
 
   @ApiPropertyOptional({ type: Number, default: 30, minimum: 1, maximum: 100 })

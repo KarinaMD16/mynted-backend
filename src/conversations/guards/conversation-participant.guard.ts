@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { AuthenticatedRequest } from '../../auth/types/authenticated-request';
 import { ConversationsService } from '../conversations.service';
+import { isValidIntId } from '../dto/int-id';
 import { Conversation } from '../entities/conversation.entity';
 
 export interface ConversationParticipantRequest extends AuthenticatedRequest {
@@ -31,7 +32,7 @@ export class ConversationParticipantGuard implements CanActivate {
     // Los guards corren antes que los pipes, así que ParseIntPipe en el
     // handler todavía no validó el param.
     const conversationId = Number(req.params.conversationId);
-    if (!Number.isInteger(conversationId) || conversationId < 1) {
+    if (!isValidIntId(conversationId)) {
       throw new BadRequestException(
         'conversationId debe ser un entero positivo',
       );

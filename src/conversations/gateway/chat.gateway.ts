@@ -75,6 +75,16 @@ export class ChatGateway
   // se rechaza antes de existir (el cliente recibe connect_error).
   afterInit(server: Server) {
     server.use((socket: ChatSocket, next) => {
+      // CORS no aplica al transporte WebSocket: sin este chequeo otra web del
+      // mismo site podría abrir un socket con la cookie de la víctima y leer
+      // sus conversaciones (cross-site WebSocket hijacking). Los navegadores
+      // siempre mandan Origin; un cliente sin Origin no es un navegador y no
+      // puede traer la cookie de otro.
+      const origin = socket.handshake.headers.origin;
+      if (origin && origin !== CORS_OPTIONS.origin) {
+        next(new Error('Origen no permitido'));
+        return;
+      }
       this.authenticator
         .authenticate(socket.request)
         .then((user) => {

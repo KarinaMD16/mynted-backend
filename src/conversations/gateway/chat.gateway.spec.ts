@@ -182,6 +182,18 @@ describe('ChatGateway', () => {
     expect(intruder.join).not.toHaveBeenCalled();
   });
 
+  it('never broadcasts presence globally when the user has no counterparts', async () => {
+    const { gateway, emitted, conversationsService, socket } = createHarness();
+    conversationsService.findCounterpartIds.mockResolvedValue([]);
+    const lonely = socket('lonely');
+
+    await gateway.handleConnection(lonely as never);
+    await gateway.handleDisconnect(lonely as never);
+
+    // server.to([]) en socket.io equivale a emitir a TODOS los sockets.
+    expect(emitted).toEqual([]);
+  });
+
   it('announces presence to counterparts only on the first and last socket', async () => {
     const { gateway, emitted, socket } = createHarness();
     const tab1 = socket('buyer', 't1');

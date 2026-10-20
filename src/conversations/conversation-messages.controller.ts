@@ -26,6 +26,7 @@ import {
   ApiParam,
   ApiPayloadTooLargeResponse,
   ApiTags,
+  ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
 import 'multer';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -48,6 +49,9 @@ import {
 } from './interceptors/message-image.interceptor';
 import { MessagesService } from './messages.service';
 
+const CONVERSATION_ID_INVALID =
+  'conversationId no es un entero positivo dentro de rango';
+
 // Todas las rutas exigen ser comprador o vendedor de :conversationId; el
 // guard deja la conversación en req.conversation. Los guards corren antes que
 // los interceptores, así que a un no participante ni se le procesa el archivo.
@@ -57,7 +61,14 @@ import { MessagesService } from './messages.service';
 @Controller('conversations/:conversationId')
 @UseGuards(JwtAuthGuard, ConversationParticipantGuard)
 @ApiBearerAuth()
-@ApiParam({ name: 'conversationId', type: Number, example: 15 })
+@ApiParam({
+  name: 'conversationId',
+  type: Number,
+  example: 15,
+  description: 'Entero positivo (máx. 2147483647)',
+})
+@ApiBadRequestResponse({ description: CONVERSATION_ID_INVALID })
+@ApiUnauthorizedResponse({ description: 'Sin sesión o token vencido' })
 @ApiForbiddenResponse({ description: 'No participas en esta conversación' })
 @ApiNotFoundResponse({ description: 'Conversación no encontrada' })
 export class ConversationMessagesController {
@@ -72,7 +83,9 @@ export class ConversationMessagesController {
       'Historial de mensajes, más recientes primero, paginado por cursor. Incluye el contexto del producto y el otro participante',
   })
   @ApiOkResponse({ type: MessageHistoryResponseDto })
-  @ApiBadRequestResponse({ description: 'cursor o limit inválidos' })
+  @ApiBadRequestResponse({
+    description: `cursor o limit inválidos, cursor de otra conversación, o ${CONVERSATION_ID_INVALID}`,
+  })
   getHistory(
     @Query(conversationsValidationPipe) query: GetMessagesQueryDto,
     @Req() request: ConversationParticipantRequest,
@@ -91,8 +104,7 @@ export class ConversationMessagesController {
   })
   @ApiCreatedResponse({ type: MessageResponseDto })
   @ApiBadRequestResponse({
-    description:
-      'content vacío o de más de 2000 caracteres, o el body trae campos extra (type, imageUrl...)',
+    description: `content vacío o de más de 2000 caracteres, el body trae campos extra (type, imageUrl...), o ${CONVERSATION_ID_INVALID}`,
   })
   async sendText(
     @Body(conversationsValidationPipe) dto: CreateTextMessageDto,
@@ -130,8 +142,7 @@ export class ConversationMessagesController {
   })
   @ApiCreatedResponse({ type: MessageResponseDto })
   @ApiBadRequestResponse({
-    description:
-      'Falta el archivo, formato no permitido, imagen inválida o el multipart trae campos de texto',
+    description: `Falta el archivo, formato no permitido, imagen inválida, el multipart trae campos de texto, o ${CONVERSATION_ID_INVALID}`,
   })
   @ApiPayloadTooLargeResponse({ description: 'La imagen supera 5 MB' })
   @ApiBadGatewayResponse({

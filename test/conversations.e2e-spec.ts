@@ -92,6 +92,23 @@ describe('Conversations (e2e)', () => {
     await http().get('/conversations').expect(401);
   });
 
+  it('answers 400 (not 500) to ids outside the int range', async () => {
+    const tooBig = 2147483648;
+    await http()
+      .post('/conversations')
+      .set(as(buyer))
+      .send({ productId: tooBig })
+      .expect(400);
+    await http()
+      .get(`/conversations/${tooBig}/messages`)
+      .set(as(buyer))
+      .expect(400);
+    await http()
+      .patch(`/conversations/${tooBig}/read`)
+      .set(as(buyer))
+      .expect(400);
+  });
+
   it('buyer opens a conversation (201) and reopening it is idempotent (200)', async () => {
     const created = await http()
       .post('/conversations')
@@ -316,6 +333,11 @@ describe('Conversations (e2e)', () => {
 
     await http().get(url).set(as(outsider)).expect(403);
     await http().get(url).query({ cursor: 999999 }).set(as(buyer)).expect(400);
+    await http()
+      .get(url)
+      .query({ cursor: 2147483648 })
+      .set(as(buyer))
+      .expect(400);
     await http()
       .get('/conversations/999999/messages')
       .set(as(buyer))

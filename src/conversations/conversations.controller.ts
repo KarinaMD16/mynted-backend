@@ -19,6 +19,7 @@ import {
   ApiOkResponse,
   ApiOperation,
   ApiTags,
+  ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
 import { Response } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -42,6 +43,7 @@ export const conversationsValidationPipe = new ValidationPipe({
 @Controller('conversations')
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
+@ApiUnauthorizedResponse({ description: 'Sin sesión o token vencido' })
 export class ConversationsController {
   constructor(private readonly conversationsService: ConversationsService) {}
 
@@ -60,7 +62,7 @@ export class ConversationsController {
   })
   @ApiBadRequestResponse({
     description:
-      'El producto no está activo o está oculto (solo al crear una nueva)',
+      'productId inválido (no es un entero positivo dentro de rango), o el producto no está activo o está oculto (solo al crear una nueva)',
   })
   @ApiForbiddenResponse({ description: 'El producto es tuyo' })
   @ApiNotFoundResponse({ description: 'Producto no encontrado' })
@@ -84,6 +86,9 @@ export class ConversationsController {
       'Bandeja del usuario (como comprador o vendedor), paginada y ordenada por último mensaje. Solo incluye conversaciones con al menos un mensaje',
   })
   @ApiOkResponse({ type: InboxResponseDto })
+  @ApiBadRequestResponse({
+    description: 'page o limit inválidos (limit máx. 50)',
+  })
   getInbox(
     @Query(conversationsValidationPipe) query: GetInboxQueryDto,
     @Req() request: AuthenticatedRequest,

@@ -88,7 +88,7 @@ de esa conversación:
 
 | Código | Cuándo |
 | --- | --- |
-| 400 | `conversationId` no es un entero positivo |
+| 400 | `conversationId` no es un entero positivo o pasa de 2147483647 |
 | 403 | No participas en esa conversación |
 | 404 | La conversación no existe |
 
@@ -254,6 +254,10 @@ socket.on('connect_error', (err) => {
   que la API, así que no hay que mandar ningún token a mano. No se acepta
   `auth.token` ni `Authorization: Bearer`.
 - Sin sesión válida, la conexión se **rechaza** y llega `connect_error`.
+- Si el navegador conecta desde un origen distinto del frontend permitido
+  (`http://localhost:5173`), la conexión se rechaza con `Origen no permitido`,
+  aunque haya cookie válida. Esto evita que otra web abra un socket con la
+  sesión del usuario (el CORS no protege el transporte WebSocket).
 - La sesión solo se valida al conectar. Si el access token vence, refréscalo
   por HTTP (`POST /auth/refresh`) y reconecta.
 - Al reconectar se pierden las salas: vuelve a emitir `conversation:join`
@@ -288,7 +292,7 @@ const ack = await socket
 
   | `status` | Cuándo |
   | --- | --- |
-  | 400 | Payload inválido |
+  | 400 | Payload inválido (no es un objeto, `conversationId` no es entero, es ≤ 0 o pasa de 2147483647) |
   | 403 | No participas; **no** te une a la sala |
   | 404 | La conversación no existe |
 
@@ -378,7 +382,7 @@ repo):
 | Tabla | Columnas y restricciones |
 | --- | --- |
 | `conversation` | `buyer_id` y `seller_id` (uuid → `users`, CASCADE); `product_id` (→ `product`, RESTRICT); `created_at`; `last_message_at` (arranca en `now()` y se adelanta con cada mensaje). Único `(buyer_id, seller_id, product_id)`; índices en `buyer_id`, `seller_id` y `last_message_at`; CHECK `buyer_id <> seller_id`. |
-| `message` | `conversation_id` (CASCADE); `sender_id` (→ `users`); `type` (`text`/`image`); `content`; `image_url`; `created_at`; `read_at`. Índice `(conversation_id, created_at)`; CHECK que exige `content` en `text` e `image_url` en `image`. |
+| `message` | `conversation_id` (CASCADE); `sender_id` (→ `users`); `type` (`text`/`image`); `content`; `image_url`; `created_at`; `read_at`. Índice `(conversation_id, created_at)` (historial, último mensaje) e índice parcial `(conversation_id) WHERE read_at IS NULL` (conteos de no leídos y marcar como leído); CHECK que exige `content` en `text` e `image_url` en `image`. |
 
 - **Producto con RESTRICT:** los productos se borran de forma lógica y deben
   conservar sus conversaciones.
@@ -412,6 +416,12 @@ gateway.
 - **Errores en sockets:** `WsAckExceptionFilter` devuelve el error por el ack
   conservando el status (403, 404, 400). El filtro por defecto de Nest los
   convertiría en "Internal server error".
+- **Ids `int4`:** los ids de conversación, mensaje y producto son `int4`. Los
+  DTOs y el guard rechazan con 400 los mayores a 2147483647 (`dto/int-id.ts`);
+  si no, Postgres fallaría con un 500.
+- **Presencia:** nunca emitas a `server.to([])`. En socket.io, una lista de
+  salas vacía significa **todos** los sockets. `broadcastPresence` corta
+  antes si el usuario no tiene contrapartes.
 - **Cloudinary:** se usa el `CloudinaryService` del repo. Ese servicio
   convierte cualquier error del SDK (incluso de red) en 400 "imagen inválida";
   por eso el 502 solo aparece ante errores inesperados. Si la subida funciona
@@ -424,6 +434,24 @@ memoria**. Con varias instancias del backend, cada una solo ve sus propios
 sockets: un mensaje creado en una instancia no llega a los clientes de otra, y
 la presencia sale incompleta. Para escalar hace falta un adaptador compartido
 (por ejemplo `@socket.io/redis-adapter`) y mover la presencia a Redis.
+
+### 4.5 Límites conocidos (pendientes)
+
+- **Socket y sesión:** la sesión del socket solo se valida al conectar. Un
+  socket abierto sigue recibiendo eventos aunque el access token venza o el
+  usuario cierre sesión en esa pestaña. El frontend debe hacer
+  `socket.disconnect()` al cerrar sesión.
+- **Presencia con conversaciones vacías:** se comparte con quien tenga una
+  conversación con el usuario, aunque no tenga mensajes. Cualquier comprador
+  que abra un chat sobre un producto activo puede ver si el vendedor está
+  conectado.
+- **Ids secuenciales:** los ids de conversación son secuenciales, y la
+  diferencia entre 403 (existe pero no es tuya) y 404 (no existe) revela
+  cuántas conversaciones hay. No expone contenido.
+- **`totalUnread` en desorden:** puede llegar en desorden si entran dos
+  mensajes casi a la vez (ver 3.5).
+- **Sin límite de frecuencia:** no hay rate limit para enviar mensajes ni para
+  `conversation:join`.
 
 ---
 
