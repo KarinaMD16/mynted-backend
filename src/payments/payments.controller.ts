@@ -16,6 +16,7 @@ import {
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
+  ApiBody,
   ApiHeader,
   ApiOkResponse,
   ApiParam,
@@ -123,6 +124,23 @@ export class PaymentsController {
   @Post('checkout')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
+  @ApiBody({
+    type: CheckoutDto,
+    examples: {
+      approved: {
+        summary: 'Ejemplo de checkout aprobado',
+        value: {
+          productId: 42,
+          card: {
+            cardNumber: '4242424242424242',
+            expiryMonth: 12,
+            expiryYear: 2027,
+            cvv: '123',
+          },
+        },
+      },
+    },
+  })
   @ApiHeader({
     name: 'Idempotency-Key',
     required: true,
