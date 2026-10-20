@@ -13,11 +13,21 @@ import { SimulatedPaymentGateway } from './gateway/simulated-payment.gateway';
 import { Product } from '../products/entities/product.entity';
 import { Seller } from '../sellers/entities/seller.entity';
 import { User } from '../users/entities/user.entity';
+import { UsersModule } from '../users/users.module';
 import { PaymentsController } from './payments.controller';
 import { PaymentsService } from './payments.service';
+import { PaymentHistoryService } from './payment-history.service';
+import { CommissionCatalogService } from './commission/commission-catalog.service';
+import { CommissionTiersController } from './commission-tiers.controller';
+import { AdminCommissionTiersController } from './admin-commission-tiers.controller';
+import { AdminPaymentsController } from './admin-payments.controller';
+import { AdminCommissionTiersService } from './admin-commission-tiers.service';
+import { AdminPaymentSummaryService } from './admin-payment-summary.service';
+import { SuperAdminGuard } from '../auth/guards/super-admin.guard';
 
 @Module({
   imports: [
+    UsersModule,
     TypeOrmModule.forFeature([
       CommissionTier,
       PaymentTransaction,
@@ -27,13 +37,23 @@ import { PaymentsService } from './payments.service';
       User,
     ]),
   ],
-  controllers: [PaymentsController],
+  controllers: [
+    PaymentsController,
+    CommissionTiersController,
+    AdminCommissionTiersController,
+    AdminPaymentsController,
+  ],
   providers: [
     CommissionTierSeed,
     BccrExchangeRateProvider,
     ExchangeRateService,
     CommissionService,
     PaymentsService,
+    PaymentHistoryService,
+    CommissionCatalogService,
+    AdminCommissionTiersService,
+    AdminPaymentSummaryService,
+    SuperAdminGuard,
     SimulatedPaymentGateway,
     { provide: EXCHANGE_RATE_PROVIDER, useExisting: BccrExchangeRateProvider },
     { provide: PAYMENT_GATEWAY, useExisting: SimulatedPaymentGateway },
@@ -43,6 +63,8 @@ import { PaymentsService } from './payments.service';
     ExchangeRateService,
     CommissionService,
     PaymentsService,
+    PaymentHistoryService,
+    CommissionCatalogService,
     PAYMENT_GATEWAY,
   ],
 })

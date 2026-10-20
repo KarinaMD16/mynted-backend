@@ -20,6 +20,7 @@ import { SellerGuard } from '../auth/guards/seller.guard';
 import { CommissionEstimateQueryDto } from './dto/commission-estimate-query.dto';
 import { CommissionEstimateResponseDto } from './dto/commission-estimate-response.dto';
 import { SellersService } from './sellers.service';
+import { CommissionProfileResponseDto } from './dto/seller-commission-response.dto';
 
 @ApiTags('sellers')
 @Controller('sellers')
@@ -54,5 +55,16 @@ export class SellerCommissionController {
       request.user.userId,
       query.amount,
     );
+  }
+
+  @Get('me/commission')
+  @UseGuards(JwtAuthGuard, SellerGuard)
+  @ApiBearerAuth()
+  @ApiOkResponse({ type: CommissionProfileResponseDto })
+  @ApiOperation({ summary: 'Consultar el perfil de comisión del vendedor' })
+  profile(
+    @Req() request: AuthenticatedRequest,
+  ): Promise<CommissionProfileResponseDto> {
+    return this.sellersService.getCommissionProfile(request.user.userId);
   }
 }

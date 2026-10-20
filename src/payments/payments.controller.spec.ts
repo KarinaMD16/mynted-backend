@@ -29,6 +29,15 @@ describe('PaymentsController', () => {
         PaymentsController.prototype.quote,
       ) as unknown[],
     ).toContain(JwtAuthGuard);
+    for (const method of ['purchases', 'sales', 'salesSummary', 'receipt']) {
+      expect(
+        Reflect.getMetadata(
+          GUARDS_METADATA,
+          // eslint-disable-next-line @typescript-eslint/unbound-method
+          PaymentsController.prototype[method as keyof PaymentsController],
+        ) as unknown[],
+      ).toContain(JwtAuthGuard);
+    }
   });
 
   it('passes productId and authenticated userId to quote', async () => {
@@ -128,5 +137,31 @@ describe('PaymentsController', () => {
     });
     expect(JSON.stringify(body)).not.toContain('cardNumber');
     expect(JSON.stringify(body)).not.toContain('cvv');
+  });
+
+  it('delegates history endpoints using request.user.userId', async () => {
+    const history = {
+      purchases: jest.fn().mockResolvedValue({ data: [], pagination: {} }),
+      sales: jest.fn().mockResolvedValue({ data: [], pagination: {} }),
+      salesSummary: jest.fn().mockResolvedValue({ totals: {}, breakdown: [] }),
+      receipt: jest.fn().mockResolvedValue({ id: 'tx-1' }),
+    };
+    const controller = new PaymentsController({} as never, history as never);
+    const request = { user: { userId: 'user-1' } } as never;
+
+    await controller.purchases({ page: 1, limit: 10 }, request);
+    await controller.sales({ page: 2, limit: 5 }, request);
+    await controller.salesSummary({ from: '2026-01-01' }, request);
+    await controller.receipt('tx-1', request);
+
+    expect(history.purchases).toHaveBeenCalledWith('user-1', {
+      page: 1,
+      limit: 10,
+    });
+    expect(history.sales).toHaveBeenCalledWith('user-1', { page: 2, limit: 5 });
+    expect(history.salesSummary).toHaveBeenCalledWith('user-1', {
+      from: '2026-01-01',
+    });
+    expect(history.receipt).toHaveBeenCalledWith('user-1', 'tx-1');
   });
 });

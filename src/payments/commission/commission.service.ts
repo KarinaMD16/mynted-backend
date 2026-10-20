@@ -117,12 +117,9 @@ export class CommissionService {
       this.getSalesTier(salesCount),
       this.getPriceTier(amount, currency),
     ]);
-    const { baseRate, minRate } = this.readRates();
-    const rate = this.roundRate(
-      Math.max(
-        baseRate - salesTier.discount - priceResolution.tier.discount,
-        minRate,
-      ),
+    const rate = this.calculateRate(
+      salesTier.discount,
+      priceResolution.tier.discount,
     );
     const commissionAmount = this.roundMoney(amount * rate);
 
@@ -137,6 +134,13 @@ export class CommissionService {
       exchangeRate: priceResolution.exchangeRate,
       normalizedAmountCrc: priceResolution.normalizedAmountCrc,
     };
+  }
+
+  calculateRate(salesDiscount: number, priceDiscount: number): number {
+    const { baseRate, minRate } = this.readRates();
+    return this.roundRate(
+      Math.max(baseRate - salesDiscount - priceDiscount, minRate),
+    );
   }
 
   private async findActivePriceTier(

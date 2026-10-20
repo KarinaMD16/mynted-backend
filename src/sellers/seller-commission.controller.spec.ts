@@ -14,6 +14,13 @@ describe('SellerCommissionController', () => {
     ) as unknown[];
 
     expect(guards).toEqual(expect.arrayContaining([JwtAuthGuard, SellerGuard]));
+    expect(
+      Reflect.getMetadata(
+        GUARDS_METADATA,
+        // eslint-disable-next-line @typescript-eslint/unbound-method
+        SellerCommissionController.prototype.profile,
+      ) as unknown[],
+    ).toEqual(expect.arrayContaining([JwtAuthGuard, SellerGuard]));
   });
 
   it('passes authenticated userId and numeric amount to the service', async () => {
