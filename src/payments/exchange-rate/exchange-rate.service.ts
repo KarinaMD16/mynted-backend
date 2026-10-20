@@ -10,9 +10,14 @@ import { LessThanOrEqual, Repository } from 'typeorm';
 import { ExchangeRateSnapshot } from '../entities/exchange-rate-snapshot.entity';
 import { ExchangeRateType } from '../enums/exchange-rate-type.enum';
 import {
+  BCCR_SOURCE,
+  BCCR_EXCHANGE_RATE_PROVIDER,
   CRC_CURRENCY,
-  EXCHANGE_RATE_PROVIDER,
+  FRANKFURTER_SOURCE,
+  FRANKFURTER_EXCHANGE_RATE_PROVIDER,
   USD_CURRENCY,
+  isSupportedCurrency,
+  normalizeSupportedCurrency,
 } from './exchange-rate.constants';
 import { costaRicaToday, isIsoDate } from './date.utils';
 import {
@@ -50,8 +55,10 @@ export class ExchangeRateService {
   private readonly cache = new Map<string, CachedRate>();
 
   constructor(
-    @Inject(EXCHANGE_RATE_PROVIDER)
-    private readonly provider: ExchangeRateProvider,
+    @Inject(BCCR_EXCHANGE_RATE_PROVIDER)
+    private readonly bccrProvider: ExchangeRateProvider,
+    @Inject(FRANKFURTER_EXCHANGE_RATE_PROVIDER)
+    private readonly frankfurterProvider: ExchangeRateProvider,
     @InjectRepository(ExchangeRateSnapshot)
     private readonly snapshots: Repository<ExchangeRateSnapshot>,
     private readonly config: ConfigService,
@@ -61,38 +68,7 @@ export class ExchangeRateService {
     rateType = ExchangeRateType.SALE,
     date = costaRicaToday(),
   ): Promise<ExchangeRateResult> {
-    this.validateDate(date);
-    const key = this.cacheKey(rateType, date);
-    const cached = this.cache.get(key);
-    if (cached && cached.expiresAt > Date.now())
-      return { ...cached.result, fromCache: true };
-    this.cache.delete(key);
-
-    const exact = await this.findSnapshot(rateType, date, true);
-    const today = costaRicaToday();
-    const exactIsHistorical = date < today;
-    const exactIsFresh = exact ? this.isFresh(exact) : false;
-    if (exact && (exactIsHistorical || exactIsFresh))
-      return this.cacheResult(key, this.snapshotToResult(exact, false));
-
-    try {
-      const quote = await this.provider.getUsdCrcRate(rateType, date);
-      await this.saveSnapshot(quote);
-      return this.cacheResult(key, {
-        ...quote,
-        fromCache: false,
-        fallback: false,
-      });
-    } catch {
-      if (exact)
-        return this.cacheResult(key, this.snapshotToResult(exact, true));
-      const fallback = await this.findSnapshot(rateType, date, false);
-      if (fallback)
-        return this.cacheResult(key, this.snapshotToResult(fallback, true));
-      throw new ServiceUnavailableException(
-        'No hay una tasa de cambio disponible temporalmente',
-      );
-    }
+    return this.getRate(USD_CURRENCY, CRC_CURRENCY, { rateType, date });
   }
 
   async getRate(
@@ -102,27 +78,10 @@ export class ExchangeRateService {
   ): Promise<ExchangeRateResult> {
     const from = this.normalizeCurrency(fromCurrency);
     const to = this.normalizeCurrency(toCurrency);
-    if (from === USD_CURRENCY && to === CRC_CURRENCY) {
-      return this.getUsdCrcRate(
-        options.rateType ?? ExchangeRateType.SALE,
-        options.date ?? costaRicaToday(),
-      );
-    }
-    if (from === CRC_CURRENCY && to === USD_CURRENCY) {
-      const base = await this.getUsdCrcRate(
-        options.rateType ?? ExchangeRateType.SALE,
-        options.date ?? costaRicaToday(),
-      );
-      return {
-        ...base,
-        fromCurrency: CRC_CURRENCY,
-        toCurrency: USD_CURRENCY,
-        rate: 1 / base.rate,
-      };
-    }
+    const date = options.date ?? costaRicaToday();
+    this.validateDate(date);
+
     if (from === to) {
-      const date = options.date ?? costaRicaToday();
-      this.validateDate(date);
       return {
         fromCurrency: from,
         toCurrency: to,
@@ -130,14 +89,96 @@ export class ExchangeRateService {
         rateDate: date,
         source: 'INTERNAL',
         indicatorCode: 0,
-        rateType: options.rateType ?? ExchangeRateType.SALE,
+        rateType: options.rateType ?? ExchangeRateType.REFERENCE,
         fromCache: true,
         fallback: false,
       };
     }
-    throw new BadRequestException(
-      'Solo se admiten conversiones entre USD y CRC',
+
+    const isBccrPair =
+      (from === USD_CURRENCY && to === CRC_CURRENCY) ||
+      (from === CRC_CURRENCY && to === USD_CURRENCY);
+    if (isBccrPair && options.rateType === ExchangeRateType.REFERENCE) {
+      throw new BadRequestException('BCCR solo admite tasas purchase o sale');
+    }
+    const source = isBccrPair ? BCCR_SOURCE : FRANKFURTER_SOURCE;
+    const rateType = isBccrPair
+      ? (options.rateType ?? ExchangeRateType.SALE)
+      : ExchangeRateType.REFERENCE;
+    const providerFrom = isBccrPair ? USD_CURRENCY : from;
+    const providerTo = isBccrPair ? CRC_CURRENCY : to;
+    const key = this.cacheKey(source, from, to, rateType, date);
+    const cached = this.cache.get(key);
+    if (cached && cached.expiresAt > Date.now()) {
+      return {
+        ...this.adjustDirection(cached.result, from, to),
+        fromCache: true,
+      };
+    }
+    this.cache.delete(key);
+
+    const exact = await this.findSnapshot(
+      source,
+      providerFrom,
+      providerTo,
+      rateType,
+      date,
+      true,
     );
+    const today = costaRicaToday();
+    const exactIsHistorical = date < today;
+    const exactIsFresh = exact ? this.isFresh(exact, source) : false;
+    if (exact && (exactIsHistorical || exactIsFresh)) {
+      return this.cacheResult(
+        key,
+        this.snapshotToResult(exact, false),
+        from,
+        to,
+      );
+    }
+
+    const provider = isBccrPair ? this.bccrProvider : this.frankfurterProvider;
+    try {
+      const quote = await provider.getRate(providerFrom, providerTo, {
+        rateType,
+        date,
+      });
+      await this.saveSnapshot(quote);
+      return this.cacheResult(
+        key,
+        { ...quote, fromCache: false, fallback: false },
+        from,
+        to,
+      );
+    } catch {
+      if (exact) {
+        return this.cacheResult(
+          key,
+          this.snapshotToResult(exact, true),
+          from,
+          to,
+        );
+      }
+      const fallback = await this.findSnapshot(
+        source,
+        providerFrom,
+        providerTo,
+        rateType,
+        date,
+        false,
+      );
+      if (fallback) {
+        return this.cacheResult(
+          key,
+          this.snapshotToResult(fallback, true),
+          from,
+          to,
+        );
+      }
+      throw new ServiceUnavailableException(
+        'No hay una tasa de cambio disponible temporalmente',
+      );
+    }
   }
 
   async convert(
@@ -164,8 +205,11 @@ export class ExchangeRateService {
   }
 
   private normalizeCurrency(currency: string): string {
-    const normalized = currency.trim().toUpperCase();
-    if (normalized !== USD_CURRENCY && normalized !== CRC_CURRENCY) {
+    if (typeof currency !== 'string' || currency.trim() === '') {
+      throw new BadRequestException('La moneda es obligatoria');
+    }
+    const normalized = normalizeSupportedCurrency(currency);
+    if (!isSupportedCurrency(normalized)) {
       throw new BadRequestException(`Moneda no soportada: ${currency}`);
     }
     return normalized;
@@ -176,29 +220,51 @@ export class ExchangeRateService {
       throw new BadRequestException('La fecha debe usar YYYY-MM-DD');
   }
 
-  private cacheKey(rateType: ExchangeRateType, date: string): string {
-    return `${USD_CURRENCY}:${CRC_CURRENCY}:${rateType}:${date}`;
+  private cacheKey(
+    source: string,
+    from: string,
+    to: string,
+    rateType: ExchangeRateType,
+    date: string,
+  ): string {
+    return `${source}:${from}:${to}:${rateType.toUpperCase()}:${date}`;
   }
 
   private cacheResult(
     key: string,
     result: ExchangeRateResult,
+    from: string,
+    to: string,
   ): ExchangeRateResult {
-    const ttl = Number(this.config.get<string>('BCCR_CACHE_TTL_MS'));
-    const ttlMs = Number.isFinite(ttl) && ttl > 0 ? ttl : 1_800_000;
-    this.cache.set(key, { result, expiresAt: Date.now() + ttlMs });
-    return result;
+    const source = result.source;
+    const cacheTtlKey =
+      source === FRANKFURTER_SOURCE
+        ? 'FRANKFURTER_CACHE_TTL_MS'
+        : 'BCCR_CACHE_TTL_MS';
+    const configured = Number(this.config.get<string>(cacheTtlKey));
+    const ttlMs =
+      Number.isFinite(configured) && configured > 0 ? configured : 1_800_000;
+    const adjusted = this.adjustDirection(result, from, to);
+    this.cache.set(key, {
+      result,
+      expiresAt: Date.now() + ttlMs,
+    });
+    return adjusted;
   }
 
   private async findSnapshot(
+    source: string,
+    fromCurrency: string,
+    toCurrency: string,
     rateType: ExchangeRateType,
     date: string,
     exact: boolean,
   ): Promise<ExchangeRateSnapshot | null> {
     return this.snapshots.findOne({
       where: {
-        fromCurrency: USD_CURRENCY,
-        toCurrency: CRC_CURRENCY,
+        source,
+        fromCurrency,
+        toCurrency,
         rateType,
         rateDate: exact ? date : LessThanOrEqual(date),
       },
@@ -209,6 +275,7 @@ export class ExchangeRateService {
   private async saveSnapshot(quote: ExchangeRateQuote): Promise<void> {
     const existing = await this.snapshots.findOne({
       where: {
+        source: quote.source,
         fromCurrency: quote.fromCurrency,
         toCurrency: quote.toCurrency,
         rateType: quote.rateType,
@@ -225,6 +292,7 @@ export class ExchangeRateService {
       if (!this.isUniqueViolation(error)) throw error;
       const concurrent = await this.snapshots.findOne({
         where: {
+          source: quote.source,
           fromCurrency: quote.fromCurrency,
           toCurrency: quote.toCurrency,
           rateType: quote.rateType,
@@ -245,10 +313,15 @@ export class ExchangeRateService {
     });
   }
 
-  private isFresh(snapshot: ExchangeRateSnapshot): boolean {
+  private isFresh(snapshot: ExchangeRateSnapshot, source: string): boolean {
     if (!(snapshot.fetchedAt instanceof Date)) return false;
-    const ttl = Number(this.config.get<string>('BCCR_CACHE_TTL_MS'));
-    const ttlMs = Number.isFinite(ttl) && ttl > 0 ? ttl : 1_800_000;
+    const key =
+      source === FRANKFURTER_SOURCE
+        ? 'FRANKFURTER_CACHE_TTL_MS'
+        : 'BCCR_CACHE_TTL_MS';
+    const configured = Number(this.config.get<string>(key));
+    const ttlMs =
+      Number.isFinite(configured) && configured > 0 ? configured : 1_800_000;
     return snapshot.fetchedAt.getTime() + ttlMs > Date.now();
   }
 
@@ -265,8 +338,8 @@ export class ExchangeRateService {
     fallback: boolean,
   ): ExchangeRateResult {
     return {
-      fromCurrency: 'USD',
-      toCurrency: 'CRC',
+      fromCurrency: snapshot.fromCurrency,
+      toCurrency: snapshot.toCurrency,
       rate: snapshot.rate,
       rateDate: snapshot.rateDate,
       source: snapshot.source,
@@ -274,6 +347,22 @@ export class ExchangeRateService {
       rateType: snapshot.rateType,
       fromCache: false,
       fallback,
+    };
+  }
+
+  private adjustDirection(
+    result: ExchangeRateResult,
+    from: string,
+    to: string,
+  ): ExchangeRateResult {
+    if (result.fromCurrency === from && result.toCurrency === to) {
+      return { ...result };
+    }
+    return {
+      ...result,
+      fromCurrency: from,
+      toCurrency: to,
+      rate: 1 / result.rate,
     };
   }
 }

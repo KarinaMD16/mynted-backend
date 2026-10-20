@@ -12,8 +12,8 @@ import { PaymentTransaction } from './entities/payment-transaction.entity';
 import { TransactionStatus } from './enums/transaction-status.enum';
 import { ExchangeRateService } from './exchange-rate/exchange-rate.service';
 import {
-  CRC_CURRENCY,
-  USD_CURRENCY,
+  isSupportedCurrency,
+  normalizeSupportedCurrency,
 } from './exchange-rate/exchange-rate.constants';
 import { isIsoDate } from './exchange-rate/date.utils';
 import { PaymentHistoryQueryDto } from './dto/payment-history-query.dto';
@@ -391,8 +391,8 @@ export class PaymentHistoryService {
         'El usuario no tiene una moneda configurada',
       );
     }
-    const currency = value.trim().toUpperCase();
-    if (currency !== CRC_CURRENCY && currency !== USD_CURRENCY) {
+    const currency = normalizeSupportedCurrency(value);
+    if (!isSupportedCurrency(currency)) {
       throw new BadRequestException(`Moneda no soportada: ${currency}`);
     }
     return currency;

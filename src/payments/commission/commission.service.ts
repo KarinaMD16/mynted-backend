@@ -15,6 +15,10 @@ import {
 import { CommissionTier } from '../entities/commission-tier.entity';
 import { CommissionTierType } from '../enums/commission-tier-type.enum';
 import { ExchangeRateService } from '../exchange-rate/exchange-rate.service';
+import {
+  isSupportedCurrency,
+  normalizeSupportedCurrency,
+} from '../exchange-rate/exchange-rate.constants';
 
 export interface PriceTierResolution {
   tier: CommissionTier;
@@ -70,10 +74,11 @@ export class CommissionService {
       where: {
         type: CommissionTierType.PRICE,
         currency: normalizedCurrency,
+        isActive: true,
       },
     });
 
-    if (configuredTier) {
+    if (configuredTier?.isActive) {
       const tier = await this.findActivePriceTier(amount, normalizedCurrency);
       if (!tier) {
         throw new NotFoundException(
@@ -173,7 +178,11 @@ export class CommissionService {
     if (typeof currency !== 'string' || currency.trim() === '') {
       throw new BadRequestException('La moneda es obligatoria');
     }
-    return currency.trim().toUpperCase();
+    const normalized = normalizeSupportedCurrency(currency);
+    if (!isSupportedCurrency(normalized)) {
+      throw new BadRequestException(`Moneda no soportada: ${currency}`);
+    }
+    return normalized;
   }
 
   private validateAmount(amount: number): void {

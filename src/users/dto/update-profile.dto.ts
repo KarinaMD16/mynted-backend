@@ -2,6 +2,7 @@ import {
   IsBoolean,
   IsISO31661Alpha2,
   IsISO4217CurrencyCode,
+  IsIn,
   IsOptional,
   IsString,
   Matches,
@@ -11,6 +12,7 @@ import {
 import { Transform, TransformFnParams } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { parseBoolean } from '../../community/dto/create-community.dto';
+import { SUPPORTED_CURRENCIES } from '../../payments/exchange-rate/exchange-rate.constants';
 
 export class UpdateProfileDto {
   @ApiPropertyOptional({
@@ -63,6 +65,9 @@ export class UpdateProfileDto {
   @IsOptional()
   @IsISO4217CurrencyCode({
     message: 'La moneda debe ser un código ISO 4217 (p. ej. CRC, USD)',
+  })
+  @IsIn(SUPPORTED_CURRENCIES, {
+    message: 'La moneda no está soportada por Mynted',
   })
   currency?: string;
 

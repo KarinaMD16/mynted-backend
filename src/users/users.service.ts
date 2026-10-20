@@ -25,6 +25,10 @@ import { Review } from '../products/entities/review.entity';
 import { escapeLike } from '../common/escape-like';
 import { PublicUserDto } from './dto/public-user.dto';
 import { SearchUsersQueryDto } from './dto/search-users-query.dto';
+import {
+  isSupportedCurrency,
+  normalizeSupportedCurrency,
+} from '../payments/exchange-rate/exchange-rate.constants';
 
 @Injectable()
 export class UsersService {
@@ -361,7 +365,15 @@ export class UsersService {
       update.acceptedPrivacyPolicyAt = new Date();
     }
     if (meta.locale !== undefined) update.locale = meta.locale;
-    if (meta.currency !== undefined) update.currency = meta.currency;
+    if (meta.currency !== undefined) {
+      const currency = normalizeSupportedCurrency(meta.currency);
+      if (!isSupportedCurrency(currency)) {
+        throw new BadRequestException(
+          'La moneda no estÃ¡ soportada por Mynted',
+        );
+      }
+      update.currency = currency;
+    }
 
     if (Object.keys(update).length > 0) {
       await this.usersRepository.update(userId, update);

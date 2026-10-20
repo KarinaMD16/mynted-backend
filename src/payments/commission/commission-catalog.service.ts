@@ -6,6 +6,10 @@ import { CommissionTierType } from '../enums/commission-tier-type.enum';
 import { ExchangeRateService } from '../exchange-rate/exchange-rate.service';
 import { CommissionService } from './commission.service';
 import {
+  isSupportedCurrency,
+  normalizeSupportedCurrency,
+} from '../exchange-rate/exchange-rate.constants';
+import {
   CommissionMatrixRowDto,
   CommissionRateCellDto,
   PriceTierDisplayDto,
@@ -110,7 +114,11 @@ export class CommissionCatalogService {
     if (typeof value !== 'string' || value.trim() === '') {
       throw new BadRequestException('La moneda es obligatoria');
     }
-    return value.trim().toUpperCase();
+    const normalized = normalizeSupportedCurrency(value);
+    if (!isSupportedCurrency(normalized)) {
+      throw new BadRequestException(`Moneda no soportada: ${value}`);
+    }
+    return normalized;
   }
 
   private roundMoney(value: number): number {

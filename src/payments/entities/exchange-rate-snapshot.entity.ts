@@ -9,9 +9,10 @@ import { numericTransformer } from '../common/numeric.transformer';
 import { ExchangeRateType } from '../enums/exchange-rate-type.enum';
 
 @Entity('exchange_rate_snapshot')
-@Unique('UQ_exchange_rate_snapshot_pair_type_date', [
+@Unique('UQ_exchange_rate_snapshot_source_pair_type_date', [
   'fromCurrency',
   'toCurrency',
+  'source',
   'rateType',
   'rateDate',
 ])
@@ -39,8 +40,8 @@ export class ExchangeRateSnapshot {
   @Column({ type: 'varchar', length: 32 })
   source!: string;
 
-  @Column({ name: 'indicator_code', type: 'integer' })
-  indicatorCode!: number;
+  @Column({ name: 'indicator_code', type: 'integer', nullable: true })
+  indicatorCode!: number | null;
 
   @Column({ name: 'rate_type', type: 'enum', enum: ExchangeRateType })
   rateType!: ExchangeRateType;
