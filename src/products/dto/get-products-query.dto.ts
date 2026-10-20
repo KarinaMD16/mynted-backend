@@ -4,12 +4,14 @@ import {
   IsInt,
   IsISO31661Alpha2,
   IsISO4217CurrencyCode,
+  IsIn,
   IsOptional,
   Max,
   Min,
 } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { ProductCondition, ProductType } from '../entities/product.entity';
+import { SUPPORTED_CURRENCIES } from '../../payments/exchange-rate/exchange-rate.constants';
 
 export class GetProductsQueryDto {
   @ApiPropertyOptional({
@@ -72,6 +74,9 @@ export class GetProductsQueryDto {
   )
   @IsOptional()
   @IsISO4217CurrencyCode({ message: 'currency debe ser un código ISO 4217' })
+  @IsIn(SUPPORTED_CURRENCIES, {
+    message: 'currency no está soportada por Mynted',
+  })
   currency?: string;
 
   @ApiPropertyOptional({

@@ -20,6 +20,10 @@ import { Seller } from './entities/seller.entity';
 import { PaymentInfo } from './entities/payment-info.entity';
 import { RequestSellerDto } from './dto/request-seller.dto';
 import { UpdateSellerStatusDto } from './dto/update-seller-status.dto';
+import { CommissionService } from '../payments/commission/commission.service';
+import { CommissionEstimateResponseDto } from './dto/commission-estimate-response.dto';
+import { CommissionProfileResponseDto } from './dto/seller-commission-response.dto';
+import { CommissionCatalogService } from '../payments/commission/commission-catalog.service';
 
 interface PostgresError {
   code?: string;
@@ -31,10 +35,114 @@ export class SellersService {
     @InjectRepository(Seller)
     private readonly sellerRepository: Repository<Seller>,
     private readonly usersService: UsersService,
+    private readonly commissionService: CommissionService,
     private readonly dataSource: DataSource,
     @Optional()
     private readonly eventEmitter?: EventEmitter2,
+    @Optional()
+    private readonly commissionCatalogService?: CommissionCatalogService,
   ) {}
+
+  async estimateCommission(
+    userId: string,
+    amount: number,
+  ): Promise<CommissionEstimateResponseDto> {
+    const seller = await this.sellerRepository.findOne({
+      where: { userId },
+    });
+    if (!seller) {
+      throw new NotFoundException(
+        'No se encontrÃ³ el registro de vendedor para este usuario',
+      );
+    }
+
+    const user = await this.usersService.findById(userId);
+    if (typeof user.currency !== 'string' || user.currency.trim() === '') {
+      throw new BadRequestException(
+        'Configura tu moneda antes de estimar una comisiÃ³n',
+      );
+    }
+    const currency = user.currency.trim().toUpperCase();
+    const calculation = await this.commissionService.calculate(
+      amount,
+      currency,
+      seller.completedSalesCount,
+    );
+
+    return {
+      amount,
+      currency,
+      commissionRate: calculation.rate,
+      commissionAmount: calculation.commissionAmount,
+      sellerNet: calculation.sellerNet,
+      salesTierName: calculation.salesTier,
+      priceTierName: calculation.priceTier,
+      salesDiscount: calculation.salesDiscount,
+      priceDiscount: calculation.priceDiscount,
+    };
+  }
+
+  async getCommissionProfile(
+    userId: string,
+  ): Promise<CommissionProfileResponseDto> {
+    const user = await this.usersService.findById(userId);
+    if (typeof user.currency !== 'string' || user.currency.trim() === '') {
+      throw new BadRequestException(
+        'Configura tu moneda antes de consultar tu comisión',
+      );
+    }
+    const currency = user.currency.trim().toUpperCase();
+    const seller = await this.sellerRepository.findOne({ where: { userId } });
+    if (!seller) {
+      throw new NotFoundException(
+        'No se encontró el registro de vendedor para este usuario',
+      );
+    }
+
+    const salesTiers = await this.commissionCatalogService!.getSalesTiers();
+    const currentIndex = salesTiers.findIndex(
+      (tier) =>
+        tier.minValue <= seller.completedSalesCount &&
+        (tier.maxValue === null || seller.completedSalesCount < tier.maxValue),
+    );
+    if (currentIndex < 0) {
+      throw new NotFoundException(
+        'No existe un tier de ventas activo aplicable',
+      );
+    }
+    const currentTier = salesTiers[currentIndex];
+    const nextTier = salesTiers[currentIndex + 1] ?? null;
+    const priceResolution =
+      await this.commissionCatalogService!.getPriceTiers(currency);
+    const matrix = this.commissionCatalogService!.buildMatrix(
+      salesTiers,
+      priceResolution.tiers,
+    );
+
+    return {
+      currency,
+      completedSalesCount: seller.completedSalesCount,
+      currentTier: {
+        name: currentTier.name,
+        minValue: currentTier.minValue,
+        maxValue: currentTier.maxValue,
+        discount: currentTier.discount,
+      },
+      nextTier: nextTier
+        ? {
+            name: nextTier.name,
+            minValue: nextTier.minValue,
+            maxValue: nextTier.maxValue,
+            discount: nextTier.discount,
+          }
+        : null,
+      salesRemaining: nextTier
+        ? nextTier.minValue - seller.completedSalesCount
+        : null,
+      priceTiers: priceResolution.tiers,
+      matrix,
+    };
+  }
 
   async requestSeller(userId: string, dto: RequestSellerDto): Promise<User> {
     const user = await this.usersService.findById(userId);
