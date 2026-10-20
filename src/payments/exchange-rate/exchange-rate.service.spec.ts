@@ -31,14 +31,19 @@ describe('ExchangeRateService', () => {
   });
 
   function create(
-    provider: { getUsdCrcRate: jest.Mock },
+    provider: { getRate: jest.Mock },
     snapshots: Record<string, jest.Mock>,
   ) {
-    return new ExchangeRateService(provider, snapshots as never, config);
+    return new ExchangeRateService(
+      provider,
+      provider,
+      snapshots as never,
+      config,
+    );
   }
 
   it('fetches, persists and caches a quote, then converts USD to CRC', async () => {
-    const provider = { getUsdCrcRate: jest.fn().mockResolvedValue(quote) };
+    const provider = { getRate: jest.fn().mockResolvedValue(quote) };
     const snapshots = {
       findOne: jest
         .fn()
@@ -57,13 +62,13 @@ describe('ExchangeRateService', () => {
     });
     await service.getUsdCrcRate(ExchangeRateType.SALE, '2026-10-19');
 
-    expect(provider.getUsdCrcRate).toHaveBeenCalledTimes(1);
+    expect(provider.getRate).toHaveBeenCalledTimes(1);
     expect(snapshots.insert).toHaveBeenCalledTimes(1);
   });
 
   it('uses the latest persisted rate when BCCR is unavailable', async () => {
     const provider = {
-      getUsdCrcRate: jest.fn().mockRejectedValue(new Error('network')),
+      getRate: jest.fn().mockRejectedValue(new Error('network')),
     };
     const snapshots = {
       findOne: jest
@@ -85,7 +90,7 @@ describe('ExchangeRateService', () => {
 
   it('returns 503 when neither BCCR nor a persisted fallback is available', async () => {
     const provider = {
-      getUsdCrcRate: jest.fn().mockRejectedValue(new Error('network')),
+      getRate: jest.fn().mockRejectedValue(new Error('network')),
     };
     const snapshots = {
       findOne: jest.fn().mockResolvedValue(null),
@@ -99,7 +104,7 @@ describe('ExchangeRateService', () => {
   });
 
   it('inverts CRC to USD and rejects unsupported currencies', async () => {
-    const provider = { getUsdCrcRate: jest.fn().mockResolvedValue(quote) };
+    const provider = { getRate: jest.fn().mockResolvedValue(quote) };
     const snapshots = {
       findOne: jest.fn().mockResolvedValue(oldSnapshot()),
       insert: jest.fn(),
@@ -110,13 +115,13 @@ describe('ExchangeRateService', () => {
     await expect(
       service.convert(1000, 'CRC', 'USD', { date: '2026-10-19' }),
     ).resolves.toMatchObject({ amount: 2, currency: 'USD' });
-    await expect(service.getRate('EUR', 'CRC')).rejects.toThrow(
+    await expect(service.getRate('GBP', 'CRC')).rejects.toThrow(
       'Moneda no soportada',
     );
   });
 
   it('returns identity for CRC to CRC and USD to USD without the provider', async () => {
-    const provider = { getUsdCrcRate: jest.fn() };
+    const provider = { getRate: jest.fn() };
     const snapshots = {
       findOne: jest.fn(),
       insert: jest.fn(),
@@ -130,11 +135,11 @@ describe('ExchangeRateService', () => {
     await expect(
       service.getRate('USD', 'USD', { date: today }),
     ).resolves.toMatchObject({ rate: 1 });
-    expect(provider.getUsdCrcRate).not.toHaveBeenCalled();
+    expect(provider.getRate).not.toHaveBeenCalled();
   });
 
   it('uses SALE/318 by default and allows explicit PURCHASE/317', async () => {
-    const provider = { getUsdCrcRate: jest.fn().mockResolvedValue(quote) };
+    const provider = { getRate: jest.fn().mockResolvedValue(quote) };
     const snapshots = {
       findOne: jest.fn().mockResolvedValue(null),
       insert: jest.fn().mockResolvedValue(undefined),
@@ -148,20 +153,18 @@ describe('ExchangeRateService', () => {
       date: yesterday,
     });
 
-    expect(provider.getUsdCrcRate).toHaveBeenNthCalledWith(
-      1,
-      ExchangeRateType.SALE,
-      today,
-    );
-    expect(provider.getUsdCrcRate).toHaveBeenNthCalledWith(
-      2,
-      ExchangeRateType.PURCHASE,
-      yesterday,
-    );
+    expect(provider.getRate).toHaveBeenNthCalledWith(1, 'USD', 'CRC', {
+      rateType: ExchangeRateType.SALE,
+      date: today,
+    });
+    expect(provider.getRate).toHaveBeenNthCalledWith(2, 'USD', 'CRC', {
+      rateType: ExchangeRateType.PURCHASE,
+      date: yesterday,
+    });
   });
 
   it('reuses an exact historical snapshot without calling BCCR', async () => {
-    const provider = { getUsdCrcRate: jest.fn() };
+    const provider = { getRate: jest.fn() };
     const snapshots = {
       findOne: jest
         .fn()
@@ -174,11 +177,11 @@ describe('ExchangeRateService', () => {
     await expect(
       service.getUsdCrcRate(ExchangeRateType.SALE, yesterday),
     ).resolves.toMatchObject({ rate: 499, fallback: false });
-    expect(provider.getUsdCrcRate).not.toHaveBeenCalled();
+    expect(provider.getRate).not.toHaveBeenCalled();
   });
 
   it('reuses a fresh exact snapshot for today', async () => {
-    const provider = { getUsdCrcRate: jest.fn() };
+    const provider = { getRate: jest.fn() };
     const snapshots = {
       findOne: jest.fn().mockResolvedValue(oldSnapshot(501, today, new Date())),
       insert: jest.fn(),
@@ -189,12 +192,12 @@ describe('ExchangeRateService', () => {
     await expect(
       service.getUsdCrcRate(ExchangeRateType.SALE, today),
     ).resolves.toMatchObject({ rate: 501, fallback: false });
-    expect(provider.getUsdCrcRate).not.toHaveBeenCalled();
+    expect(provider.getRate).not.toHaveBeenCalled();
   });
 
   it('refreshes an expired exact snapshot for today', async () => {
     const provider = {
-      getUsdCrcRate: jest
+      getRate: jest
         .fn()
         .mockResolvedValue({ ...quote, rate: 502, rateDate: today }),
     };
@@ -210,13 +213,13 @@ describe('ExchangeRateService', () => {
     await expect(
       service.getUsdCrcRate(ExchangeRateType.SALE, today),
     ).resolves.toMatchObject({ rate: 502, fallback: false });
-    expect(provider.getUsdCrcRate).toHaveBeenCalledTimes(1);
+    expect(provider.getRate).toHaveBeenCalledTimes(1);
     expect(snapshots.update).toHaveBeenCalledWith(1, expect.anything());
   });
 
   it('uses an expired exact snapshot as fallback when today refresh fails', async () => {
     const provider = {
-      getUsdCrcRate: jest.fn().mockRejectedValue(new Error('down')),
+      getRate: jest.fn().mockRejectedValue(new Error('down')),
     };
     const snapshots = {
       findOne: jest
@@ -234,7 +237,7 @@ describe('ExchangeRateService', () => {
 
   it('updates an existing logical snapshot instead of inserting a duplicate', async () => {
     const provider = {
-      getUsdCrcRate: jest
+      getRate: jest
         .fn()
         .mockResolvedValue({ ...quote, rate: 503, rateDate: yesterday }),
     };
@@ -255,7 +258,7 @@ describe('ExchangeRateService', () => {
 
   it('handles PostgreSQL unique violation by updating the concurrent snapshot', async () => {
     const provider = {
-      getUsdCrcRate: jest
+      getRate: jest
         .fn()
         .mockResolvedValue({ ...quote, rate: 504, rateDate: yesterday }),
     };
@@ -276,7 +279,7 @@ describe('ExchangeRateService', () => {
 
   it('never uses a persisted fallback after the requested date', async () => {
     const provider = {
-      getUsdCrcRate: jest.fn().mockRejectedValue(new Error('down')),
+      getRate: jest.fn().mockRejectedValue(new Error('down')),
     };
     const snapshots = {
       findOne: jest
@@ -291,5 +294,81 @@ describe('ExchangeRateService', () => {
     await expect(
       service.getUsdCrcRate(ExchangeRateType.SALE, yesterday),
     ).rejects.toBeInstanceOf(ServiceUnavailableException);
+  });
+
+  it('routes BCCR pairs and other supported pairs to different providers', async () => {
+    const bccr = { getRate: jest.fn().mockResolvedValue(quote) };
+    const frankfurter = {
+      getRate: jest.fn().mockResolvedValue({
+        fromCurrency: 'EUR',
+        toCurrency: 'CRC',
+        rate: 580,
+        rateDate: today,
+        source: 'FRANKFURTER',
+        indicatorCode: null,
+        rateType: ExchangeRateType.REFERENCE,
+      }),
+    };
+    const snapshots = {
+      findOne: jest.fn().mockResolvedValue(null),
+      insert: jest.fn().mockResolvedValue(undefined),
+      update: jest.fn(),
+    };
+    const service = new ExchangeRateService(
+      bccr,
+      frankfurter,
+      snapshots as never,
+      config,
+    );
+
+    await service.getRate('USD', 'CRC', { date: today });
+    await service.getRate('EUR', 'CRC', { date: today });
+    await service.getRate('CRC', 'EUR', { date: today });
+    await service.getRate('EUR', 'EUR', { date: today });
+
+    expect(bccr.getRate).toHaveBeenCalledWith('USD', 'CRC', {
+      rateType: ExchangeRateType.SALE,
+      date: today,
+    });
+    expect(frankfurter.getRate).toHaveBeenCalledWith('EUR', 'CRC', {
+      rateType: ExchangeRateType.REFERENCE,
+      date: today,
+    });
+    expect(frankfurter.getRate).toHaveBeenCalledTimes(2);
+    expect(bccr.getRate).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not cross-fallback between BCCR and Frankfurter snapshots', async () => {
+    const bccr = {
+      getRate: jest.fn().mockRejectedValue(new Error('down')),
+    };
+    const frankfurter = { getRate: jest.fn() };
+    const snapshots = {
+      findOne: jest
+        .fn()
+        .mockImplementation((options: { where: { source?: string } }) =>
+          options.where.source === 'FRANKFURTER'
+            ? {
+                ...quote,
+                source: 'FRANKFURTER',
+                rateType: ExchangeRateType.REFERENCE,
+                rateDate: yesterday,
+              }
+            : null,
+        ),
+      insert: jest.fn(),
+      update: jest.fn(),
+    };
+    const service = new ExchangeRateService(
+      bccr,
+      frankfurter,
+      snapshots as never,
+      config,
+    );
+
+    await expect(
+      service.getRate('USD', 'CRC', { date: yesterday }),
+    ).rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(frankfurter.getRate).not.toHaveBeenCalled();
   });
 });

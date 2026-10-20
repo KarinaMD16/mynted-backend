@@ -17,6 +17,10 @@ import { CommissionTierType } from './enums/commission-tier-type.enum';
 import { CreateCommissionTierDto } from './dto/admin-commission-tier-create.dto';
 import { UpdateCommissionTierDto } from './dto/admin-commission-tier-update.dto';
 import { AdminCommissionTierQueryDto } from './dto/admin-commission-tier-query.dto';
+import {
+  isSupportedCurrency,
+  normalizeSupportedCurrency,
+} from './exchange-rate/exchange-rate.constants';
 
 @Injectable()
 export class AdminCommissionTiersService {
@@ -31,6 +35,9 @@ export class AdminCommissionTiersService {
       throw new BadRequestException(
         'Los tiers de ventas no pueden tener currency',
       );
+    }
+    if (query.currency && !isSupportedCurrency(query.currency)) {
+      throw new BadRequestException('La moneda no estÃ¡ soportada por Mynted');
     }
     const where: Record<string, unknown> = {};
     if (query.type) where.type = query.type;
@@ -142,6 +149,13 @@ export class AdminCommissionTiersService {
     }
     if (tier.type === CommissionTierType.PRICE && !tier.currency) {
       throw new BadRequestException('Los tiers de precio requieren currency');
+    }
+    if (
+      tier.type === CommissionTierType.PRICE &&
+      tier.currency &&
+      !isSupportedCurrency(normalizeSupportedCurrency(tier.currency))
+    ) {
+      throw new BadRequestException('La moneda no estÃ¡ soportada por Mynted');
     }
     if (!Number.isFinite(tier.minValue) || tier.minValue < 0) {
       throw new BadRequestException(

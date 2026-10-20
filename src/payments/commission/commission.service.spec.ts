@@ -162,21 +162,25 @@ describe('CommissionService', () => {
       expect(exchange.convert).toHaveBeenCalledWith(50, 'EUR', 'CRC');
     });
 
-    it('does not normalize a configured currency with no active matching tier', async () => {
+    it('falls back to CRC when a currency has only inactive tiers', async () => {
       const repository = {
         findOne: jest
           .fn()
+          .mockResolvedValueOnce({
+            ...tier('disabled', 0, CommissionTierType.PRICE, 'EUR'),
+            isActive: false,
+          })
           .mockResolvedValueOnce(
-            tier('disabled', 0, CommissionTierType.PRICE, 'USD'),
-          )
-          .mockResolvedValueOnce(null),
+            tier('Medio', 0.005, CommissionTierType.PRICE, 'CRC'),
+          ),
       };
-      const exchange = { convert: jest.fn() };
-
+      const exchange = {
+        convert: jest.fn().mockResolvedValue({ amount: 26000, rate: 520 }),
+      };
       await expect(
-        create(repository.findOne, exchange).getPriceTier(50, 'USD'),
-      ).rejects.toBeInstanceOf(NotFoundException);
-      expect(exchange.convert).not.toHaveBeenCalled();
+        create(repository.findOne, exchange).getPriceTier(50, 'EUR'),
+      ).resolves.toMatchObject({ tier: { name: 'Medio' } });
+      expect(exchange.convert).toHaveBeenCalledWith(50, 'EUR', 'CRC');
     });
 
     it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY])(

@@ -4,6 +4,7 @@ import {
   IsEnum,
   IsNumber,
   IsOptional,
+  IsIn,
   IsString,
   Length,
   Max,
@@ -11,6 +12,7 @@ import {
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { CommissionTierType } from '../enums/commission-tier-type.enum';
+import { SUPPORTED_CURRENCIES } from '../exchange-rate/exchange-rate.constants';
 
 export class CreateCommissionTierDto {
   @ApiProperty({ enum: CommissionTierType })
@@ -45,6 +47,9 @@ export class CreateCommissionTierDto {
   @IsOptional()
   @IsString()
   @Length(3, 3)
+  @IsIn(SUPPORTED_CURRENCIES, {
+    message: 'La moneda no está soportada por Mynted',
+  })
   currency?: string | null;
 
   @ApiProperty({ example: 0.01 })

@@ -1,7 +1,11 @@
 import { ConfigService } from '@nestjs/config';
 import { Injectable, Logger } from '@nestjs/common';
 import { ExchangeRateType } from '../enums/exchange-rate-type.enum';
-import { BCCR_SOURCE } from './exchange-rate.constants';
+import {
+  BCCR_SOURCE,
+  CRC_CURRENCY,
+  USD_CURRENCY,
+} from './exchange-rate.constants';
 import { costaRicaToday, isIsoDate, subtractDays } from './date.utils';
 import {
   ExchangeRateProvider,
@@ -36,7 +40,10 @@ export class BccrProviderError extends Error {
 @Injectable()
 export class BccrExchangeRateProvider implements ExchangeRateProvider {
   private readonly logger = new Logger(BccrExchangeRateProvider.name);
-  private readonly indicatorCodes: Record<ExchangeRateType, number> = {
+  private readonly indicatorCodes: Record<
+    Exclude<ExchangeRateType, ExchangeRateType.REFERENCE>,
+    number
+  > = {
     [ExchangeRateType.PURCHASE]: 317,
     [ExchangeRateType.SALE]: 318,
   };
@@ -49,6 +56,9 @@ export class BccrExchangeRateProvider implements ExchangeRateProvider {
   ): Promise<ExchangeRateQuote> {
     if (!isIsoDate(date))
       throw new BccrProviderError('La fecha debe usar YYYY-MM-DD');
+    if (rateType === ExchangeRateType.REFERENCE) {
+      throw new BccrProviderError('BCCR no soporta tasas reference');
+    }
 
     const token = this.config.get<string>('BCCR_TOKEN')?.trim();
     const baseUrl = (this.config.get<string>('BCCR_BASE_URL') ?? '')
@@ -59,7 +69,10 @@ export class BccrExchangeRateProvider implements ExchangeRateProvider {
 
     const lookbackDays = this.readPositiveNumber('BCCR_LOOKBACK_DAYS', 7);
     const fromDate = subtractDays(date, lookbackDays - 1);
-    const code = this.indicatorCodes[rateType];
+    const code =
+      rateType === ExchangeRateType.PURCHASE
+        ? this.indicatorCodes[ExchangeRateType.PURCHASE]
+        : this.indicatorCodes[ExchangeRateType.SALE];
     const url = `${baseUrl}/indicadoresEconomicos/${code}/series?fechaInicio=${fromDate.replaceAll('-', '/')}\u0026fechaFin=${date.replaceAll('-', '/')}\u0026idioma=ES`;
     const payload = await this.fetchJson(url, token);
 
@@ -104,6 +117,25 @@ export class BccrExchangeRateProvider implements ExchangeRateProvider {
       indicatorCode: code,
       rateType,
     };
+  }
+
+  async getRate(
+    fromCurrency: string,
+    toCurrency: string,
+    options: { rateType?: ExchangeRateType; date?: string } = {},
+  ): Promise<ExchangeRateQuote> {
+    const from = fromCurrency.trim().toUpperCase();
+    const to = toCurrency.trim().toUpperCase();
+    if (from !== USD_CURRENCY || to !== CRC_CURRENCY) {
+      throw new BccrProviderError('BCCR solo soporta USD a CRC');
+    }
+    if (options.rateType === ExchangeRateType.REFERENCE) {
+      throw new BccrProviderError('BCCR no soporta tasas reference');
+    }
+    return this.getUsdCrcRate(
+      options.rateType ?? ExchangeRateType.SALE,
+      options.date ?? costaRicaToday(),
+    );
   }
 
   private async fetchJson(url: string, token: string): Promise<BccrResponse> {

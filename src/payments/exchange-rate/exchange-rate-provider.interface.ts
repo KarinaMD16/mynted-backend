@@ -6,13 +6,14 @@ export interface ExchangeRateQuote {
   rate: number;
   rateDate: string;
   source: string;
-  indicatorCode: number;
+  indicatorCode: number | null;
   rateType: ExchangeRateType;
 }
 
 export interface ExchangeRateProvider {
-  getUsdCrcRate(
-    rateType: ExchangeRateType,
-    date?: string,
+  getRate(
+    fromCurrency: string,
+    toCurrency: string,
+    options?: { rateType?: ExchangeRateType; date?: string },
   ): Promise<ExchangeRateQuote>;
 }
