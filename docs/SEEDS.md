@@ -29,7 +29,7 @@ Login: cualquier `seed_*` con contraseña `Test1234`.
 - **2 vendedores** (`creeperqueen` y `blockbuilder_cr`) con **5 productos** de Minecraft en CRC.
 - Crea los tags `Minecraft`, `Fan Art` y `Videojuegos` si no existen.
 
-**Requiere** que exista la comunidad `mylittleponylatam` (se busca por slug o por nombre).
+**Requiere** que exista la comunidad `mylittleponylatam` (se busca por slug o por nombre). Si no existe, corre antes `seed-twilightbuns-products.js`, que la crea.
 
 ```bash
 node scripts/seed-community-users.js          # limpia lo anterior y siembra
@@ -44,9 +44,10 @@ Todo lo sembrado se identifica por el email `@seed.mynted.test`. `--clean` borra
 
 Publica **11 productos** de My Little Pony y Equestria Girls para el usuario `twilightbuns`, con fotos, descripciones y precios en CRC o USD según la moneda del usuario.
 
-- **Si `twilightbuns` no existe**, el seed lo crea como vendedor aprobado (`twilightbuns@mynted.test` / `Test1234`, moneda CRC) y lo une a *My Little Pony Latam* si esa comunidad existe.
-- **Si ya existe**, tiene que ser vendedor aprobado y tener moneda configurada. El script no modifica cuentas existentes y, si falta algo, dice qué es.
-- Si `twilightbuns` es miembro de una comunidad de ponis, publica ahí. Si no, publica sin comunidad (también se puede forzar con `--no-community`).
+- **Si `twilightbuns` no existe**, el seed lo crea como vendedor aprobado (`twilightbuns@mynted.test` / `Test1234`, moneda CRC).
+- **Si ya existe**, tiene que ser vendedor aprobado y tener moneda configurada. El script no modifica esa cuenta y, si falta algo, dice qué es.
+- **Comunidad *My Little Pony Latam***: si no existe, `twilightbuns` la crea por la API y queda como dueña (`owner`), con ícono, banner, tags y reglas. Si ya existe, `twilightbuns` se une como miembro.
+- Publica los productos dentro de esa comunidad. Con `--no-community` publica sin comunidad y no toca ninguna.
 - Es idempotente: no duplica productos que ya tienen el mismo título.
 
 ```bash
@@ -56,8 +57,8 @@ node scripts/seed-twilightbuns-products.js --clean    # borra (soft delete) sus 
 
 ## Orden recomendado
 
-1. `seed-community-users.js`, para que existan los usuarios y las comunidades.
-2. `seed-twilightbuns-products.js`, para que twilightbuns quede dentro de MLP Latam.
+1. `seed-twilightbuns-products.js`: crea a twilightbuns, la comunidad *My Little Pony Latam* (con twilightbuns como dueña) y su tienda.
+2. `seed-community-users.js`: agrega los demás usuarios a esa comunidad, crea la de Minecraft y siembra posts, hilos y productos.
 
 `seed-forum-test-data.js` es independiente y se puede correr en cualquier momento.
 

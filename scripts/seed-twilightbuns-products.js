@@ -12,7 +12,11 @@
 //     aprobado (email twilightbuns@mynted.test, contraseña Test1234, moneda CRC).
 //     Si ya existe, debe ser vendedor aprobado (role = 'seller', con fila en
 //     seller) y tener moneda (currency) configurada; el script no modifica
-//     cuentas existentes.
+//     esas cuentas.
+//   - Si la comunidad My Little Pony Latam (slug "mylittleponylatam") no
+//     existe, twilightbuns la crea por la API y queda como dueña (owner).
+//     Si ya existe y twilightbuns no es miembro, se une como member.
+//     Con --no-community no se toca ninguna comunidad.
 //
 // Uso (desde la raíz del repo):
 //   node scripts/seed-twilightbuns-products.js            -> publica lo que falte
@@ -190,6 +194,29 @@ function priceFor(product, currency) {
   return currency === 'CRC' ? product.crc : product.usd;
 }
 
+// Comunidad que twilightbuns crea si no existe (POST /communities la deja
+// como owner). Ícono y banner salen de sus propias fotos.
+const COMMUNITY = {
+  key: 'mylittleponylatam',
+  name: 'My Little Pony Latam',
+  slug: 'mylittleponylatam',
+  description:
+    'Comunidad latinoamericana de fans y coleccionistas de My Little Pony: G1 a G5, Equestria Girls, ' +
+    'fanart, teorías y debates. Compra, venta e intercambio de figuras, brushables, peluches y merch.',
+  category: 'My Little Pony',
+  tags: ['My Little Pony', 'Action Figures', 'Plushies'],
+  rules: [
+    'Sé amable: aquí cabemos todos los fans, de cualquier generación.',
+    'Si compartís arte de otra persona, dale crédito al artista.',
+    'Ventas e intercambios solo con fotos reales del producto.',
+    'Nada de spam, estafas ni links sospechosos.',
+    'Marcá los spoilers de episodios o películas nuevas.',
+  ],
+  image: 'mane6-brushables.jpg',
+  banner: 'set-5-figuras.jpg',
+};
+const normalize = (v) => v.toLowerCase().replace(/[^a-z0-9]/g, '');
+
 const findUser = async (c) =>
   (await c.query('select id, email, role, currency from users where lower(username) = lower($1)', [USERNAME])).rows[0];
 
@@ -221,16 +248,6 @@ async function createAccount(c) {
     );
     const tag = (await c.query(`select tag_id from tag where lower(name) = 'my little pony'`)).rows[0];
     if (tag) await c.query('insert into user_tag (user_id, tag_id) values ($1,$2) on conflict do nothing', [user.id, tag.tag_id]);
-    // Miembro de My Little Pony Latam (si existe) para publicar ahí sus productos.
-    const community = (await c.query('select id, slug, name from community where is_active = true')).rows.find(
-      (r) => [r.slug, r.name].some((v) => v.toLowerCase().replace(/[^a-z0-9]/g, '') === 'mylittleponylatam'),
-    );
-    if (community) {
-      await c.query(
-        `insert into community_profile (display_name, bio, user_id, community_id, role) values ($1,$2,$3,$4,'member')`,
-        [USERNAME, a.bio, user.id, community.id],
-      );
-    }
     await c.query('commit');
   } catch (e) {
     await c.query('rollback');
@@ -260,21 +277,55 @@ async function loadContext(c) {
     (await c.query('select tag_id, name from tag')).rows.map((r) => [r.name.trim().toLowerCase(), r.tag_id]),
   );
 
-  let community = null;
-  if (!NO_COMMUNITY) {
-    community = (
-      await c.query(
-        `select c.id, c.name from community c
-           join community_profile cp on cp.community_id = c.id
-          where cp.user_id = $1 and c.is_active = true
-            and (c.name ilike '%pony%' or c.name ilike '%mlp%' or c.name ilike '%poni%')
-          order by c.id limit 1`,
-        [user.id],
-      )
-    ).rows[0] || null;
-  }
+  return { user, sellerId: seller.seller_id, tags, community: null };
+}
 
-  return { user, sellerId: seller.seller_id, tags, community };
+const findCommunity = async (c) =>
+  (await c.query('select id, name, slug, is_active from community')).rows.find(
+    (r) => normalize(r.slug) === COMMUNITY.key || normalize(r.name) === COMMUNITY.key,
+  );
+
+// Crea My Little Pony Latam con twilightbuns como owner si no existe; si
+// existe, se asegura de que twilightbuns sea miembro para publicar ahí.
+async function ensureCommunity(c, ctx, token) {
+  let community = await findCommunity(c);
+
+  if (!community) {
+    const category = (
+      await c.query(
+        `select category_id from category where is_active = true
+          order by case when lower(name) = lower($1) then 0 when name ilike 'otra%' then 1 else 2 end, category_id limit 1`,
+        [COMMUNITY.category],
+      )
+    ).rows[0];
+    if (!category) fail('No hay categorías activas para crear la comunidad.');
+
+    const form = new FormData();
+    form.append('name', COMMUNITY.name);
+    form.append('description', COMMUNITY.description);
+    form.append('slug', COMMUNITY.slug);
+    form.append('isPrivate', 'false');
+    form.append('categoryId', String(category.category_id));
+    form.append('tagIds', JSON.stringify(resolveTagIds(COMMUNITY.tags, ctx.tags)));
+    form.append('rules', JSON.stringify(COMMUNITY.rules));
+    for (const field of ['image', 'banner']) {
+      const file = path.join(IMAGES_DIR, COMMUNITY[field]);
+      form.append(field, new Blob([fs.readFileSync(file)], { type: 'image/jpeg' }), COMMUNITY[field]);
+    }
+    await api('POST', '/communities', token, form);
+    community = await findCommunity(c);
+    console.log(`Comunidad "${community.name}" (#${community.id}) creada con ${USERNAME} como owner.`);
+  } else {
+    if (!community.is_active) fail(`La comunidad "${community.name}" está desactivada.`);
+    const joined = await c.query(
+      `insert into community_profile (display_name, bio, user_id, community_id, role)
+       select $1, '', $2, $3, 'member'
+        where not exists (select 1 from community_profile where user_id = $2 and community_id = $3)`,
+      [USERNAME, ctx.user.id, community.id],
+    );
+    if (joined.rowCount) console.log(`${USERNAME} se unió a "${community.name}" (#${community.id}).`);
+  }
+  return community;
 }
 
 function resolveTagIds(names, tags) {
@@ -375,7 +426,10 @@ async function seed(c, ctx, token) {
     const ctx = await loadContext(c);
     const token = accessToken(ctx.user);
     if (CLEAN) await clean(c, ctx, token);
-    else await seed(c, ctx, token);
+    else {
+      if (!NO_COMMUNITY) ctx.community = await ensureCommunity(c, ctx, token);
+      await seed(c, ctx, token);
+    }
   } finally {
     await c.end();
   }
