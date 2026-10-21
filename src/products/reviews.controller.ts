@@ -17,6 +17,7 @@ import {
   ApiBearerAuth,
   ApiOperation,
   ApiParam,
+  ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -43,8 +44,17 @@ export class ReviewsController {
   @ApiBearerAuth()
   @ApiOperation({
     summary:
-      'Reseñar un producto (rating 1-5 y comentario opcional). Una reseña por usuario y producto; el dueño no puede reseñar el suyo',
+      'Reseñar un producto comprado (rating 1-5 y comentario opcional). Requiere una compra completada del producto; una reseña por usuario y producto',
   })
+  @ApiResponse({ status: 201, description: 'Reseña creada' })
+  @ApiResponse({ status: 400, description: 'rating fuera de 1-5' })
+  @ApiResponse({
+    status: 403,
+    description:
+      'Es tu propio producto o no tienes una compra completada de él',
+  })
+  @ApiResponse({ status: 404, description: 'Producto no encontrado' })
+  @ApiResponse({ status: 409, description: 'Ya reseñaste este producto' })
   create(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: CreateReviewDto,

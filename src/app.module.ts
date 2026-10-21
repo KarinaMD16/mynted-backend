@@ -16,6 +16,7 @@ import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ScheduleModule } from '@nestjs/schedule';
 import { PaymentsModule } from './payments/payments.module';
 import { ConversationsModule } from './conversations/conversations.module';
+import { ReputationModule } from './reputation/reputation.module';
 
 @Module({
   imports: [
@@ -56,6 +57,7 @@ import { ConversationsModule } from './conversations/conversations.module';
     BadgesModule,
     PaymentsModule,
     ConversationsModule,
+    ReputationModule,
   ],
   controllers: [AppController],
   providers: [AppService],
