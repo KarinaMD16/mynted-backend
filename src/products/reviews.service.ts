@@ -12,6 +12,8 @@ import {
   GetReviewsQueryDto,
   UpdateReviewDto,
 } from './dto/review.dto';
+import { PaymentTransaction } from '../payments/entities/payment-transaction.entity';
+import { TransactionStatus } from '../payments/enums/transaction-status.enum';
 import { Product } from './entities/product.entity';
 import { Review } from './entities/review.entity';
 
@@ -31,6 +33,8 @@ export class ReviewsService {
     private readonly reviewRepository: Repository<Review>,
     @InjectRepository(Product)
     private readonly productRepository: Repository<Product>,
+    @InjectRepository(PaymentTransaction)
+    private readonly transactionRepository: Repository<PaymentTransaction>,
   ) {}
 
   async create(productId: number, userId: string, dto: CreateReviewDto) {
@@ -40,9 +44,18 @@ export class ReviewsService {
       throw new ForbiddenException('No puedes reseñar tu propio producto');
     }
 
-    // TODO: exigir una compra completada del producto cuando exista el
-    // módulo de transacciones. Por ahora cualquier usuario autenticado que
-    // no sea el dueño puede reseñar.
+    // Solo quien completó la compra del producto puede reseñarlo.
+    const hasPurchased = await this.transactionRepository.existsBy({
+      productId,
+      buyerId: userId,
+      status: TransactionStatus.COMPLETED,
+    });
+    if (!hasPurchased) {
+      throw new ForbiddenException(
+        'Solo puedes reseñar productos que hayas comprado',
+      );
+    }
+
     try {
       const review = await this.reviewRepository.save(
         this.reviewRepository.create({

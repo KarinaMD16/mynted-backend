@@ -7,6 +7,7 @@ import { Community } from '../community/entities/community.entity';
 import { CommunityProfile } from '../community/entities/community-profile.entity';
 import { Favorite } from '../community/entities/favorite.entity';
 import { Tag } from '../community/entities/tag.entity';
+import { PaymentTransaction } from '../payments/entities/payment-transaction.entity';
 import { Seller } from '../sellers/entities/seller.entity';
 import { UserTag } from '../user-tags/entities/user-tag.entity';
 import { Product } from './entities/product.entity';
@@ -35,6 +36,7 @@ import { ProductsService } from './products.service';
       ProductView,
       CommunityProfile,
       Favorite,
+      PaymentTransaction,
     ]),
     UsersModule,
     CloudinaryModule,
