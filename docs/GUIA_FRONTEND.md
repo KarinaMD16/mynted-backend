@@ -187,7 +187,9 @@ Renderiza según `type`.
   "tags": [{ "tagId": 1, "name": "..." }],
   "community": { "id": 1, "name": "..." },   // null si no tiene comunidad
   "seller": { "sellerId": 4, "userId": "6f1c2a9e-…", "displayName": "...", "photoUrl": "...", "isVerified": true },
-  "isSaved": false
+  "isSaved": false,
+  "notifyPrice": false,            // avisos de quien mira (false si no lo guardó)
+  "notifyAvailability": false
 }
 ```
 `seller.userId` es el `User.id` del vendedor: úsalo para enlazar a su perfil (`/users/:id`) o abrir un chat.
@@ -412,12 +414,13 @@ Reputación de un usuario: `GET /profiles/:perfilId/reputation` (sin sesión) �
 
 **¿Se actualiza al guardar?** Se recalcula en la **siguiente** petición; lo que ya está en pantalla no cambia solo. El front debe actualizar su estado local:
 
-- Guardar: `PUT /products/:productId/favorite` o `PUT /posts/:postId/favorite` → `{ itemId, itemType, isSaved: true }`
-- Quitar: `DELETE` a la misma ruta → `{ ..., isSaved: false }`
+- Guardar: `PUT /products/:productId/favorite` o `PUT /posts/:postId/favorite` → `{ itemId, itemType, isSaved: true }`. En productos, el body es opcional: `{ notifyPrice?, notifyAvailability? }` activa los avisos al guardar. La respuesta de productos trae también `notifyPrice` y `notifyAvailability`.
+- Cambiar avisos de un producto guardado: `PATCH /products/:productId/favorite` `{ notifyPrice?, notifyAvailability? }` → misma forma. No exige que el producto siga activo. 404 si no está guardado y 400 si no manda ningún campo.
+- Quitar: `DELETE` a la misma ruta → `{ ..., isSaved: false }`. Un producto se puede quitar aunque ya esté vendido, pausado o borrado.
 
-Recomendado: actualización optimista y revertir si hay error. Un producto solo se puede guardar si está `active` y visible. Si `confirmUnfavorite` es `true`, pide confirmación antes del `DELETE`.
+Recomendado: actualización optimista y revertir si hay error. Un producto solo se puede guardar si está `active` y visible, y si está en una comunidad privada, solo si eres miembro (si no, 404). Si `confirmUnfavorite` es `true`, pide confirmación antes del `DELETE`. Los avisos (los dos apagados por defecto) generan notificaciones de cambio de precio y de disponibilidad: ver [GUIA_NOTIFICACIONES_FRONTEND.md](GUIA_NOTIFICACIONES_FRONTEND.md).
 
-**`GET /favorites/me/ids?type=products|posts`** (def. `products`) → `{ type, ids: [..] }`: cárgalo una vez al iniciar sesión para pintar los corazones.
+**`GET /favorites/me/ids?type=products|posts`** (def. `products`) → `{ type, ids: [..] }`: cárgalo una vez al iniciar sesión para pintar los corazones. Con `type=products` trae además `items: [{ id, notifyPrice, notifyAvailability }]`.
 
 **`GET /favorites/me?type=all|posts|products&order=desc&page=&limit=`** → pantalla de Favoritos. Formato `data: [{type, date, post|product}]`; `date` = fecha en que se **guardó**. Tabs "Todo / Publicaciones / Tienda" = `type=all|posts|products`.
 

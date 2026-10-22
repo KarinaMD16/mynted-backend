@@ -181,6 +181,84 @@ describe('BadgesService', () => {
     });
   });
 
+  describe('badge.awarded', () => {
+    const withEvents = () => {
+      const ctx = setup();
+      const emit = jest.fn();
+      const service = new BadgesService(
+        ctx.badgeRepository as unknown as Repository<Badge>,
+        ctx.userBadgeRepository as unknown as Repository<UserBadge>,
+        ctx.profileBadgeRepository as unknown as Repository<CommunityProfileBadge>,
+        ctx.communityProfileRepository as unknown as Repository<CommunityProfile>,
+        ctx.dataSource as never,
+        { emit } as never,
+      );
+      return { ...ctx, service, emit };
+    };
+
+    it('se emite solo cuando el badge se inserta de verdad', async () => {
+      const ctx = withEvents();
+      ctx.badgeRepository.findOne.mockResolvedValue(
+        badge({
+          code: BADGE_CODES.VERIFIED_SELLER,
+          name: 'Vendedor verificado',
+          scope: BadgeScope.USER,
+          rarity: BadgeRarity.RARE,
+        }),
+      );
+
+      await ctx.service.awardToUser('user-id', BADGE_CODES.VERIFIED_SELLER);
+      expect(ctx.emit).toHaveBeenCalledWith('badge.awarded', {
+        userId: 'user-id',
+        badgeCode: BADGE_CODES.VERIFIED_SELLER,
+        badgeName: 'Vendedor verificado',
+        rarity: BadgeRarity.RARE,
+        scope: BadgeScope.USER,
+        communityProfileId: null,
+        communityId: null,
+      });
+
+      ctx.emit.mockClear();
+      ctx.userInsert.execute.mockResolvedValue({ identifiers: [] });
+      await ctx.service.awardToUser('user-id', BADGE_CODES.VERIFIED_SELLER);
+      expect(ctx.emit).not.toHaveBeenCalled();
+    });
+
+    it('en badges de comunidad resuelve el usuario y la comunidad del perfil', async () => {
+      const ctx = withEvents();
+      ctx.badgeRepository.findOne.mockResolvedValue(badge());
+      ctx.communityProfileRepository.findOne.mockResolvedValue({
+        communityProfileId: 9,
+        userId: 'owner-id',
+        communityId: 3,
+      });
+
+      await ctx.service.awardToCommunityProfile(9, BADGE_CODES.TALKATIVE);
+
+      expect(ctx.emit).toHaveBeenCalledWith(
+        'badge.awarded',
+        expect.objectContaining({
+          userId: 'owner-id',
+          badgeCode: BADGE_CODES.TALKATIVE,
+          communityProfileId: 9,
+          communityId: 3,
+        }),
+      );
+    });
+
+    it('el cron de aniversario no emite (inserta en lote por SQL)', async () => {
+      const ctx = withEvents();
+      ctx.badgeRepository.findOne.mockResolvedValue(
+        badge({ code: BADGE_CODES.ANNIVERSARY, threshold: 365 }),
+      );
+      ctx.dataSource.query.mockResolvedValue([{ count: 3 }]);
+
+      await ctx.service.awardAnniversaries();
+
+      expect(ctx.emit).not.toHaveBeenCalled();
+    });
+  });
+
   describe('threshold evaluation', () => {
     it('does not award talkative below the threshold read from the badge', async () => {
       const ctx = setup();

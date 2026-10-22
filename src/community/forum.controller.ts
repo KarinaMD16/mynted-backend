@@ -6,6 +6,7 @@ import {
   Optional,
   Param,
   ParseIntPipe,
+  Patch,
   Post,
   Put,
   Query,
@@ -44,6 +45,7 @@ import { GetFavoriteIdsQueryDto } from './dto/get-favorite-ids-query.dto';
 import { GetMyFeedQueryDto } from './dto/get-my-feed-query.dto';
 import { GetMyContentQueryDto } from './dto/get-my-content-query.dto';
 import { VoteDto } from './dto/vote.dto';
+import { FavoriteNotificationsDto } from './dto/favorite-notifications.dto';
 import { FavoriteItemType } from './entities/favorite.entity';
 import { ForumService } from './forum.service';
 import {
@@ -345,14 +347,38 @@ export class ForumController {
 
   @Put('products/:productId/favorite')
   @UseGuards(JwtAuthGuard)
+  @ApiOperation({
+    summary:
+      'Guardar un producto en favoritos. Body opcional { notifyPrice?, notifyAvailability? } para activar avisos (si ya estaba guardado, los actualiza). Productos de comunidades privadas: solo miembros',
+  })
   saveProduct(
     @Param('productId', ParseIntPipe) productId: number,
+    @Body() prefs: FavoriteNotificationsDto,
     @Req() request: AuthenticatedRequest,
   ) {
     return this.forumService.saveFavorite(
       FavoriteItemType.PRODUCT,
       productId,
       request.user.userId,
+      prefs,
+    );
+  }
+
+  @Patch('products/:productId/favorite')
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({
+    summary:
+      'Cambiar los avisos de un producto guardado (notifyPrice y/o notifyAvailability). No exige que siga activo. 404 si no está en favoritos',
+  })
+  updateProductFavorite(
+    @Param('productId', ParseIntPipe) productId: number,
+    @Body() prefs: FavoriteNotificationsDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.forumService.updateFavoriteNotifications(
+      productId,
+      request.user.userId,
+      prefs,
     );
   }
 

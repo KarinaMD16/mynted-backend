@@ -59,7 +59,14 @@ import {
   PUBLIC_PRODUCT_WHERE,
   computeFinalPrice,
   finalPriceWhere,
+  isProductAvailable,
+  unavailableReason,
 } from './product-pricing';
+import {
+  ProductAvailabilityChangedEvent,
+  ProductEvents,
+  ProductPriceChangedEvent,
+} from './product-events';
 import {
   applyDisplayPriceRange,
   applyProductSort,
@@ -159,6 +166,13 @@ export interface PublicProductFilters {
 // paginación. GetProductsQueryDto y la query de la tienda lo cumplen.
 export type PublicProductsQuery = PublicProductFilters &
   ProductPriceQueryDto & { page: number; limit: number };
+
+// Precio final y disponibilidad antes de un cambio, para avisar a quienes
+// guardaron el producto solo si de verdad cambiaron.
+interface FavoriteSnapshot {
+  finalPrice: number | null;
+  available: boolean;
+}
 
 export interface SellerTagCount {
   tagId: number;
@@ -1115,6 +1129,7 @@ export class ProductsService {
     if (product.seller.userId !== userId) {
       throw new ForbiddenException('No eres el dueño de este producto');
     }
+    const before = this.favoriteSnapshot(product);
 
     // Un producto publicado siempre conserva exactamente 3 tags; un borrador
     // puede tener menos hasta que se publique.
@@ -1216,6 +1231,7 @@ export class ProductsService {
         }
       }
     });
+    this.emitFavoriteChanges(product, before, userId);
 
     return this.findDetail(id, userId);
   }
@@ -1279,8 +1295,10 @@ export class ProductsService {
       );
     }
 
+    const before = this.favoriteSnapshot(product);
     product.status = dto.status;
     await this.productRepository.save(product);
+    this.emitFavoriteChanges(product, before, userId);
 
     return this.findDetail(id, userId);
   }
@@ -1288,8 +1306,59 @@ export class ProductsService {
   // Borrado lógico: el producto desaparece de listados y detalle pero se
   // conservan favoritos y conversaciones que lo referencian.
   async remove(id: number, userId: string): Promise<void> {
-    await this.getOwnedProduct(id, userId);
+    const product = await this.getOwnedProduct(id, userId);
+    const before = this.favoriteSnapshot(product);
     await this.productRepository.softDelete(id);
+    product.deletedAt = new Date();
+    this.emitFavoriteChanges(product, before, userId);
+  }
+
+  private favoriteSnapshot(product: Product): FavoriteSnapshot {
+    return {
+      finalPrice:
+        product.price == null
+          ? null
+          : computeFinalPrice(product.price, product.discountPercent),
+      available: isProductAvailable(product),
+    };
+  }
+
+  // Avisa (por evento, después del commit) solo si cambió el precio final o
+  // la disponibilidad. Un borrador no puede estar en favoritos.
+  private emitFavoriteChanges(
+    product: Product,
+    before: FavoriteSnapshot,
+    actorUserId: string,
+  ): void {
+    if (product.status === ProductStatus.DRAFT) return;
+    const after = this.favoriteSnapshot(product);
+
+    if (
+      before.finalPrice !== null &&
+      after.finalPrice !== null &&
+      before.finalPrice !== after.finalPrice
+    ) {
+      const event: ProductPriceChangedEvent = {
+        productId: product.id,
+        actorUserId,
+        productTitle: product.title,
+        currency: product.currency,
+        previousPrice: before.finalPrice,
+        newPrice: after.finalPrice,
+      };
+      this.eventEmitter?.emit(ProductEvents.PRICE_CHANGED, event);
+    }
+
+    if (before.available !== after.available) {
+      const event: ProductAvailabilityChangedEvent = {
+        productId: product.id,
+        actorUserId,
+        productTitle: product.title,
+        available: after.available,
+        reason: unavailableReason(product),
+      };
+      this.eventEmitter?.emit(ProductEvents.AVAILABILITY_CHANGED, event);
+    }
   }
 
   // Registra que el usuario vio el producto (alimenta /products/recommended).

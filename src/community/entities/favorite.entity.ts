@@ -2,6 +2,7 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  Index,
   JoinColumn,
   ManyToOne,
   PrimaryGeneratedColumn,
@@ -16,6 +17,8 @@ export enum FavoriteItemType {
 }
 
 @Entity('favorite')
+// Quién guardó un item (avisos a los que guardaron un producto).
+@Index('IDX_favorite_item_type_item_id', ['itemType', 'itemId'])
 @Unique('UQ_favorite_user_id_item_id_item_type', [
   'userId',
   'itemId',
@@ -40,4 +43,11 @@ export class Favorite {
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamp with time zone' })
   createdAt!: Date;
+
+  // Avisos del producto guardado (tarea 1044). Solo aplican a PRODUCT.
+  @Column({ name: 'notify_price', type: 'boolean', default: false })
+  notifyPrice!: boolean;
+
+  @Column({ name: 'notify_availability', type: 'boolean', default: false })
+  notifyAvailability!: boolean;
 }
