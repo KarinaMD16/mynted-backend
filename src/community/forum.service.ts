@@ -1389,6 +1389,7 @@ export class ForumService {
           : null,
         seller: {
           sellerId: product.seller.sellerId,
+          userId: product.seller.userId,
           displayName: product.seller.displayName,
           photoUrl: product.seller.user.photoUrl ?? null,
           isVerified: product.seller.isVerified,

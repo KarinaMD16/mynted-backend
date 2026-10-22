@@ -51,7 +51,7 @@ export class ReviewsController {
   @ApiResponse({
     status: 403,
     description:
-      'Es tu propio producto o no tienes una compra completada de él',
+      'Es tu propio producto, es un producto de intercambio (aún no se pueden reseñar) o no tienes una compra completada de él',
   })
   @ApiResponse({ status: 404, description: 'Producto no encontrado' })
   @ApiResponse({ status: 409, description: 'Ya reseñaste este producto' })

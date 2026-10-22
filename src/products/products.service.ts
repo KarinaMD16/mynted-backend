@@ -91,6 +91,7 @@ export interface TagProductCard {
   tags: { tagId: number; name: string }[];
   seller: {
     sellerId: number;
+    userId: string;
     displayName: string;
     photoUrl: string | null;
     isVerified: boolean;
@@ -758,6 +759,7 @@ export class ProductsService {
       })),
       seller: {
         sellerId: product.seller.sellerId,
+        userId: product.seller.userId,
         displayName: product.seller.displayName,
         photoUrl: product.seller.user.photoUrl ?? null,
         isVerified: product.seller.isVerified,
@@ -861,7 +863,8 @@ export class ProductsService {
   }
 
   // Detalle: producto + precio final + rating real + datos públicos del
-  // vendedor (foto y rating). Nunca expone userId ni paymentInfo del vendedor.
+  // vendedor (userId, foto y rating; nunca paymentInfo) + canComment (si quien
+  // mira puede reseñarlo, con la misma regla que POST /products/:id/reviews).
   // Un borrador solo lo puede ver su dueño; un producto borrado (soft delete)
   // devuelve 404.
   // Con displayCurrency (GET /products/:id) agrega el precio en esa moneda;
@@ -890,15 +893,15 @@ export class ProductsService {
       throw new NotFoundException('Producto no encontrado');
     }
 
-    const [rating, sellerRatings, saved] = await Promise.all([
+    const [rating, sellerRatings, saved, canComment] = await Promise.all([
       this.reviewsService.getProductRating(id),
       this.usersService.getSellerRatings([product.seller.sellerId]),
       this.getSavedProductIds(viewerId, [id]),
+      this.reviewsService.canUserReview(product, viewerId),
     ]);
     const sellerRating = sellerRatings.get(product.seller.sellerId);
-    // userId (y el user completo) se descartan: solo sale lo público.
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { user, userId, ...seller } = product.seller;
+    // El user completo se descarta: del vendedor solo sale lo público.
+    const { user, ...seller } = product.seller;
 
     const detail = {
       ...product,
@@ -915,6 +918,7 @@ export class ProductsService {
       },
       ratingAverage: rating.ratingAverage,
       reviewsCount: rating.reviewsCount,
+      canComment,
     };
     if (displayCurrency === undefined) return detail;
     const [withDisplay] = await this.priceDisplay.withDisplayPrices(

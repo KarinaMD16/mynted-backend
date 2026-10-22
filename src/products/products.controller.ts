@@ -314,7 +314,8 @@ export class ProductsController {
   @ApiBearerAuth()
   @ApiOperation({
     summary:
-      'Detalle de un producto: precio, descuento y precio final, rating, datos públicos del vendedor (foto y rating) e isSaved. Funciona sin sesión; un borrador solo lo ve su dueño',
+      'Detalle de un producto: precio, descuento y precio final, rating, datos públicos del vendedor (userId, foto y rating), isSaved y canComment ' +
+      '(true si quien mira puede reseñarlo: con sesión, no es el dueño, no es exchange, tiene compra completada y aún no lo reseñó). Funciona sin sesión; un borrador solo lo ve su dueño',
   })
   @ApiDisplayCurrencyHeader()
   findOne(

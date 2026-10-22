@@ -14,7 +14,7 @@ import {
 } from './dto/review.dto';
 import { PaymentTransaction } from '../payments/entities/payment-transaction.entity';
 import { TransactionStatus } from '../payments/enums/transaction-status.enum';
-import { Product } from './entities/product.entity';
+import { Product, ProductType } from './entities/product.entity';
 import { Review } from './entities/review.entity';
 
 export interface RatingSummary {
@@ -25,6 +25,34 @@ export interface RatingSummary {
 interface PostgresError {
   code?: string;
 }
+
+// Por qué un usuario no puede reseñar un producto, en el orden en que se
+// evalúa. Lo comparten POST /products/:id/reviews (como 403/409) y canComment
+// de GET /products/:id, así nunca divergen.
+export enum ReviewIneligibility {
+  OWN_PRODUCT = 'own_product',
+  EXCHANGE_PRODUCT = 'exchange_product',
+  NOT_PURCHASED = 'not_purchased',
+  ALREADY_REVIEWED = 'already_reviewed',
+}
+
+const INELIGIBILITY_ERRORS: Record<ReviewIneligibility, () => Error> = {
+  [ReviewIneligibility.OWN_PRODUCT]: () =>
+    new ForbiddenException('No puedes reseñar tu propio producto'),
+  [ReviewIneligibility.EXCHANGE_PRODUCT]: () =>
+    new ForbiddenException(
+      'Los productos de intercambio todavía no se pueden reseñar',
+    ),
+  [ReviewIneligibility.NOT_PURCHASED]: () =>
+    new ForbiddenException('Solo puedes reseñar productos que hayas comprado'),
+  [ReviewIneligibility.ALREADY_REVIEWED]: () =>
+    new ConflictException('Ya reseñaste este producto'),
+};
+
+// Lo mínimo del producto que necesita la regla.
+export type ReviewTarget = Pick<Product, 'id' | 'type'> & {
+  seller: Pick<Product['seller'], 'userId'>;
+};
 
 @Injectable()
 export class ReviewsService {
@@ -37,24 +65,13 @@ export class ReviewsService {
     private readonly transactionRepository: Repository<PaymentTransaction>,
   ) {}
 
+  // Orden: 404 producto, 403 dueño, 403 intercambio, 403 sin compra, 409
+  // duplicado.
   async create(productId: number, userId: string, dto: CreateReviewDto) {
     const product = await this.getReviewableProduct(productId);
 
-    if (product.seller.userId === userId) {
-      throw new ForbiddenException('No puedes reseñar tu propio producto');
-    }
-
-    // Solo quien completó la compra del producto puede reseñarlo.
-    const hasPurchased = await this.transactionRepository.existsBy({
-      productId,
-      buyerId: userId,
-      status: TransactionStatus.COMPLETED,
-    });
-    if (!hasPurchased) {
-      throw new ForbiddenException(
-        'Solo puedes reseñar productos que hayas comprado',
-      );
-    }
+    const ineligibility = await this.getReviewIneligibility(product, userId);
+    if (ineligibility) throw INELIGIBILITY_ERRORS[ineligibility]();
 
     try {
       const review = await this.reviewRepository.save(
@@ -67,14 +84,58 @@ export class ReviewsService {
       );
       return this.findOneMapped(review.id, userId);
     } catch (error: unknown) {
+      // Dos POST simultáneos: el índice único decide.
       if (
         error instanceof QueryFailedError &&
         (error.driverError as PostgresError).code === '23505'
       ) {
-        throw new ConflictException('Ya reseñaste este producto');
+        throw INELIGIBILITY_ERRORS[ReviewIneligibility.ALREADY_REVIEWED]();
       }
       throw error;
     }
+  }
+
+  // Regla única para reseñar: no ser el dueño, que el producto no sea de
+  // intercambio (aún no hay flujo para ellos), tener una compra completada y
+  // no haberlo reseñado. Solo usa consultas exists. null = puede reseñar.
+  async getReviewIneligibility(
+    product: ReviewTarget,
+    userId: string,
+  ): Promise<ReviewIneligibility | null> {
+    if (product.seller.userId === userId) {
+      return ReviewIneligibility.OWN_PRODUCT;
+    }
+    if (product.type === ProductType.EXCHANGE) {
+      return ReviewIneligibility.EXCHANGE_PRODUCT;
+    }
+
+    const [purchased, reviewed] = await Promise.all([
+      this.hasCompletedPurchase(product.id, userId),
+      this.reviewRepository.existsBy({
+        productId: product.id,
+        authorId: userId,
+      }),
+    ]);
+    if (!purchased) return ReviewIneligibility.NOT_PURCHASED;
+    if (reviewed) return ReviewIneligibility.ALREADY_REVIEWED;
+    return null;
+  }
+
+  // canComment de GET /products/:id. Sin sesión siempre false.
+  async canUserReview(
+    product: ReviewTarget,
+    viewerId: string | undefined,
+  ): Promise<boolean> {
+    if (!viewerId) return false;
+    return (await this.getReviewIneligibility(product, viewerId)) === null;
+  }
+
+  hasCompletedPurchase(productId: number, userId: string): Promise<boolean> {
+    return this.transactionRepository.existsBy({
+      productId,
+      buyerId: userId,
+      status: TransactionStatus.COMPLETED,
+    });
   }
 
   async findByProduct(
@@ -147,6 +208,7 @@ export class ReviewsService {
       select: {
         id: true,
         status: true,
+        type: true,
         seller: { sellerId: true, userId: true },
       },
     });
