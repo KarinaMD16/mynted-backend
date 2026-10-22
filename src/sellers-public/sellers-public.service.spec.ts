@@ -4,6 +4,7 @@ import { UserBadge } from '../badges/entities/user-badge.entity';
 import { ProductSort } from '../products/dto/product-price-query.dto';
 import { ProductStatus } from '../products/entities/product.entity';
 import { ProductsService } from '../products/products.service';
+import { ResponseTimeService } from '../response-time/response-time.service';
 import { Seller } from '../sellers/entities/seller.entity';
 import { UsersService } from '../users/users.service';
 import { GetSellerProductsQueryDto } from './dto/get-seller-products-query.dto';
@@ -33,6 +34,7 @@ describe('SellersPublicService', () => {
 
   let service: SellersPublicService;
   let sellerRepository: { findOne: jest.Mock };
+  let responseTimeService: { getForUser: jest.Mock };
   let userBadgeRepository: { findOne: jest.Mock };
   let usersService: { getSellerRatings: jest.Mock };
   let productsService: {
@@ -43,6 +45,11 @@ describe('SellersPublicService', () => {
 
   beforeEach(() => {
     sellerRepository = { findOne: jest.fn().mockResolvedValue(seller()) };
+    responseTimeService = {
+      getForUser: jest
+        .fn()
+        .mockResolvedValue({ medianMinutes: 20, sampleSize: 3 }),
+    };
     userBadgeRepository = { findOne: jest.fn().mockResolvedValue(null) };
     usersService = {
       getSellerRatings: jest
@@ -63,6 +70,7 @@ describe('SellersPublicService', () => {
       userBadgeRepository as unknown as Repository<UserBadge>,
       usersService as unknown as UsersService,
       productsService as unknown as ProductsService,
+      responseTimeService as unknown as ResponseTimeService,
     );
   });
 
@@ -82,8 +90,9 @@ describe('SellersPublicService', () => {
         completedSalesCount: 15,
         activeProductsCount: 8,
         sellerSince: approvedAt,
-        responseTime: null,
+        responseTime: { medianMinutes: 20, sampleSize: 3 },
       });
+      expect(responseTimeService.getForUser).toHaveBeenCalledWith('user-4');
       expect(usersService.getSellerRatings).toHaveBeenCalledWith([4]);
       expect(productsService.countPublicBySeller).toHaveBeenCalledWith([4]);
       expect(userBadgeRepository.findOne).not.toHaveBeenCalled();

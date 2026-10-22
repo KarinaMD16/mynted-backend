@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { UserBadge } from '../badges/entities/user-badge.entity';
 import { PricingModule } from '../pricing/pricing.module';
 import { ProductsModule } from '../products/products.module';
+import { ResponseTimeModule } from '../response-time/response-time.module';
 import { Seller } from '../sellers/entities/seller.entity';
 import { UsersModule } from '../users/users.module';
 import { SellersPublicController } from './sellers-public.controller';
@@ -16,6 +17,7 @@ import { SellersPublicService } from './sellers-public.service';
     UsersModule,
     ProductsModule,
     PricingModule,
+    ResponseTimeModule,
   ],
   controllers: [SellersPublicController],
   providers: [SellersPublicService],

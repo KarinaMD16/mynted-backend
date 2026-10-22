@@ -19,6 +19,7 @@ import { DataSource, Repository } from 'typeorm';
 import { JwtStrategy } from '../src/auth/strategies/jwt.strategy';
 import { CloudinaryService } from '../src/cloudinary/cloudinary.service';
 import { Category } from '../src/community/entities/category.entity';
+import { Conversation } from '../src/conversations/entities/conversation.entity';
 import { Community } from '../src/community/entities/community.entity';
 import { Tag } from '../src/community/entities/tag.entity';
 import { ExchangeRateService } from '../src/payments/exchange-rate/exchange-rate.service';
@@ -64,6 +65,7 @@ describe('Tienda pública del vendedor (e2e)', () => {
   let store: Seller;
   let pendingStore: Seller;
   let inactiveStore: Seller;
+  let fewStore: Seller;
   const tags: Record<string, number> = {};
   const products: Record<string, number> = {};
 
@@ -259,6 +261,75 @@ describe('Tienda pública del vendedor (e2e)', () => {
         comment: null,
       },
     ]);
+
+    // Tiempo de respuesta. Fechas relativas a hace 2 días; las conversaciones
+    // usan productos distintos (único por comprador, vendedor y producto).
+    await seed('borrado', store, {});
+    await repo(Product).softDelete(products.borrado);
+    const DAY = 24 * 60;
+    const conversation = async (
+      productKey: string,
+      owner: User,
+      messages: [User, number][],
+    ) => {
+      const { id } = await repo(Conversation).save({
+        buyerId: buyer.id,
+        sellerId: owner.id,
+        productId: products[productKey],
+      });
+      for (const [sender, minutesAgo] of messages) {
+        await dataSource.query(
+          `INSERT INTO message (conversation_id, sender_id, type, content, created_at)
+           VALUES ($1, $2, 'text', 'hola', now() - make_interval(mins => $3))`,
+          [id, sender.id, minutesAgo],
+        );
+      }
+    };
+    const T = 2 * DAY;
+    // Responde a los 10 minutos.
+    await conversation('a', seller, [
+      [buyer, T],
+      [seller, T - 10],
+      [seller, T - 15],
+    ]);
+    // El vendedor escribe primero (se ignora); responde 30 minutos después
+    // del primer mensaje del comprador.
+    await conversation('b', seller, [
+      [seller, T + 5],
+      [buyer, T],
+      [buyer, T - 1],
+      [seller, T - 30],
+    ]);
+    // Sin respuesta: no cuenta.
+    await conversation('privado', seller, [[buyer, T]]);
+    // Producto borrado: cuenta (responde a los 20 minutos).
+    await conversation('borrado', seller, [
+      [buyer, T],
+      [seller, T - 20],
+    ]);
+    // Fuera de la ventana de 90 días: no cuenta.
+    await conversation('vendido', seller, [
+      [buyer, 100 * DAY],
+      [seller, 100 * DAY - 1],
+    ]);
+
+    // Tienda con solo 2 conversaciones respondidas: responseTime null.
+    const [fewUser] = await repo(User).save([
+      {
+        email: 'few@e2e.test',
+        username: 'pocos',
+        role: UserRole.SELLER,
+        sellerRequestStatus: SellerRequestStatus.APPROVED,
+      },
+    ]);
+    fewStore = await newStore(fewUser, { isVerified: true });
+    for (const key of ['pocos-1', 'pocos-2']) {
+      await seed(key, fewStore, {});
+      await conversation(key, fewUser, [
+        [buyer, T],
+        [fewUser, T - 5],
+      ]);
+    }
   });
 
   afterAll(async () => {
@@ -283,7 +354,8 @@ describe('Tienda pública del vendedor (e2e)', () => {
         completedSalesCount: 3,
         activeProductsCount: 2,
         sellerSince: '2026-09-01T12:00:00.000Z',
-        responseTime: null,
+        // Mediana de 10, 30 y 20 minutos.
+        responseTime: { medianMinutes: 20, sampleSize: 3 },
       });
     });
 
@@ -419,7 +491,12 @@ describe('Tienda pública del vendedor (e2e)', () => {
         .expect(200);
 
       expect(res.body).toMatchObject({
-        seller: { ratingAverage: 5, reviewsCount: 1 },
+        seller: {
+          sellerId: store.sellerId,
+          ratingAverage: 5,
+          reviewsCount: 1,
+          responseTime: { medianMinutes: 20, sampleSize: 3 },
+        },
       });
     });
 
@@ -444,6 +521,59 @@ describe('Tienda pública del vendedor (e2e)', () => {
         Date.now() -
           new Date((res.body as { sellerSince: string }).sellerSince).getTime(),
       ).toBeLessThan(60_000);
+    });
+  });
+
+  describe('tiempo de respuesta', () => {
+    it('null si la tienda tiene menos de 3 conversaciones respondidas', async () => {
+      const res = await http().get(`/sellers/${fewStore.sellerId}`).expect(200);
+
+      expect(res.body).toMatchObject({ responseTime: null });
+    });
+
+    it('aparece en el perfil por username', async () => {
+      const res = await http()
+        .get(`/users/by-username/${seller.username}`)
+        .set('Cookie', cookieFor(buyer))
+        .expect(200);
+
+      expect(res.body).toMatchObject({
+        seller: { responseTime: { medianMinutes: 20, sampleSize: 3 } },
+      });
+    });
+
+    it('GET /users/me agrega seller al vendedor aprobado sin cambiar el resto', async () => {
+      const res = await http()
+        .get('/users/me')
+        .set('Cookie', cookieFor(seller))
+        .expect(200);
+
+      expect(res.body).toMatchObject({
+        id: seller.id,
+        email: 'seller@e2e.test',
+        currency: 'CRC',
+        seller: {
+          sellerId: store.sellerId,
+          displayName: 'Tienda karina',
+          isVerified: true,
+          ratingAverage: 5,
+          reviewsCount: 1,
+          responseTime: { medianMinutes: 20, sampleSize: 3 },
+        },
+      });
+      // Los campos @Exclude siguen ocultos.
+      expect(res.body).not.toHaveProperty('passwordHash');
+      expect(res.body).not.toHaveProperty('resetPasswordTokenHash');
+    });
+
+    it('GET /users/me de quien no es vendedor no trae seller', async () => {
+      const res = await http()
+        .get('/users/me')
+        .set('Cookie', cookieFor(buyer))
+        .expect(200);
+
+      expect(res.body).toMatchObject({ id: buyer.id });
+      expect(res.body).not.toHaveProperty('seller');
     });
   });
 });

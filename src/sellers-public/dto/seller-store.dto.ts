@@ -1,19 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-
-export class ResponseTimeDto {
-  @ApiProperty({
-    example: 42,
-    description:
-      'Mediana, en minutos (redondeada), entre el primer mensaje del comprador y la primera respuesta del vendedor',
-  })
-  medianMinutes!: number;
-
-  @ApiProperty({
-    example: 12,
-    description: 'Conversaciones respondidas en los últimos 90 días',
-  })
-  sampleSize!: number;
-}
+import { ResponseTimeDto } from '../../response-time/response-time.dto';
 
 // Perfil público de la tienda. Nunca incluye payment_info ni el correo.
 export class SellerStoreDto {

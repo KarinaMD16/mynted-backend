@@ -9,6 +9,7 @@ import {
   ProductListItem,
   ProductsService,
 } from '../products/products.service';
+import { ResponseTimeService } from '../response-time/response-time.service';
 import { Seller } from '../sellers/entities/seller.entity';
 import { UsersService } from '../users/users.service';
 import { GetSellerProductsQueryDto } from './dto/get-seller-products-query.dto';
@@ -28,15 +29,18 @@ export class SellersPublicService {
     private readonly userBadgeRepository: Repository<UserBadge>,
     private readonly usersService: UsersService,
     private readonly productsService: ProductsService,
+    private readonly responseTimeService: ResponseTimeService,
   ) {}
 
   async getStore(sellerId: number): Promise<SellerStoreDto> {
     const seller = await this.findPublicSeller(sellerId);
-    const [ratings, productCounts, sellerSince] = await Promise.all([
-      this.usersService.getSellerRatings([seller.sellerId]),
-      this.productsService.countPublicBySeller([seller.sellerId]),
-      this.getSellerSince(seller),
-    ]);
+    const [ratings, productCounts, sellerSince, responseTime] =
+      await Promise.all([
+        this.usersService.getSellerRatings([seller.sellerId]),
+        this.productsService.countPublicBySeller([seller.sellerId]),
+        this.getSellerSince(seller),
+        this.responseTimeService.getForUser(seller.userId),
+      ]);
     const rating = ratings.get(seller.sellerId);
 
     return {
@@ -55,7 +59,7 @@ export class SellersPublicService {
       completedSalesCount: seller.completedSalesCount,
       activeProductsCount: productCounts.get(seller.sellerId) ?? 0,
       sellerSince,
-      responseTime: null,
+      responseTime,
     };
   }
 

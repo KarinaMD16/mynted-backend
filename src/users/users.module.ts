@@ -8,12 +8,14 @@ import { UsersController } from './users.controller';
 import { CloudinaryModule } from '../cloudinary/cloudinary.module';
 import { SuperAdminGuard } from '../auth/guards/super-admin.guard';
 import { AuthModule } from '../auth/auth.module';
+import { ResponseTimeModule } from '../response-time/response-time.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([User, UserOAuthAccount, Seller]),
     CloudinaryModule,
     forwardRef(() => AuthModule),
+    ResponseTimeModule,
   ],
   providers: [UsersService, SuperAdminGuard],
   controllers: [UsersController],
