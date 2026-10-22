@@ -3,12 +3,15 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { DataSource, QueryFailedError, Repository } from 'typeorm';
 import { CommunityProfile } from '../community/entities/community-profile.entity';
 import { CommunityProfileRole } from '../community/entities/community-profile.entity';
+import { BadgeAwardedEvent, BadgeAwardEvents } from './badge-events';
 import { BADGE_CODES, DERIVED_BADGE_CODES } from './badges.config';
 import { Badge, BadgeRarity, BadgeScope } from './entities/badge.entity';
 import { CommunityProfileBadge } from './entities/community-profile-badge.entity';
@@ -59,6 +62,7 @@ export class BadgesService {
     @InjectRepository(CommunityProfile)
     private readonly communityProfileRepository: Repository<CommunityProfile>,
     private readonly dataSource: DataSource,
+    @Optional() private readonly eventEmitter?: EventEmitter2,
   ) {}
 
   // ---------------------------------------------------------------------
@@ -77,7 +81,9 @@ export class BadgesService {
         .values({ userId, badgeId: badge.id })
         .orIgnore()
         .execute();
-      return (result.identifiers?.length ?? 0) > 0;
+      const awarded = (result.identifiers?.length ?? 0) > 0;
+      if (awarded) this.emitAwarded(badge, userId, null, null);
+      return awarded;
     } catch (error: unknown) {
       if (this.isUniqueViolation(error)) return false;
       throw error;
@@ -99,11 +105,44 @@ export class BadgesService {
         .values({ communityProfileId, badgeId: badge.id })
         .orIgnore()
         .execute();
-      return (result.identifiers?.length ?? 0) > 0;
+      const awarded = (result.identifiers?.length ?? 0) > 0;
+      if (awarded) {
+        const profile = await this.communityProfileRepository.findOne({
+          where: { communityProfileId },
+          select: { communityProfileId: true, userId: true, communityId: true },
+        });
+        if (profile) {
+          this.emitAwarded(
+            badge,
+            profile.userId,
+            communityProfileId,
+            profile.communityId,
+          );
+        }
+      }
+      return awarded;
     } catch (error: unknown) {
       if (this.isUniqueViolation(error)) return false;
       throw error;
     }
+  }
+
+  private emitAwarded(
+    badge: Badge,
+    userId: string,
+    communityProfileId: number | null,
+    communityId: number | null,
+  ): void {
+    const event: BadgeAwardedEvent = {
+      userId,
+      badgeCode: badge.code,
+      badgeName: badge.name,
+      rarity: badge.rarity,
+      scope: badge.scope,
+      communityProfileId,
+      communityId,
+    };
+    this.eventEmitter?.emit(BadgeAwardEvents.AWARDED, event);
   }
 
   // Devuelve null si el badge está inactivo (no se otorga). Lanza si el badge

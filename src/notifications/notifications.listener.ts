@@ -2,6 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { DataSource } from 'typeorm';
 import {
+  BadgeAwardedEvent,
+  BadgeAwardEvents,
   BadgeEvents,
   ReplyCreatedEvent,
   SellerApprovedEvent,
@@ -352,6 +354,35 @@ export class NotificationsListener {
         });
       }
       await this.notificationsService.notify(inputs);
+    });
+  }
+
+  // Solo badges otorgados por evento (el cron y el backfill no lo emiten).
+  @OnEvent(BadgeAwardEvents.AWARDED, { async: true })
+  onBadgeAwarded(event: BadgeAwardedEvent) {
+    return this.safely(BadgeAwardEvents.AWARDED, async () => {
+      const [community] =
+        event.communityId === null
+          ? []
+          : await this.communityOf(event.communityId);
+      await this.notificationsService.notify([
+        {
+          userId: event.userId,
+          type: NotificationType.BADGE_AWARDED,
+          data: {
+            badgeCode: event.badgeCode,
+            badgeName: event.badgeName,
+            rarity: event.rarity,
+            scope: event.scope,
+            ...(community
+              ? { communityProfileId: event.communityProfileId, ...community }
+              : {}),
+          },
+          message: community
+            ? `Ganaste el badge "${event.badgeName}" en ${community.communityName}`
+            : `Ganaste el badge "${event.badgeName}"`,
+        },
+      ]);
     });
   }
 

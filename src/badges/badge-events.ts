@@ -13,6 +13,24 @@ export const BadgeEvents = {
   FAVORITE_SAVED: 'favorite.saved',
 } as const;
 
+// Un badge se otorgó de verdad (insertado) por un evento. No lo emiten el
+// cron de aniversario ni el backfill, que insertan en lote por SQL.
+export const BadgeAwardEvents = {
+  AWARDED: 'badge.awarded',
+} as const;
+
+export interface BadgeAwardedEvent {
+  // Usuario que recibe el badge (para los de comunidad, el dueño del perfil).
+  userId: string;
+  badgeCode: string;
+  badgeName: string;
+  rarity: string;
+  scope: string;
+  // Solo en badges de comunidad.
+  communityProfileId: number | null;
+  communityId: number | null;
+}
+
 export interface UserRegisteredEvent {
   userId: string;
 }

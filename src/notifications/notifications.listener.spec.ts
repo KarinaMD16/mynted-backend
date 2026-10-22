@@ -273,4 +273,59 @@ describe('NotificationsListener', () => {
       expect(notify).not.toHaveBeenCalled();
     });
   });
+
+  describe('badge.awarded', () => {
+    const base = {
+      userId: 'user-id',
+      badgeCode: 'talkative',
+      badgeName: 'Conversador',
+      rarity: 'uncommon',
+      scope: 'community',
+    };
+
+    it('badge de usuario: sin datos de comunidad', async () => {
+      await listener.onBadgeAwarded({
+        ...base,
+        scope: 'user',
+        communityProfileId: null,
+        communityId: null,
+      });
+
+      expect(query).not.toHaveBeenCalled();
+      expect(notify).toHaveBeenCalledWith([
+        expect.objectContaining({
+          userId: 'user-id',
+          type: NotificationType.BADGE_AWARDED,
+          data: {
+            badgeCode: 'talkative',
+            badgeName: 'Conversador',
+            rarity: 'uncommon',
+            scope: 'user',
+          },
+        }),
+      ]);
+    });
+
+    it('badge de comunidad: agrega la comunidad', async () => {
+      query.mockResolvedValue([
+        { communityId: 3, communityName: 'Funko', communitySlug: 'funko' },
+      ]);
+
+      await listener.onBadgeAwarded({
+        ...base,
+        communityProfileId: 9,
+        communityId: 3,
+      });
+
+      expect(notify).toHaveBeenCalledWith([
+        expect.objectContaining({
+          data: expect.objectContaining({
+            communityProfileId: 9,
+            communityId: 3,
+            communitySlug: 'funko',
+          }) as unknown,
+        }),
+      ]);
+    });
+  });
 });
