@@ -32,6 +32,7 @@ import {
 } from '../src/products/entities/product.entity';
 import { Review } from '../src/products/entities/review.entity';
 import { SellersPublicModule } from '../src/sellers-public/sellers-public.module';
+import { SellersPublicService } from '../src/sellers-public/sellers-public.service';
 import {
   PaymentInfo,
   PaymentType,
@@ -322,7 +323,12 @@ describe('Tienda pública del vendedor (e2e)', () => {
         sellerRequestStatus: SellerRequestStatus.APPROVED,
       },
     ]);
-    fewStore = await newStore(fewUser, { isVerified: true });
+    fewStore = await newStore(fewUser, {
+      isVerified: true,
+      displayName: 'Juguetería Ñandú',
+      description: 'Figuras de anime japonés',
+      location: '',
+    });
     for (const key of ['pocos-1', 'pocos-2']) {
       await seed(key, fewStore, {});
       await conversation(key, fewUser, [
@@ -455,6 +461,58 @@ describe('Tienda pública del vendedor (e2e)', () => {
 
     it('404 si la tienda no es pública', async () => {
       await http().get(`/sellers/${pendingStore.sellerId}/tags`).expect(404);
+    });
+  });
+
+  // Antes de aprobar al pendiente (el último describe lo aprueba).
+  describe('búsqueda de tiendas (type=stores)', () => {
+    const search = (q: string) =>
+      app.get(SellersPublicService).searchStores(q, 1, 10);
+    const namesOf = async (q: string) =>
+      (await search(q)).data.map((item) => item.displayName);
+
+    it('no distingue mayúsculas ni tildes, en el nombre y la descripción', async () => {
+      await expect(namesOf('jugueteria')).resolves.toEqual([
+        'Juguetería Ñandú',
+      ]);
+      await expect(namesOf('ÑANDU')).resolves.toEqual(['Juguetería Ñandú']);
+      await expect(namesOf('nandú')).resolves.toEqual(['Juguetería Ñandú']);
+      await expect(namesOf('JAPONES')).resolves.toEqual(['Juguetería Ñandú']);
+    });
+
+    it('solo vendedores aprobados con cuenta activa', async () => {
+      await expect(namesOf('pendiente')).resolves.toEqual([]);
+      await expect(namesOf('inactivo')).resolves.toEqual([]);
+      await expect(namesOf('tienda')).resolves.toEqual(['Tienda karina']);
+    });
+
+    it('trae rating, productos activos y la location con respaldo al usuario', async () => {
+      const result = await search('karina');
+
+      expect(result).toEqual({
+        data: [
+          {
+            sellerId: store.sellerId,
+            userId: seller.id,
+            displayName: 'Tienda karina',
+            photoUrl: 'https://cdn/karina.png',
+            location: 'San José',
+            isVerified: true,
+            ratingAverage: 5,
+            reviewsCount: 1,
+            activeProductsCount: 2,
+          },
+        ],
+        pagination: { page: 1, limit: 10, total: 1, totalPages: 1 },
+      });
+
+      const [few] = (await search('ñandú')).data;
+      // Sin location en la tienda ni en el usuario.
+      expect(few).toMatchObject({ location: null, activeProductsCount: 2 });
+    });
+
+    it('escapa los comodines de LIKE', async () => {
+      await expect(namesOf('%')).resolves.toEqual([]);
     });
   });
 

@@ -19,8 +19,9 @@ export class SearchController {
   @ApiBearerAuth()
   @ApiOperation({
     summary:
-      'Búsqueda global. Con type devuelve resultados paginados de ese tipo (users, posts, products, communities; forums es alias de posts); ' +
-      'sin type, un resumen con los primeros 5 de cada tipo. Solo cuentas activas, comunidades públicas y productos activos y visibles',
+      'Búsqueda global. Con type devuelve resultados paginados de ese tipo (users, posts, products, communities, stores; forums es alias de posts); ' +
+      'sin type, un resumen con los primeros 5 de cada tipo. Solo cuentas activas, comunidades públicas, productos activos y visibles y tiendas de vendedores aprobados. ' +
+      'stores busca en el nombre y la descripción de la tienda sin distinguir tildes',
   })
   @ApiDisplayCurrencyHeader()
   search(

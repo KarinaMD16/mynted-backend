@@ -5,6 +5,7 @@ import { escapeLike } from '../common/escape-like';
 import { Community } from '../community/entities/community.entity';
 import { ForumService } from '../community/forum.service';
 import { ProductsService } from '../products/products.service';
+import { SellersPublicService } from '../sellers-public/sellers-public.service';
 import { UsersService } from '../users/users.service';
 import { SearchQueryDto, SearchType } from './dto/search-query.dto';
 
@@ -29,6 +30,7 @@ export class SearchService {
     private readonly usersService: UsersService,
     private readonly productsService: ProductsService,
     private readonly forumService: ForumService,
+    private readonly sellersPublicService: SellersPublicService,
   ) {}
 
   async search(
@@ -60,11 +62,12 @@ export class SearchService {
         viewerId,
         displayCurrency,
       );
-    const [users, posts, products, communities] = await Promise.all([
+    const [users, posts, products, communities, stores] = await Promise.all([
       summaryOf(SearchType.USERS),
       summaryOf(SearchType.POSTS),
       summaryOf(SearchType.PRODUCTS),
       summaryOf(SearchType.COMMUNITIES),
+      summaryOf(SearchType.STORES),
     ]);
 
     const summarize = <T>(result: SearchPage<T>) => ({
@@ -78,6 +81,7 @@ export class SearchService {
       posts: summarize(posts),
       products: summarize(products),
       communities: summarize(communities),
+      stores: summarize(stores),
     };
   }
 
@@ -102,6 +106,8 @@ export class SearchService {
         );
       case SearchType.COMMUNITIES:
         return this.searchCommunities(q, page, limit);
+      case SearchType.STORES:
+        return this.sellersPublicService.searchStores(q, page, limit);
       case SearchType.POSTS:
       case SearchType.FORUMS:
         return this.forumService.searchPosts(q, page, limit, viewerId);

@@ -2,6 +2,8 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { BADGE_CODES } from '../badges/badges.config';
+import { escapeLike } from '../common/escape-like';
+import { unaccentSql } from '../common/unaccent-sql';
 import { UserBadge } from '../badges/entities/user-badge.entity';
 import { isValidIntId } from '../conversations/dto/int-id';
 import {
@@ -13,7 +15,11 @@ import { ResponseTimeService } from '../response-time/response-time.service';
 import { Seller } from '../sellers/entities/seller.entity';
 import { UsersService } from '../users/users.service';
 import { GetSellerProductsQueryDto } from './dto/get-seller-products-query.dto';
-import { SellerStoreDto, SellerTagDto } from './dto/seller-store.dto';
+import {
+  SellerStoreDto,
+  SellerTagDto,
+  StoreSearchItemDto,
+} from './dto/seller-store.dto';
 
 /**
  * Tienda pública de un vendedor. Solo existe para vendedores aprobados
@@ -48,9 +54,7 @@ export class SellersPublicService {
       userId: seller.userId,
       displayName: seller.displayName,
       description: seller.description,
-      location: seller.location?.trim()
-        ? seller.location
-        : (seller.user.location ?? null),
+      location: this.storeLocation(seller),
       photoUrl: seller.user.photoUrl ?? null,
       bannerUrl: null,
       isVerified: seller.isVerified,
@@ -94,6 +98,67 @@ export class SellersPublicService {
       viewerId,
       displayCurrency,
     );
+  }
+
+  // GET /search?type=stores: nombre o descripción de la tienda, sin
+  // distinguir mayúsculas ni tildes. Solo vendedores aprobados con cuenta
+  // activa, por nombre.
+  async searchStores(
+    q: string,
+    page: number,
+    limit: number,
+  ): Promise<Paginated<StoreSearchItemDto>> {
+    const text = `%${escapeLike(q)}%`;
+    const [sellers, total] = await this.sellerRepository
+      .createQueryBuilder('seller')
+      .innerJoinAndSelect('seller.user', 'user')
+      .where('seller.is_verified = true')
+      .andWhere('user.is_active = true')
+      .andWhere(
+        `(${unaccentSql('seller.display_name')} ILIKE ${unaccentSql(':text')} OR ${unaccentSql('seller.description')} ILIKE ${unaccentSql(':text')})`,
+        { text },
+      )
+      .orderBy('seller.displayName', 'ASC')
+      .addOrderBy('seller.sellerId', 'ASC')
+      .skip((page - 1) * limit)
+      .take(limit)
+      .getManyAndCount();
+
+    const sellerIds = sellers.map((seller) => seller.sellerId);
+    const [ratings, productCounts] = await Promise.all([
+      this.usersService.getSellerRatings(sellerIds),
+      this.productsService.countPublicBySeller(sellerIds),
+    ]);
+
+    return {
+      data: sellers.map((seller) => {
+        const rating = ratings.get(seller.sellerId);
+        return {
+          sellerId: seller.sellerId,
+          userId: seller.userId,
+          displayName: seller.displayName,
+          photoUrl: seller.user.photoUrl ?? null,
+          location: this.storeLocation(seller),
+          isVerified: seller.isVerified,
+          ratingAverage: rating?.ratingAverage ?? null,
+          reviewsCount: rating?.reviewsCount ?? 0,
+          activeProductsCount: productCounts.get(seller.sellerId) ?? 0,
+        };
+      }),
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  // La de la tienda; si está vacía, la del perfil del usuario.
+  private storeLocation(seller: Seller): string | null {
+    return seller.location?.trim()
+      ? seller.location
+      : (seller.user.location ?? null);
   }
 
   // Un id fuera de int4 no puede existir: 404 sin consultar (evita el 500

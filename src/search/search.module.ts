@@ -4,6 +4,7 @@ import { CommunityModule } from '../community/community.module';
 import { Community } from '../community/entities/community.entity';
 import { PricingModule } from '../pricing/pricing.module';
 import { ProductsModule } from '../products/products.module';
+import { SellersPublicModule } from '../sellers-public/sellers-public.module';
 import { UsersModule } from '../users/users.module';
 import { SearchController } from './search.controller';
 import { SearchService } from './search.service';
@@ -15,6 +16,7 @@ import { SearchService } from './search.service';
     ProductsModule,
     CommunityModule,
     PricingModule,
+    SellersPublicModule,
   ],
   controllers: [SearchController],
   providers: [SearchService],

@@ -79,6 +79,36 @@ export class SellerStoreDto {
   responseTime!: ResponseTimeDto | null;
 }
 
+// Resultado de GET /search?type=stores.
+export class StoreSearchItemDto {
+  @ApiProperty({ example: 4 })
+  sellerId!: number;
+
+  @ApiProperty({ format: 'uuid' })
+  userId!: string;
+
+  @ApiProperty({ example: 'Funko Corner CR' })
+  displayName!: string;
+
+  @ApiProperty({ type: String, nullable: true })
+  photoUrl!: string | null;
+
+  @ApiProperty({ type: String, nullable: true, example: 'San José' })
+  location!: string | null;
+
+  @ApiProperty({ example: true })
+  isVerified!: boolean;
+
+  @ApiProperty({ type: Number, nullable: true, example: 4.7 })
+  ratingAverage!: number | null;
+
+  @ApiProperty({ example: 12 })
+  reviewsCount!: number;
+
+  @ApiProperty({ example: 8 })
+  activeProductsCount!: number;
+}
+
 export class SellerTagDto {
   @ApiProperty({ example: 3 })
   tagId!: number;
