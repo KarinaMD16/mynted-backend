@@ -18,6 +18,7 @@ import { PaymentsModule } from './payments/payments.module';
 import { ConversationsModule } from './conversations/conversations.module';
 import { ReputationModule } from './reputation/reputation.module';
 import { SellersPublicModule } from './sellers-public/sellers-public.module';
+import { NotificationsModule } from './notifications/notifications.module';
 
 @Module({
   imports: [
@@ -60,6 +61,7 @@ import { SellersPublicModule } from './sellers-public/sellers-public.module';
     ConversationsModule,
     ReputationModule,
     SellersPublicModule,
+    NotificationsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

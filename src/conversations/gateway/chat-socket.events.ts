@@ -17,7 +17,8 @@ export const ChatSocketEvents = {
 export const conversationRoom = (conversationId: number) =>
   `conversation:${conversationId}`;
 
-export const userRoom = (userId: string) => `user:${userId}`;
+// Vive en common/socket-rooms (la usan también otros gateways).
+export { userRoom } from '../../common/socket-rooms';
 
 export interface JoinConversationAck {
   ok: true;

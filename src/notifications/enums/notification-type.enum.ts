@@ -1,0 +1,22 @@
+export enum NotificationType {
+  // Favoritos (tarea 1044). Precio y disponibilidad se unifican por producto.
+  FAVORITE_PRICE_CHANGED = 'favorite_price_changed',
+  FAVORITE_UNAVAILABLE = 'favorite_unavailable',
+  FAVORITE_AVAILABLE_AGAIN = 'favorite_available_again',
+  // Pagos.
+  PURCHASE_COMPLETED = 'purchase_completed',
+  SALE_COMPLETED = 'sale_completed',
+  // Reseñas y badges.
+  REVIEW_RECEIVED = 'review_received',
+  BADGE_AWARDED = 'badge_awarded',
+  // Comunidades.
+  COMMUNITY_JOIN_REQUESTED = 'community_join_requested',
+  COMMUNITY_JOIN_ACCEPTED = 'community_join_accepted',
+  COMMUNITY_JOIN_REJECTED = 'community_join_rejected',
+  // Solicitud de vendedor.
+  SELLER_REQUEST_APPROVED = 'seller_request_approved',
+  SELLER_REQUEST_REJECTED = 'seller_request_rejected',
+  // Foro.
+  POST_REPLIED = 'post_replied',
+  REPLY_REPLIED = 'reply_replied',
+}
