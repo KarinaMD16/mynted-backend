@@ -6,6 +6,7 @@ import {
   NotificationSocketEvents,
   UnreadCountPayload,
 } from '../src/notifications/notifications.gateway';
+import { NotificationsRetentionService } from '../src/notifications/notifications-retention.service';
 import { NotificationsService } from '../src/notifications/notifications.service';
 import { User } from '../src/users/entities/user.entity';
 import {
@@ -283,6 +284,36 @@ describe('Notificaciones (e2e)', () => {
         .expect(200);
 
       await expect(count).resolves.toEqual({ unreadCount: 0 });
+    });
+  });
+
+  describe('retención', () => {
+    it('borra en lotes las leídas de más de 90 días y las no leídas de más de 180', async () => {
+      const insert = (daysAgo: number, read: boolean, label: string) =>
+        ctx.dataSource.query(
+          `INSERT INTO notification (user_id, type, data, message, read_at, created_at)
+           VALUES ($1, 'badge_awarded', $2::jsonb, $3,
+                   CASE WHEN $4 THEN now() ELSE NULL END,
+                   now() - make_interval(days => $5::int))`,
+          [ana.id, JSON.stringify({ label }), label, read, daysAgo],
+        );
+      await insert(91, true, 'leida-vieja-1');
+      await insert(95, true, 'leida-vieja-2');
+      await insert(120, true, 'leida-vieja-3');
+      await insert(89, true, 'leida-reciente');
+      await insert(181, false, 'no-leida-vieja');
+      await insert(150, false, 'no-leida-reciente');
+
+      const retention = ctx.app.get(NotificationsRetentionService);
+      // Lotes de 2 para comprobar que repite hasta terminar.
+      await expect(retention.purgeExpired(2)).resolves.toBe(4);
+
+      const left = await ctx.repo(Notification).find();
+      expect(left.map((n) => n.message).sort()).toEqual([
+        'leida-reciente',
+        'no-leida-reciente',
+      ]);
+      await expect(retention.purgeExpired()).resolves.toBe(0);
     });
   });
 });
