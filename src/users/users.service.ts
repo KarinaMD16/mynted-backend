@@ -23,7 +23,8 @@ import { Seller } from '../sellers/entities/seller.entity';
 import { Product } from '../products/entities/product.entity';
 import { Review } from '../products/entities/review.entity';
 import { escapeLike } from '../common/escape-like';
-import { PublicUserDto } from './dto/public-user.dto';
+import { PublicSellerDto, PublicUserDto } from './dto/public-user.dto';
+import { ResponseTimeService } from '../response-time/response-time.service';
 import { SearchUsersQueryDto } from './dto/search-users-query.dto';
 import {
   isSupportedCurrency,
@@ -40,6 +41,7 @@ export class UsersService {
     private readonly cloudinaryService: CloudinaryService,
     @InjectRepository(Seller)
     private readonly sellersRepository: Repository<Seller>,
+    private readonly responseTimeService: ResponseTimeService,
     @Optional() private readonly eventEmitter?: EventEmitter2,
   ) {}
 
@@ -73,6 +75,19 @@ export class UsersService {
     const user = await this.usersRepository.findOne({ where: { id } });
     if (!user) throw new NotFoundException('Usuario no encontrado');
     return user;
+  }
+
+  // GET /users/me: la entidad completa (mismos campos de siempre) más el
+  // objeto seller si es vendedor aprobado. Se agrega sobre la instancia para
+  // que el serializador siga ocultando los campos @Exclude.
+  async findMe(id: string): Promise<User & { seller?: PublicSellerDto }> {
+    const user = await this.findById(id);
+    const seller = await this.sellersRepository.findOne({
+      where: { userId: id, isVerified: true },
+    });
+    if (!seller) return user;
+    const [publicSeller] = await this.toPublicSellers([seller]);
+    return Object.assign(user, { seller: publicSeller });
   }
 
   // Perfil público por id. Las cuentas desactivadas se tratan como inexistentes.
@@ -113,21 +128,25 @@ export class UsersService {
     };
   }
 
-  // Mapea a la vista pública con una sola consulta de vendedores.
+  // Mapea a la vista pública con una sola consulta de vendedores. Solo los
+  // aprobados (is_verified) cuentan como vendedores: el registro seller se crea
+  // al solicitar, así que un pendiente o rechazado sale sin objeto seller.
   async toPublicUsers(users: User[]): Promise<PublicUserDto[]> {
     const sellers = users.length
       ? await this.sellersRepository.find({
-          where: { userId: In(users.map((user) => user.id)) },
+          where: {
+            userId: In(users.map((user) => user.id)),
+            isVerified: true,
+          },
         })
       : [];
-    const sellerByUserId = new Map(sellers.map((s) => [s.userId, s]));
-    const ratings = await this.getSellerRatings(
-      sellers.map((seller) => seller.sellerId),
+    const publicSellers = await this.toPublicSellers(sellers);
+    const sellerByUserId = new Map(
+      sellers.map((seller, index) => [seller.userId, publicSellers[index]]),
     );
 
     return users.map((user) => {
       const seller = sellerByUserId.get(user.id);
-      const rating = seller ? ratings.get(seller.sellerId) : undefined;
       return {
         id: user.id,
         username: user.username,
@@ -136,22 +155,37 @@ export class UsersService {
         location: user.location,
         role: user.role,
         createdAt: user.createdAt,
-        ...(seller
-          ? {
-              seller: {
-                displayName: seller.displayName,
-                isVerified: seller.isVerified,
-                ratingAverage: rating?.ratingAverage ?? null,
-                reviewsCount: rating?.reviewsCount ?? 0,
-              },
-            }
-          : {}),
+        ...(seller ? { seller } : {}),
+      };
+    });
+  }
+
+  // Objeto seller público (rating y tiempo de respuesta), con una consulta
+  // de cada uno para todos.
+  private async toPublicSellers(sellers: Seller[]): Promise<PublicSellerDto[]> {
+    if (sellers.length === 0) return [];
+    const [ratings, responseTimes] = await Promise.all([
+      this.getSellerRatings(sellers.map((seller) => seller.sellerId)),
+      this.responseTimeService.getForUsers(
+        sellers.map((seller) => seller.userId),
+      ),
+    ]);
+    return sellers.map((seller) => {
+      const rating = ratings.get(seller.sellerId);
+      return {
+        sellerId: seller.sellerId,
+        displayName: seller.displayName,
+        isVerified: seller.isVerified,
+        ratingAverage: rating?.ratingAverage ?? null,
+        reviewsCount: rating?.reviewsCount ?? 0,
+        responseTime: responseTimes.get(seller.userId) ?? null,
       };
     });
   }
 
   // Rating del vendedor: promedio (1 decimal) y total de las reseñas de todos
-  // sus productos, calculado con agregado.
+  // sus productos, calculado con agregado. Un vendedor no aprobado no tiene
+  // rating (no aparece en el resultado).
   async getSellerRatings(
     sellerIds: number[],
   ): Promise<
@@ -170,6 +204,11 @@ export class UsersService {
       .addSelect('COUNT(*)', 'count')
       .from(Review, 'review')
       .innerJoin(Product, 'product', 'product.id = review.product_id')
+      .innerJoin(
+        Seller,
+        'seller',
+        'seller.seller_id = product.seller_id AND seller.is_verified = true',
+      )
       .where('product.seller_id IN (:...sellerIds)', { sellerIds })
       .groupBy('product.seller_id')
       .getRawMany<{ sellerId: number; average: string; count: string }>();

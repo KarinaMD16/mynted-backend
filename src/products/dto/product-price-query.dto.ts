@@ -1,4 +1,4 @@
-import { Type } from 'class-transformer';
+import { Transform, TransformFnParams, Type } from 'class-transformer';
 import { IsEnum, IsNumber, IsOptional, Min } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 
@@ -45,8 +45,12 @@ export class ProductPriceQueryDto {
     enum: ProductSort,
     default: ProductSort.NEWEST,
     description:
-      'newest (más recientes), price_asc o price_desc (precio final normalizado a USD; empate por id descendente)',
+      'newest (más recientes; recent es sinónimo), price_asc o price_desc (precio final normalizado a USD; empate por id descendente)',
   })
+  // recent es sinónimo de newest (lo usa la tienda del vendedor).
+  @Transform(({ value }: TransformFnParams) =>
+    value === 'recent' ? ProductSort.NEWEST : (value as unknown),
+  )
   @IsOptional()
   @IsEnum(ProductSort, {
     message: 'sort debe ser newest, price_asc o price_desc',

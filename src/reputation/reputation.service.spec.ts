@@ -104,7 +104,17 @@ describe('ReputationService', () => {
     });
   });
 
-  it('devuelve ceros e isSeller false si el usuario no es vendedor', async () => {
+  it('busca la tienda solo entre vendedores aprobados', async () => {
+    await service.getUserReputation(userId);
+
+    expect(sellersRepository.findOne).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { userId, isVerified: true } }),
+    );
+  });
+
+  // Un solicitante pendiente o rechazado tiene registro seller pero no está
+  // aprobado: la consulta filtrada no lo encuentra y responde como sin tienda.
+  it('devuelve ceros e isSeller false si el usuario no es vendedor (o no está aprobado)', async () => {
     sellersRepository.findOne.mockResolvedValue(null);
     badgesService.findUserBadges.mockResolvedValue([]);
 

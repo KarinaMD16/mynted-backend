@@ -37,7 +37,6 @@ import { UserTag } from '../user-tags/entities/user-tag.entity';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { UpdateProductStatusDto } from './dto/update-product-status.dto';
-import { GetProductsQueryDto } from './dto/get-products-query.dto';
 import { GetRecommendedProductsQueryDto } from './dto/get-recommended-products-query.dto';
 import { GetShopQueryDto } from './dto/get-shop-query.dto';
 import { GetMyProductsQueryDto } from './dto/get-my-products-query.dto';
@@ -135,8 +134,12 @@ interface TaggedProduct {
   productTags: { tagId: number }[];
 }
 
+// En público solo se listan productos activos o vendidos; draft e inactive
+// nunca.
+export type PublicProductStatus = ProductStatus.ACTIVE | ProductStatus.SOLD;
+
 // Filtros de los listados públicos que se resuelven en SQL.
-interface PublicProductFilters {
+export interface PublicProductFilters {
   communityId?: number;
   type?: ProductType;
   condition?: ProductCondition;
@@ -144,6 +147,23 @@ interface PublicProductFilters {
   shipTo?: string;
   category?: number;
   tag?: number;
+  sellerId?: number;
+  // active por defecto.
+  status?: PublicProductStatus;
+  // Excluye los productos de comunidades privadas o inactivas (mismo
+  // criterio que GET /users/:id/products).
+  publicCommunitiesOnly?: boolean;
+}
+
+// Lo que recibe findAll: filtros públicos + rango/orden por precio +
+// paginación. GetProductsQueryDto y la query de la tienda lo cumplen.
+export type PublicProductsQuery = PublicProductFilters &
+  ProductPriceQueryDto & { page: number; limit: number };
+
+export interface SellerTagCount {
+  tagId: number;
+  name: string;
+  count: number;
 }
 
 interface SectionPaginationQuery {
@@ -419,7 +439,7 @@ export class ProductsService {
   }
 
   async findAll(
-    query: GetProductsQueryDto,
+    query: PublicProductsQuery,
     viewerId: string | undefined,
     displayCurrency: string,
   ): Promise<Paginated<ProductListItem>> {
@@ -427,7 +447,7 @@ export class ProductsService {
     // Luego se hidratan con la API de repository: con la relación "to-many"
     // productTags, un join paginado rompería el skip/take.
     const qb = this.publicProductsQuery(query);
-    const rates = await this.applyPriceQuery(qb, query, displayCurrency);
+    const rates = await this.applyPriceQuery(qb, query, displayCurrency, query);
 
     const total = await qb.getCount();
     const rows = await qb
@@ -446,14 +466,28 @@ export class ProductsService {
     };
   }
 
-  // Activos y visibles (el borrado lógico lo excluye el QueryBuilder).
+  // Visibles y activos (o vendidos si se pide); el borrado lógico lo excluye
+  // el QueryBuilder.
   private publicProductsQuery(
     filters: PublicProductFilters,
   ): SelectQueryBuilder<Product> {
     const qb = this.productRepository
       .createQueryBuilder('product')
-      .where('product.status = :status', { status: ProductStatus.ACTIVE })
+      .where('product.status = :status', {
+        status: filters.status ?? ProductStatus.ACTIVE,
+      })
       .andWhere('product.isVisible = :isVisible', { isVisible: true });
+
+    if (filters.sellerId !== undefined) {
+      qb.andWhere('product.sellerId = :sellerId', {
+        sellerId: filters.sellerId,
+      });
+    }
+    if (filters.publicCommunitiesOnly) {
+      qb.andWhere(
+        '(product.communityId IS NULL OR EXISTS (SELECT 1 FROM community pc WHERE pc.id = product.communityId AND pc.is_active = true AND pc.is_private = false))',
+      );
+    }
 
     if (filters.communityId !== undefined) {
       qb.andWhere('product.communityId = :communityId', {
@@ -497,6 +531,7 @@ export class ProductsService {
     qb: SelectQueryBuilder<Product>,
     query: ProductPriceQueryDto,
     displayCurrency: string,
+    filters: PublicProductFilters,
   ): Promise<UsdRates | undefined> {
     const usesPrice =
       query.priceMin !== undefined ||
@@ -506,7 +541,7 @@ export class ProductsService {
     const rates = usesPrice
       ? await this.priceDisplay.getUsdRates([
           displayCurrency,
-          ...(await this.publicProductCurrencies()),
+          ...(await this.publicProductCurrencies(filters)),
         ])
       : undefined;
     if (rates) {
@@ -523,17 +558,56 @@ export class ProductsService {
     return rates;
   }
 
-  // Monedas en uso entre los productos públicos (para pedir solo esas tasas).
-  private async publicProductCurrencies(): Promise<string[]> {
-    const rows = await this.productRepository
-      .createQueryBuilder('product')
+  // Monedas en uso entre los productos que cumplen los filtros (para pedir
+  // solo esas tasas).
+  private async publicProductCurrencies(
+    filters: PublicProductFilters,
+  ): Promise<string[]> {
+    const rows = await this.publicProductsQuery(filters)
       .select('product.currency', 'currency')
       .distinct(true)
-      .where('product.status = :status', { status: ProductStatus.ACTIVE })
-      .andWhere('product.isVisible = :isVisible', { isVisible: true })
       .andWhere('product.currency IS NOT NULL')
       .getRawMany<{ currency: string }>();
     return rows.map((row) => row.currency);
+  }
+
+  // Productos públicos (activos, visibles y fuera de comunidades privadas) de
+  // cada vendedor, en una sola consulta. Sin productos no aparece en el mapa.
+  async countPublicBySeller(sellerIds: number[]): Promise<Map<number, number>> {
+    if (sellerIds.length === 0) return new Map();
+    const rows = await this.publicProductsQuery({ publicCommunitiesOnly: true })
+      .andWhere('product.sellerId IN (:...sellerIds)', { sellerIds })
+      .select('product.sellerId', 'sellerId')
+      .addSelect('COUNT(*)', 'count')
+      .groupBy('product.sellerId')
+      .getRawMany<{ sellerId: number; count: string }>();
+    return new Map(
+      rows.map((row) => [Number(row.sellerId), Number(row.count)]),
+    );
+  }
+
+  // Tags de los productos públicos del vendedor con su cantidad, de mayor a
+  // menor (empate por nombre).
+  async findSellerTags(sellerId: number): Promise<SellerTagCount[]> {
+    const rows = await this.publicProductsQuery({
+      sellerId,
+      publicCommunitiesOnly: true,
+    })
+      .innerJoin('product.productTags', 'productTag')
+      .innerJoin('productTag.tag', 'tag')
+      .select('tag.tagId', 'tagId')
+      .addSelect('tag.name', 'name')
+      .addSelect('COUNT(DISTINCT product.id)', 'count')
+      .groupBy('tag.tagId')
+      .addGroupBy('tag.name')
+      .orderBy('COUNT(DISTINCT product.id)', 'DESC')
+      .addOrderBy('tag.name', 'ASC')
+      .getRawMany<{ tagId: number; name: string; count: string }>();
+    return rows.map((row) => ({
+      tagId: Number(row.tagId),
+      name: row.name,
+      count: Number(row.count),
+    }));
   }
 
   // Carga productos por id respetando el orden recibido.
@@ -568,8 +642,14 @@ export class ProductsService {
     query: GetShopQueryDto,
     displayCurrency: string,
   ): Promise<ShopResult> {
-    const qb = this.publicProductsQuery({ shipTo: query.shipTo });
-    const rates = await this.applyPriceQuery(qb, query, displayCurrency);
+    const filters: PublicProductFilters = { shipTo: query.shipTo };
+    const qb = this.publicProductsQuery(filters);
+    const rates = await this.applyPriceQuery(
+      qb,
+      query,
+      displayCurrency,
+      filters,
+    );
     const rows = await qb
       .leftJoin('product.productTags', 'productTag')
       .select('product.id', 'id')

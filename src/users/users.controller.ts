@@ -75,9 +75,12 @@ export class UsersController {
   @Get('me')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Obtener el perfil del usuario autenticado' })
+  @ApiOperation({
+    summary:
+      'Obtener el perfil del usuario autenticado. Si es vendedor aprobado trae además seller { sellerId, displayName, isVerified, ratingAverage, reviewsCount, responseTime }',
+  })
   findMe(@Req() request: AuthenticatedRequest) {
-    return this.usersService.findById(request.user.userId);
+    return this.usersService.findMe(request.user.userId);
   }
 
   @Patch('me')

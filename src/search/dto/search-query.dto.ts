@@ -16,6 +16,8 @@ export enum SearchType {
   POSTS = 'posts',
   PRODUCTS = 'products',
   COMMUNITIES = 'communities',
+  // Tiendas: nombre o descripción del vendedor (sin distinguir tildes).
+  STORES = 'stores',
   // Alias de posts: ambos buscan en los posts de los foros de las comunidades.
   FORUMS = 'forums',
 }
@@ -37,7 +39,8 @@ export class SearchQueryDto {
   })
   @IsOptional()
   @IsEnum(SearchType, {
-    message: 'type debe ser users, posts, products, communities o forums',
+    message:
+      'type debe ser users, posts, products, communities, stores o forums',
   })
   type?: SearchType;
 

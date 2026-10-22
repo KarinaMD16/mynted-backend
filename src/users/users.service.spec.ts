@@ -1,6 +1,7 @@
 import { ForbiddenException } from '@nestjs/common';
 import { Repository } from 'typeorm';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
+import { ResponseTimeService } from '../response-time/response-time.service';
 import { Seller } from '../sellers/entities/seller.entity';
 import { UserOAuthAccount } from './entities/user-oauth-account.entity';
 import { User } from './entities/user.entity';
@@ -13,6 +14,7 @@ describe('UsersService', () => {
     save: jest.Mock;
   };
   let cloudinaryService: { uploadImage: jest.Mock };
+  let responseTimeService: { getForUsers: jest.Mock };
 
   beforeEach(() => {
     usersRepository = {
@@ -20,13 +22,95 @@ describe('UsersService', () => {
       save: jest.fn((user: User) => Promise.resolve(user)),
     };
     cloudinaryService = { uploadImage: jest.fn() };
+    responseTimeService = {
+      getForUsers: jest
+        .fn()
+        .mockResolvedValue(
+          new Map([['seller-id', { medianMinutes: 20, sampleSize: 3 }]]),
+        ),
+    };
 
     service = new UsersService(
       usersRepository as unknown as Repository<User>,
       {} as Repository<UserOAuthAccount>,
       cloudinaryService as unknown as CloudinaryService,
       {} as Repository<Seller>,
+      responseTimeService as unknown as ResponseTimeService,
     );
+  });
+
+  describe('toPublicUsers', () => {
+    const approvedSeller = {
+      sellerId: 7,
+      userId: 'seller-id',
+      displayName: 'Funko Corner',
+      isVerified: true,
+    } as Seller;
+
+    const build = (sellers: Seller[]) => {
+      const sellersRepository = {
+        find: jest.fn().mockResolvedValue(sellers),
+        findOne: jest.fn().mockResolvedValue(sellers[0] ?? null),
+      };
+      const publicService = new UsersService(
+        usersRepository as unknown as Repository<User>,
+        {} as Repository<UserOAuthAccount>,
+        cloudinaryService as unknown as CloudinaryService,
+        sellersRepository as unknown as Repository<Seller>,
+        responseTimeService as unknown as ResponseTimeService,
+      );
+      jest
+        .spyOn(publicService, 'getSellerRatings')
+        .mockResolvedValue(
+          new Map([[7, { ratingAverage: 4.5, reviewsCount: 2 }]]),
+        );
+      return { publicService, sellersRepository };
+    };
+
+    it('solo consulta vendedores aprobados', async () => {
+      const { publicService, sellersRepository } = build([approvedSeller]);
+
+      const [seller] = await publicService.toPublicUsers([
+        { id: 'seller-id', username: 'karina' } as User,
+      ]);
+
+      expect(sellersRepository.find).toHaveBeenCalledWith({
+        where: { userId: expect.anything() as unknown, isVerified: true },
+      });
+      expect(seller.seller).toEqual({
+        sellerId: 7,
+        displayName: 'Funko Corner',
+        isVerified: true,
+        ratingAverage: 4.5,
+        reviewsCount: 2,
+        responseTime: { medianMinutes: 20, sampleSize: 3 },
+      });
+    });
+
+    it('consulta ratings y tiempos de respuesta una sola vez para todos', async () => {
+      const { publicService } = build([approvedSeller]);
+
+      await publicService.toPublicUsers([
+        { id: 'seller-id', username: 'karina' } as User,
+        { id: 'otro-id', username: 'otro' } as User,
+      ]);
+
+      expect(responseTimeService.getForUsers).toHaveBeenCalledTimes(1);
+      expect(responseTimeService.getForUsers).toHaveBeenCalledWith([
+        'seller-id',
+      ]);
+    });
+
+    it('un solicitante pendiente o rechazado sale sin objeto seller', async () => {
+      // La consulta filtrada por isVerified no lo devuelve.
+      const { publicService } = build([]);
+
+      const [pending] = await publicService.toPublicUsers([
+        { id: 'pending-id', username: 'pendiente' } as User,
+      ]);
+
+      expect(pending).not.toHaveProperty('seller');
+    });
   });
 
   it('actualiza únicamente el perfil del usuario autenticado', async () => {
@@ -76,5 +160,70 @@ describe('UsersService', () => {
 
     expect(result.isActive).toBe(true);
     expect(usersRepository.save).toHaveBeenCalledWith(user);
+  });
+
+  describe('findMe', () => {
+    it('agrega el objeto seller a la entidad si es vendedor aprobado', async () => {
+      const user = Object.assign(new User(), {
+        id: 'seller-id',
+        email: 'karina@mynted.test',
+        username: 'karina',
+      });
+      usersRepository.findOne.mockResolvedValue(user);
+      const sellersRepository = {
+        findOne: jest.fn().mockResolvedValue({
+          sellerId: 7,
+          userId: 'seller-id',
+          displayName: 'Funko Corner',
+          isVerified: true,
+        }),
+      };
+      const meService = new UsersService(
+        usersRepository as unknown as Repository<User>,
+        {} as Repository<UserOAuthAccount>,
+        cloudinaryService as unknown as CloudinaryService,
+        sellersRepository as unknown as Repository<Seller>,
+        responseTimeService as unknown as ResponseTimeService,
+      );
+      jest.spyOn(meService, 'getSellerRatings').mockResolvedValue(new Map());
+
+      const me = await meService.findMe('seller-id');
+
+      // Sigue siendo la entidad (el serializador aplica @Exclude) y conserva
+      // sus campos.
+      expect(me).toBeInstanceOf(User);
+      expect(me).toMatchObject({
+        email: 'karina@mynted.test',
+        seller: {
+          sellerId: 7,
+          ratingAverage: null,
+          reviewsCount: 0,
+          responseTime: { medianMinutes: 20, sampleSize: 3 },
+        },
+      });
+      expect(sellersRepository.findOne).toHaveBeenCalledWith({
+        where: { userId: 'seller-id', isVerified: true },
+      });
+    });
+
+    it('sin tienda aprobada devuelve la entidad sin objeto seller', async () => {
+      const user = Object.assign(new User(), { id: 'buyer-id' });
+      usersRepository.findOne.mockResolvedValue(user);
+      const meService = new UsersService(
+        usersRepository as unknown as Repository<User>,
+        {} as Repository<UserOAuthAccount>,
+        cloudinaryService as unknown as CloudinaryService,
+        {
+          findOne: jest.fn().mockResolvedValue(null),
+        } as unknown as Repository<Seller>,
+        responseTimeService as unknown as ResponseTimeService,
+      );
+
+      const me = await meService.findMe('buyer-id');
+
+      expect(me).toBe(user);
+      expect(me).not.toHaveProperty('seller');
+      expect(responseTimeService.getForUsers).not.toHaveBeenCalled();
+    });
   });
 });

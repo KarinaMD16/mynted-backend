@@ -35,8 +35,9 @@ export class ReputationService {
     if (!exists) throw new NotFoundException('Usuario no encontrado');
 
     const [seller, badges] = await Promise.all([
+      // Un solicitante pendiente o rechazado responde como usuario sin tienda.
       this.sellersRepository.findOne({
-        where: { userId },
+        where: { userId, isVerified: true },
         select: { sellerId: true, completedSalesCount: true },
       }),
       this.badgesService.findUserBadges(userId),

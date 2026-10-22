@@ -125,15 +125,17 @@ Todos requieren sesión.
   "location": "San José",
   "role": "seller",
   "createdAt": "2026-10-01T...",
-  "seller": {                       // solo si es vendedor
+  "seller": {                       // solo si es vendedor APROBADO
+    "sellerId": 4,                  // para abrir la tienda: GET /sellers/:sellerId
     "displayName": "Funko Corner CR",
     "isVerified": true,
     "ratingAverage": 4.7,           // null si no tiene reseñas
-    "reviewsCount": 12
+    "reviewsCount": 12,
+    "responseTime": { "medianMinutes": 20, "sampleSize": 9 }   // null si hay poca muestra
   }
 }
 ```
-Nunca trae correo, locale, moneda, preferencias ni datos de solicitud de vendedor.
+Nunca trae correo, locale, moneda, preferencias ni datos de solicitud de vendedor. Un solicitante pendiente o rechazado no trae `seller`. Tienda y tiempo de respuesta: ver [GUIA_TIENDA_FRONTEND.md](GUIA_TIENDA_FRONTEND.md).
 
 | Endpoint | Para qué |
 | --- | --- |
@@ -201,7 +203,7 @@ Renderiza según `type`.
 Errores: 400 token inválido/vencido/ya usado · 409 el correo ya está en uso (sin distinguir mayúsculas).
 
 ### `GET /users/me`
-Usuario completo: incluye `locale`, `currency`, `displayCurrency`, `country`, `emailNotifications`, `pushNotifications`, `confirmUnfavorite`, `role`, `sellerRequestStatus`.
+Usuario completo: incluye `locale`, `currency`, `displayCurrency`, `country`, `emailNotifications`, `pushNotifications`, `confirmUnfavorite`, `role`, `sellerRequestStatus`. Si es vendedor aprobado trae además `seller` (misma forma que en `PublicUser`, con `sellerId` y `responseTime`).
 
 ### `PATCH /users/me` (multipart)
 Campos opcionales (manda al menos uno): `username`, `bio`, `location`, `locale`, `currency` (**ISO 4217**, ej. `CRC`, `USD`; se pasa a mayúsculas; moneda de venta/comisión), `displayCurrency` (moneda en que se **ven** los precios; ver [GUIA_MONEDA_FRONTEND.md](GUIA_MONEDA_FRONTEND.md)), `country` (**ISO 3166-1 alfa-2**, ej. `CR`), `emailNotifications`, `pushNotifications`, `confirmUnfavorite` (booleanos), `photo` (archivo, 5 MB).
@@ -393,7 +395,7 @@ Reactivar un pausado: `PATCH /products/:id/status` `{ "status": "active" }`.
 
 `Review`: `{ id, productId, rating, comment, createdAt, updatedAt, author{id, username, photoUrl}, isMine }`. Editar y borrar la propia reseña no vuelve a exigir la compra.
 
-Reputación de un usuario: `GET /profiles/:perfilId/reputation` (sin sesión) → `{ userId, isSeller, ratingAverage, reviewsCount, completedSalesCount, ratingDistribution{1..5}, badges[] }`. Si el usuario no es vendedor: `isSeller: false`, `ratingAverage: null` y conteos en 0.
+Reputación de un usuario: `GET /profiles/:perfilId/reputation` (sin sesión) → `{ userId, isSeller, ratingAverage, reviewsCount, completedSalesCount, ratingDistribution{1..5}, badges[] }`. Si el usuario no es vendedor (o su solicitud está pendiente o fue rechazada): `isSeller: false`, `ratingAverage: null` y conteos en 0.
 
 ---
 
@@ -437,14 +439,15 @@ Del perfil **de otro usuario**: `/users/:id/posts|forums|products` (solo conteni
 
 **`GET /search?q=&type=&page=&limit=`** (sin sesión). `q` obligatorio.
 
-- **Con `type`** (`users|posts|products|communities|forums`; `forums` = alias de `posts`) → `{ type, data: [...], pagination }` (limit def. 20, máx. 50).
+- **Con `type`** (`users|posts|products|communities|stores|forums`; `forums` = alias de `posts`) → `{ type, data: [...], pagination }` (limit def. 20, máx. 50). `stores` busca tiendas sin distinguir tildes (ver [GUIA_TIENDA_FRONTEND.md](GUIA_TIENDA_FRONTEND.md)).
 - **Sin `type`** → resumen con 5 de cada tipo:
 ```json
 { "q": "funko",
   "users":       { "data": [PublicUser...], "total": 2 },
   "posts":       { "data": [PostCard...],   "total": 4 },
   "products":    { "data": [ProductListItem...], "total": 9 },
-  "communities": { "data": [{id,name,slug,description,imageUrl,bannerUrl}...], "total": 1 } }
+  "communities": { "data": [{id,name,slug,description,imageUrl,bannerUrl}...], "total": 1 },
+  "stores":      { "data": [{sellerId,userId,displayName,photoUrl,location,isVerified,ratingAverage,reviewsCount,activeProductsCount}...], "total": 1 } }
 ```
 Los posts de la búsqueda también salen ordenados por votos + frescura. Solo cuentas activas, comunidades **públicas**, productos activos/visibles/no borrados (los sin comunidad también salen).
 

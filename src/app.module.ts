@@ -17,6 +17,7 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { PaymentsModule } from './payments/payments.module';
 import { ConversationsModule } from './conversations/conversations.module';
 import { ReputationModule } from './reputation/reputation.module';
+import { SellersPublicModule } from './sellers-public/sellers-public.module';
 
 @Module({
   imports: [
@@ -58,6 +59,7 @@ import { ReputationModule } from './reputation/reputation.module';
     PaymentsModule,
     ConversationsModule,
     ReputationModule,
+    SellersPublicModule,
   ],
   controllers: [AppController],
   providers: [AppService],

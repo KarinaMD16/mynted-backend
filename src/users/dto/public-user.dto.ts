@@ -1,7 +1,15 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ResponseTimeDto } from '../../response-time/response-time.dto';
 import { UserRole } from '../entities/user.entity';
 
+// Solo vendedores aprobados (is_verified).
 export class PublicSellerDto {
+  @ApiProperty({
+    example: 4,
+    description: 'Para abrir la tienda: GET /sellers/:sellerId',
+  })
+  sellerId!: number;
+
   @ApiProperty({ example: 'Funko Corner CR' })
   displayName!: string;
 
@@ -18,6 +26,13 @@ export class PublicSellerDto {
 
   @ApiProperty({ type: Number, example: 12 })
   reviewsCount!: number;
+
+  @ApiProperty({
+    type: ResponseTimeDto,
+    nullable: true,
+    description: 'null si hay menos de 3 conversaciones respondidas',
+  })
+  responseTime!: ResponseTimeDto | null;
 }
 
 /**
@@ -48,7 +63,7 @@ export class PublicUserDto {
 
   @ApiPropertyOptional({
     type: PublicSellerDto,
-    description: 'Solo si el usuario es vendedor',
+    description: 'Solo si el usuario es vendedor aprobado',
   })
   seller?: PublicSellerDto;
 }

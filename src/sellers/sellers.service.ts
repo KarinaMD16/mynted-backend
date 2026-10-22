@@ -270,7 +270,10 @@ export class SellersService {
 
     const updated = await this.dataSource.transaction(async (manager) => {
       if (dto.status === SellerRequestStatus.APPROVED) {
-        await manager.update(Seller, seller.sellerId, { isVerified: true });
+        await manager.update(Seller, seller.sellerId, {
+          isVerified: true,
+          approvedAt: new Date(),
+        });
         await manager.update(User, targetUserId, {
           role: UserRole.SELLER,
           sellerRequestStatus: SellerRequestStatus.APPROVED,
