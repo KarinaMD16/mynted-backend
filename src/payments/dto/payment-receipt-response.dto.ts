@@ -37,6 +37,9 @@ export class PaymentReceiptResponseDto {
   date!: Date;
   @ApiPropertyOptional()
   cardLast4!: string | null;
+  // Solo para el comprador: el vendedor no recibe este dato personal.
+  @ApiPropertyOptional()
+  cardHolderName?: string | null;
   @ApiPropertyOptional()
   gatewayReference!: string | null;
   @ApiPropertyOptional()

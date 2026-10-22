@@ -136,6 +136,7 @@ export class PaymentsController {
             expiryMonth: 12,
             expiryYear: 2027,
             cvv: '123',
+            cardHolderName: 'María José Núñez',
           },
         },
       },

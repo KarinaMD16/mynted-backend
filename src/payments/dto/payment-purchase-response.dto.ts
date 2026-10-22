@@ -26,6 +26,7 @@ export class PaymentPurchaseItemDto {
   currency!: string;
   completedAt!: Date | null;
   cardLast4!: string | null;
+  cardHolderName!: string | null;
   gatewayReference!: string | null;
 }
 
@@ -52,6 +53,8 @@ export class PaymentPurchaseItemDocumentationDto {
   completedAt!: Date | null;
   @ApiPropertyOptional()
   cardLast4!: string | null;
+  @ApiPropertyOptional()
+  cardHolderName!: string | null;
   @ApiPropertyOptional()
   gatewayReference!: string | null;
 }

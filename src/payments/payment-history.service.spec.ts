@@ -22,6 +22,7 @@ describe('PaymentHistoryService', () => {
     status: TransactionStatus.COMPLETED,
     failureReason: null,
     cardLast4: '4242',
+    cardHolderName: 'María José Núñez',
     gatewayReference: 'SIM-A1B2C3',
     createdAt: new Date('2026-10-19T15:00:00.000Z'),
     completedAt: new Date('2026-10-19T16:00:00.000Z'),
@@ -100,8 +101,12 @@ describe('PaymentHistoryService', () => {
     expect(result.data[0]).toEqual(
       expect.objectContaining({
         cardLast4: '4242',
+        cardHolderName: 'María José Núñez',
         gatewayReference: 'SIM-A1B2C3',
       }),
+    );
+    expect(h.qb.addSelect).toHaveBeenCalledWith(
+      expect.arrayContaining(['transaction.cardHolderName']),
     );
     expect(result.data[0]).not.toHaveProperty('commissionAmount');
     expect(result.data[0]).not.toHaveProperty('idempotencyKey');
@@ -245,6 +250,46 @@ describe('PaymentHistoryService', () => {
       expect.objectContaining({ commissionAmount: 3, sellerNet: 97 }),
     );
     expect(sellerReceipt).not.toHaveProperty('idempotencyKey');
+  });
+
+  it('returns the card holder name in the receipt only to the buyer', async () => {
+    const h = createHarness();
+
+    const buyerReceipt = await h.service.receipt('buyer-1', 'tx-1');
+    expect(buyerReceipt).toMatchObject({
+      cardLast4: '4242',
+      cardHolderName: 'María José Núñez',
+    });
+
+    const sellerReceipt = await h.service.receipt('seller-1', 'tx-1');
+    expect(sellerReceipt).not.toHaveProperty('cardHolderName');
+  });
+
+  it('returns null holder name for transactions created before the field', async () => {
+    const h = createHarness();
+    h.qb.getOne.mockResolvedValueOnce(completed({ cardHolderName: null }));
+    h.qb.getManyAndCount.mockResolvedValueOnce([
+      [completed({ cardHolderName: null })],
+      1,
+    ]);
+
+    await expect(h.service.receipt('buyer-1', 'tx-1')).resolves.toMatchObject({
+      cardHolderName: null,
+    });
+    const purchases = await h.service.purchases('buyer-1', {
+      page: 1,
+      limit: 10,
+    });
+    expect(purchases.data[0].cardHolderName).toBeNull();
+  });
+
+  it('never exposes the holder name in the seller sales list', async () => {
+    const h = createHarness();
+
+    const result = await h.service.sales('seller-1', { page: 1, limit: 10 });
+
+    expect(result.data[0]).not.toHaveProperty('cardHolderName');
+    expect(result.data[0]).not.toHaveProperty('cardLast4');
   });
 
   it('uses createdAt for failed receipts and rejects missing or unauthorized transactions', async () => {

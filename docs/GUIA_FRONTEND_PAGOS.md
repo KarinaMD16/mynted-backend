@@ -168,7 +168,8 @@ La clave `Idempotency-Key` debe tener entre 8 y 128 caracteres. Debe ser única 
     "cardNumber": "4242424242424242",
     "expiryMonth": 12,
     "expiryYear": 2027,
-    "cvv": "123"
+    "cvv": "123",
+    "cardHolderName": "María José Núñez"
   }
 }
 ```
@@ -179,7 +180,16 @@ Validaciones:
 - `cardNumber`: texto no vacío y número de tarjeta válido para la pasarela simulada;
 - `expiryMonth`: entero de `1` a `12`;
 - `expiryYear`: año de cuatro dígitos y fecha futura o actual;
-- `cvv`: texto de 3 o 4 dígitos.
+- `cvv`: texto de 3 o 4 dígitos;
+- `cardHolderName` (**obligatorio**): nombre del titular como aparece en la tarjeta. El backend lo normaliza antes de validar: recorta los espacios de los extremos y colapsa los espacios repetidos (`"  María   José "` → `"María José"`). Debe tener entre 2 y 80 caracteres, empezar con una letra y solo puede contener letras (con tildes, `ñ`, `ü`), espacios, apóstrofes (`'` o `’`), guiones y puntos. Se guardan las mayúsculas y minúsculas tal como se envían.
+
+Errores de `cardHolderName` (`400`, en `message`):
+
+- `El nombre del titular es obligatorio` (falta, está vacío o solo tiene espacios);
+- `El nombre del titular debe tener entre 2 y 80 caracteres`;
+- `El nombre del titular solo puede contener letras, espacios, apóstrofes, guiones y puntos`.
+
+Los mensajes nunca repiten el valor enviado. El nombre del titular no cambia el resultado de la pasarela simulada: aprobación o rechazo dependen solo del número de tarjeta.
 
 ### Tarjetas simuladas
 
@@ -214,12 +224,15 @@ Para probar la tarjeta expirada simulada, la fecha enviada debe ser formalmente 
   "gatewayReference": "SIM-A1B2C3",
   "cardBrand": "visa",
   "cardLast4": "4242",
+  "cardHolderName": "María José Núñez",
   "failureReason": null,
   "completedAt": "2026-10-20T22:30:00.000Z"
 }
 ```
 
-El frontend solo debe mostrar `cardBrand` y `cardLast4`. Nunca debe mostrar ni guardar el PAN completo, el CVV ni la fecha completa de expiración.
+El frontend solo debe mostrar `cardBrand`, `cardLast4` y `cardHolderName`. Nunca debe mostrar ni guardar el PAN completo, el CVV ni la fecha completa de expiración.
+
+`cardHolderName` (como `cardBrand` y `cardLast4`) solo se guarda cuando el pago se aprueba. **Las transacciones creadas antes de este campo lo traen en `null`**: el frontend debe tolerarlo (por ejemplo, mostrar solo `Visa •••• 4242`).
 
 ### Rechazo de tarjeta: `402 Payment Required`
 
@@ -294,6 +307,8 @@ GET /payments/8c9e4e3c-8e8d-4ec2-a9e2-6f0f0d4c1a11
 
 La respuesta incluye producto, vendedor, monto, moneda, fecha, `cardLast4`, referencia del gateway y, si quien consulta es el vendedor, el detalle de comisión.
 
+Si quien consulta es el **comprador**, incluye además `cardHolderName` (`null` en transacciones anteriores a este campo). Si quien consulta es el **vendedor**, el campo **no viene**: el nombre del titular es un dato personal del comprador.
+
 Nunca contiene el número completo de tarjeta ni el CVV.
 
 ## 7. Historial de compras
@@ -323,6 +338,7 @@ Response:
       "currency": "CRC",
       "completedAt": "2026-10-20T22:30:00.000Z",
       "cardLast4": "4242",
+      "cardHolderName": "María José Núñez",
       "gatewayReference": "SIM-A1B2C3"
     }
   ],
@@ -335,7 +351,7 @@ Response:
 }
 ```
 
-`page` empieza en `1`; `limit` acepta valores entre `1` y `100`.
+`page` empieza en `1`; `limit` acepta valores entre `1` y `100`. `cardHolderName` puede ser `null` en compras anteriores a este campo.
 
 ## 8. Historial de ventas
 
@@ -593,7 +609,7 @@ No guardar en localStorage, sessionStorage, logs ni analytics:
 - objeto `card` completo;
 - tokens de autenticación si la arquitectura usa cookies httpOnly.
 
-El backend solo devuelve `cardBrand`, `cardLast4` y una referencia simulada como `SIM-A1B2C3`.
+El backend solo devuelve `cardBrand`, `cardLast4`, `cardHolderName` (solo al comprador) y una referencia simulada como `SIM-A1B2C3`. El historial de ventas del vendedor no incluye datos de tarjeta del comprador.
 
 ## 14. Checklist de prueba manual
 
@@ -605,7 +621,7 @@ El backend solo devuelve `cardBrand`, `cardLast4` y una referencia simulada como
 4. Ejecutar checkout con `4242424242424242`.
 5. Confirmar `status=completed`.
 6. Confirmar `gatewayReference` con formato `SIM-XXXXXX`.
-7. Confirmar `cardLast4=4242`.
+7. Confirmar `cardLast4=4242` y `cardHolderName` con el nombre enviado (sin espacios repetidos).
 8. Confirmar que el producto deje de estar disponible.
 
 ### Compra rechazada

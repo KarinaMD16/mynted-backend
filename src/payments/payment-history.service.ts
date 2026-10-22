@@ -57,6 +57,7 @@ export class PaymentHistoryService {
         'product.imageUrl',
         'seller.sellerId',
         'seller.displayName',
+        'transaction.cardHolderName',
       ])
       .where('transaction.buyer_id = :userId', { userId })
       .andWhere('transaction.status = :status', {
@@ -195,6 +196,7 @@ export class PaymentHistoryService {
       .addSelect([
         'transaction.failureReason',
         'transaction.cardBrand',
+        'transaction.cardHolderName',
         'product.id',
         'product.title',
         'product.imageUrl',
@@ -234,6 +236,11 @@ export class PaymentHistoryService {
       gatewayReference: transaction.gatewayReference,
       failureReason: transaction.failureReason,
     };
+    // El nombre del titular es dato personal del comprador: el vendedor no
+    // lo recibe.
+    if (transaction.buyerId === userId) {
+      response.cardHolderName = transaction.cardHolderName ?? null;
+    }
     if (transaction.seller.userId === userId) {
       response.commission = {
         salesTierName: transaction.salesTierName,
@@ -290,6 +297,7 @@ export class PaymentHistoryService {
       currency: transaction.currency,
       completedAt: transaction.completedAt,
       cardLast4: transaction.cardLast4,
+      cardHolderName: transaction.cardHolderName ?? null,
       gatewayReference: transaction.gatewayReference,
     };
   }

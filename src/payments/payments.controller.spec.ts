@@ -11,6 +11,7 @@ describe('PaymentsController', () => {
       expiryMonth: 12,
       expiryYear: 2099,
       cvv: '123',
+      cardHolderName: 'María José Núñez',
     },
   };
 

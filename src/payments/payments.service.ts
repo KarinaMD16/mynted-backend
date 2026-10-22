@@ -28,6 +28,7 @@ import {
 } from './gateway/payment-gateway.interface';
 import { PaymentCardValidationError } from './gateway/card-validation';
 import { CheckoutDto } from './dto/checkout.dto';
+import { normalizeCardHolderName } from './dto/payment-card.dto';
 import { CheckoutResponseDto } from './dto/checkout-response.dto';
 import { QuoteResponseDto } from './dto/quote-response.dto';
 import { ExchangeRateService } from './exchange-rate/exchange-rate.service';
@@ -246,6 +247,7 @@ export class PaymentsService {
       failureReason: null,
       cardBrand: null,
       cardLast4: null,
+      cardHolderName: null,
       gatewayReference: null,
       idempotencyKey,
       completedAt: null,
@@ -279,6 +281,10 @@ export class PaymentsService {
     pending.gatewayReference = gatewayResult.gatewayReference;
     pending.cardBrand = gatewayResult.cardBrand;
     pending.cardLast4 = gatewayResult.cardLast4;
+    // Como marca y últimos 4: solo se guarda si el pago se aprueba.
+    pending.cardHolderName = normalizeCardHolderName(
+      dto.card.cardHolderName,
+    ) as string;
     pending.failureReason = null;
     pending.completedAt = new Date();
     product.status = ProductStatus.SOLD;
@@ -373,6 +379,7 @@ export class PaymentsService {
       gatewayReference: transaction.gatewayReference,
       cardBrand: transaction.cardBrand,
       cardLast4: transaction.cardLast4,
+      cardHolderName: transaction.cardHolderName ?? null,
       failureReason: transaction.failureReason,
       completedAt: transaction.completedAt,
     };
