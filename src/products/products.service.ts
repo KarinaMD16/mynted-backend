@@ -37,7 +37,6 @@ import { UserTag } from '../user-tags/entities/user-tag.entity';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { UpdateProductStatusDto } from './dto/update-product-status.dto';
-import { GetProductsQueryDto } from './dto/get-products-query.dto';
 import { GetRecommendedProductsQueryDto } from './dto/get-recommended-products-query.dto';
 import { GetShopQueryDto } from './dto/get-shop-query.dto';
 import { GetMyProductsQueryDto } from './dto/get-my-products-query.dto';
@@ -155,6 +154,11 @@ export interface PublicProductFilters {
   // criterio que GET /users/:id/products).
   publicCommunitiesOnly?: boolean;
 }
+
+// Lo que recibe findAll: filtros públicos + rango/orden por precio +
+// paginación. GetProductsQueryDto y la query de la tienda lo cumplen.
+export type PublicProductsQuery = PublicProductFilters &
+  ProductPriceQueryDto & { page: number; limit: number };
 
 export interface SellerTagCount {
   tagId: number;
@@ -435,7 +439,7 @@ export class ProductsService {
   }
 
   async findAll(
-    query: GetProductsQueryDto,
+    query: PublicProductsQuery,
     viewerId: string | undefined,
     displayCurrency: string,
   ): Promise<Paginated<ProductListItem>> {

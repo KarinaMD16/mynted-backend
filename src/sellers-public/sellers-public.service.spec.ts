@@ -1,9 +1,12 @@
 import { NotFoundException } from '@nestjs/common';
 import { Repository } from 'typeorm';
 import { UserBadge } from '../badges/entities/user-badge.entity';
+import { ProductSort } from '../products/dto/product-price-query.dto';
+import { ProductStatus } from '../products/entities/product.entity';
 import { ProductsService } from '../products/products.service';
 import { Seller } from '../sellers/entities/seller.entity';
 import { UsersService } from '../users/users.service';
+import { GetSellerProductsQueryDto } from './dto/get-seller-products-query.dto';
 import { SellersPublicService } from './sellers-public.service';
 
 describe('SellersPublicService', () => {
@@ -35,6 +38,7 @@ describe('SellersPublicService', () => {
   let productsService: {
     countPublicBySeller: jest.Mock;
     findSellerTags: jest.Mock;
+    findAll: jest.Mock;
   };
 
   beforeEach(() => {
@@ -52,6 +56,7 @@ describe('SellersPublicService', () => {
       findSellerTags: jest
         .fn()
         .mockResolvedValue([{ tagId: 3, name: 'Funko Pop', count: 5 }]),
+      findAll: jest.fn().mockResolvedValue({ data: [], pagination: {} }),
     };
     service = new SellersPublicService(
       sellerRepository as unknown as Repository<Seller>,
@@ -150,6 +155,43 @@ describe('SellersPublicService', () => {
         reviewsCount: 0,
         activeProductsCount: 0,
       });
+    });
+  });
+
+  describe('findProducts', () => {
+    const query = Object.assign(new GetSellerProductsQueryDto(), {
+      tag: 3,
+      status: ProductStatus.SOLD,
+      sort: ProductSort.PRICE_ASC,
+      page: 2,
+      limit: 5,
+    });
+
+    it('reutiliza findAll limitado al vendedor y sin comunidades privadas', async () => {
+      await service.findProducts(4, query, 'viewer-id', 'USD');
+
+      expect(productsService.findAll).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sellerId: 4,
+          publicCommunitiesOnly: true,
+          tag: 3,
+          status: ProductStatus.SOLD,
+          sort: ProductSort.PRICE_ASC,
+          page: 2,
+          limit: 5,
+        }),
+        'viewer-id',
+        'USD',
+      );
+    });
+
+    it('404 si la tienda no es pública, sin listar productos', async () => {
+      sellerRepository.findOne.mockResolvedValue(null);
+
+      await expect(
+        service.findProducts(4, query, undefined, 'CRC'),
+      ).rejects.toThrow(NotFoundException);
+      expect(productsService.findAll).not.toHaveBeenCalled();
     });
   });
 

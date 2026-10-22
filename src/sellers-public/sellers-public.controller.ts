@@ -3,6 +3,8 @@ import {
   Get,
   Param,
   ParseIntPipe,
+  Query,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import {
@@ -15,6 +17,12 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
+import { OptionalAuthenticatedRequest } from '../auth/types/authenticated-request';
+import {
+  ApiDisplayCurrencyHeader,
+  DisplayCurrency,
+} from '../pricing/display-currency.decorator';
+import { GetSellerProductsQueryDto } from './dto/get-seller-products-query.dto';
 import { SellerStoreDto, SellerTagDto } from './dto/seller-store.dto';
 import { SellersPublicService } from './sellers-public.service';
 
@@ -44,6 +52,30 @@ export class SellersPublicController {
     @Param('sellerId', ParseIntPipe) sellerId: number,
   ): Promise<SellerStoreDto> {
     return this.sellersPublicService.getStore(sellerId);
+  }
+
+  @Get(':sellerId/products')
+  @ApiOperation({
+    summary:
+      'Productos de la tienda (active por defecto o sold), sin comunidades privadas. Misma forma que GET /products, con displayPrice/displayFinalPrice en la moneda de visualización. ' +
+      'Filtros: tag, type, condition, priceMin/priceMax (en la moneda de visualización); sort: recent|newest|price_asc|price_desc',
+  })
+  @ApiDisplayCurrencyHeader()
+  @ApiBadRequestResponse({
+    description: 'Query inválida (p. ej. status draft o inactive)',
+  })
+  findProducts(
+    @Param('sellerId', ParseIntPipe) sellerId: number,
+    @Query() query: GetSellerProductsQueryDto,
+    @Req() request: OptionalAuthenticatedRequest,
+    @DisplayCurrency() displayCurrency: string,
+  ) {
+    return this.sellersPublicService.findProducts(
+      sellerId,
+      query,
+      request.user?.userId,
+      displayCurrency,
+    );
   }
 
   @Get(':sellerId/tags')

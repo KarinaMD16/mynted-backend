@@ -4,9 +4,14 @@ import { Repository } from 'typeorm';
 import { BADGE_CODES } from '../badges/badges.config';
 import { UserBadge } from '../badges/entities/user-badge.entity';
 import { isValidIntId } from '../conversations/dto/int-id';
-import { ProductsService } from '../products/products.service';
+import {
+  Paginated,
+  ProductListItem,
+  ProductsService,
+} from '../products/products.service';
 import { Seller } from '../sellers/entities/seller.entity';
 import { UsersService } from '../users/users.service';
+import { GetSellerProductsQueryDto } from './dto/get-seller-products-query.dto';
 import { SellerStoreDto, SellerTagDto } from './dto/seller-store.dto';
 
 /**
@@ -57,6 +62,34 @@ export class SellersPublicService {
   async getTags(sellerId: number): Promise<SellerTagDto[]> {
     await this.findPublicSeller(sellerId);
     return this.productsService.findSellerTags(sellerId);
+  }
+
+  // Misma query y forma que GET /products, limitada al vendedor y sin
+  // comunidades privadas (mismo criterio que GET /users/:id/products).
+  async findProducts(
+    sellerId: number,
+    query: GetSellerProductsQueryDto,
+    viewerId: string | undefined,
+    displayCurrency: string,
+  ): Promise<Paginated<ProductListItem>> {
+    await this.findPublicSeller(sellerId);
+    return this.productsService.findAll(
+      {
+        tag: query.tag,
+        type: query.type,
+        condition: query.condition,
+        status: query.status,
+        priceMin: query.priceMin,
+        priceMax: query.priceMax,
+        sort: query.sort,
+        page: query.page,
+        limit: query.limit,
+        sellerId,
+        publicCommunitiesOnly: true,
+      },
+      viewerId,
+      displayCurrency,
+    );
   }
 
   // Un id fuera de int4 no puede existir: 404 sin consultar (evita el 500

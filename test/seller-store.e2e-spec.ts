@@ -296,6 +296,79 @@ describe('Tienda pública del vendedor (e2e)', () => {
     });
   });
 
+  describe('GET /sellers/:sellerId/products', () => {
+    const titlesOf = (body: unknown) =>
+      (body as { data: { title: string }[] }).data.map((p) => p.title);
+
+    it('por defecto: activos, visibles y sin comunidades privadas', async () => {
+      const res = await http()
+        .get(`/sellers/${store.sellerId}/products`)
+        .expect(200);
+
+      expect(titlesOf(res.body)).toEqual(['b', 'a']);
+      expect(res.body).toMatchObject({
+        pagination: { page: 1, limit: 10, total: 2, totalPages: 1 },
+      });
+    });
+
+    it('status=sold lista los vendidos; draft e inactive dan 400', async () => {
+      const sold = await http()
+        .get(`/sellers/${store.sellerId}/products?status=sold`)
+        .expect(200);
+      expect(titlesOf(sold.body)).toEqual(['vendido']);
+
+      await http()
+        .get(`/sellers/${store.sellerId}/products?status=draft`)
+        .expect(400);
+      await http()
+        .get(`/sellers/${store.sellerId}/products?status=inactive`)
+        .expect(400);
+    });
+
+    it('sort recent y newest son sinónimos; price_asc y price_desc ordenan por precio', async () => {
+      const get = async (sort: string) =>
+        titlesOf(
+          (
+            await http()
+              .get(`/sellers/${store.sellerId}/products?sort=${sort}`)
+              .expect(200)
+          ).body,
+        );
+
+      await expect(get('recent')).resolves.toEqual(['b', 'a']);
+      await expect(get('newest')).resolves.toEqual(['b', 'a']);
+      await expect(get('price_asc')).resolves.toEqual(['b', 'a']);
+      await expect(get('price_desc')).resolves.toEqual(['a', 'b']);
+      await http()
+        .get(`/sellers/${store.sellerId}/products?sort=cheapest`)
+        .expect(400);
+    });
+
+    it('filtra por tag y trae los campos display* según X-Display-Currency', async () => {
+      const res = await http()
+        .get(`/sellers/${store.sellerId}/products?tag=${tags.anime}`)
+        .set('X-Display-Currency', 'CRC')
+        .expect(200);
+
+      expect(titlesOf(res.body)).toEqual(['a']);
+      expect((res.body as { data: unknown[] }).data[0]).toMatchObject({
+        price: 100,
+        currency: 'USD',
+        displayPrice: 50000,
+        displayFinalPrice: 50000,
+        displayCurrency: 'CRC',
+        isConverted: true,
+        isSaved: false,
+      });
+    });
+
+    it('404 si la tienda no es pública', async () => {
+      await http()
+        .get(`/sellers/${inactiveStore.sellerId}/products`)
+        .expect(404);
+    });
+  });
+
   describe('GET /sellers/:sellerId/tags', () => {
     it('cuenta solo productos activos, visibles y de comunidades públicas', async () => {
       const res = await http()

@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { UserBadge } from '../badges/entities/user-badge.entity';
+import { PricingModule } from '../pricing/pricing.module';
 import { ProductsModule } from '../products/products.module';
 import { Seller } from '../sellers/entities/seller.entity';
 import { UsersModule } from '../users/users.module';
@@ -14,6 +15,7 @@ import { SellersPublicService } from './sellers-public.service';
     TypeOrmModule.forFeature([Seller, UserBadge]),
     UsersModule,
     ProductsModule,
+    PricingModule,
   ],
   controllers: [SellersPublicController],
   providers: [SellersPublicService],
