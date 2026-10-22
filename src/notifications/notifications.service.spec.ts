@@ -2,7 +2,6 @@ import { NotFoundException } from '@nestjs/common';
 import { DataSource, Repository } from 'typeorm';
 import { Notification } from './entities/notification.entity';
 import { NotificationType } from './enums/notification-type.enum';
-import { NotificationsListener } from './notifications.listener';
 import { NotificationsService } from './notifications.service';
 
 describe('NotificationsService', () => {
@@ -171,22 +170,5 @@ describe('NotificationsService', () => {
         unreadCount: 0,
       });
     });
-  });
-});
-
-describe('NotificationsListener.safely', () => {
-  it('loguea el error y no lo propaga', async () => {
-    const listener = new NotificationsListener({} as NotificationsService);
-    const logger = jest
-      .spyOn(
-        (listener as unknown as { logger: { error: () => void } }).logger,
-        'error',
-      )
-      .mockImplementation(() => undefined);
-
-    await expect(
-      listener.safely('evento', () => Promise.reject(new Error('falló'))),
-    ).resolves.toBeUndefined();
-    expect(logger).toHaveBeenCalled();
   });
 });

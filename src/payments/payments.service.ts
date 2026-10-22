@@ -7,8 +7,10 @@ import {
   Injectable,
   InternalServerErrorException,
   NotFoundException,
+  Optional,
   ServiceUnavailableException,
 } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Repository } from 'typeorm';
 import {
@@ -32,9 +34,12 @@ import { normalizeCardHolderName } from './dto/payment-card.dto';
 import { CheckoutResponseDto } from './dto/checkout-response.dto';
 import { QuoteResponseDto } from './dto/quote-response.dto';
 import { ExchangeRateService } from './exchange-rate/exchange-rate.service';
+import { CheckoutCompletedEvent, PaymentEvents } from './payment-events';
 
+// isNew: el pago se aprobó en esta llamada (no es la repetición de una clave
+// de idempotencia ya usada).
 type CheckoutResult =
-  | { kind: 'completed'; transaction: PaymentTransaction }
+  | { kind: 'completed'; transaction: PaymentTransaction; isNew?: true }
   | { kind: 'failed'; transaction: PaymentTransaction };
 
 const IDEMPOTENCY_UNIQUE_CONSTRAINT = 'UQ_payment_transaction_idempotency_key';
@@ -55,6 +60,7 @@ export class PaymentsService {
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
     private readonly exchangeRateService: ExchangeRateService,
+    @Optional() private readonly eventEmitter?: EventEmitter2,
   ) {}
 
   async quote(productId: number, userId: string): Promise<QuoteResponseDto> {
@@ -156,6 +162,19 @@ export class PaymentsService {
 
     if (result.kind === 'failed') {
       throw this.paymentRequired(result.transaction);
+    }
+    // Después del commit y solo para el pago recién aprobado: repetir la
+    // clave de idempotencia no vuelve a notificar.
+    if (result.kind === 'completed' && result.isNew) {
+      const event: CheckoutCompletedEvent = {
+        transactionId: result.transaction.id,
+        productId: result.transaction.productId,
+        buyerId: result.transaction.buyerId,
+        sellerId: result.transaction.sellerId,
+        amount: result.transaction.amount,
+        currency: result.transaction.currency,
+      };
+      this.eventEmitter?.emit(PaymentEvents.CHECKOUT_COMPLETED, event);
     }
     return this.toResponse(result.transaction);
   }
@@ -293,7 +312,7 @@ export class PaymentsService {
     await transactionRepository.save(pending);
     await manager.getRepository(Product).save(product);
     await manager.getRepository(Seller).save(seller);
-    return { kind: 'completed', transaction: pending };
+    return { kind: 'completed', transaction: pending, isNew: true };
   }
 
   private replayOrConflict(
