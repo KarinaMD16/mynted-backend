@@ -92,7 +92,7 @@ export class ForumController {
   }
 
   @Get('communities/:communityId/posts')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(OptionalJwtAuthGuard)
   @ApiOperation({
     summary:
       'Posts de una comunidad. sort=hot (por defecto, upvotes/downvotes + frescura), new o top',
@@ -100,9 +100,9 @@ export class ForumController {
   findPosts(
     @Param('communityId', ParseIntPipe) communityId: number,
     @Query() query: GetCommunityPostsQueryDto,
-    @Req() request: AuthenticatedRequest,
+    @Req() request: OptionalAuthenticatedRequest,
   ) {
-    return this.forumService.findPosts(communityId, request.user.userId, query);
+    return this.forumService.findPosts(communityId, request.user?.userId, query);
   }
 
   @Get('posts')
@@ -244,12 +244,12 @@ export class ForumController {
   }
 
   @Get('posts/:postId')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(OptionalJwtAuthGuard)
   findPost(
     @Param('postId', ParseIntPipe) postId: number,
-    @Req() request: AuthenticatedRequest,
+    @Req() request: OptionalAuthenticatedRequest,
   ) {
-    return this.forumService.findPost(postId, request.user.userId);
+    return this.forumService.findPost(postId, request.user?.userId);
   }
 
   @Post('posts/:postId/replies')
@@ -263,12 +263,12 @@ export class ForumController {
   }
 
   @Get('posts/:postId/replies')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(OptionalJwtAuthGuard)
   findReplies(
     @Param('postId', ParseIntPipe) postId: number,
-    @Req() request: AuthenticatedRequest,
+    @Req() request: OptionalAuthenticatedRequest,
   ) {
-    return this.forumService.findReplies(postId, request.user.userId);
+    return this.forumService.findReplies(postId, request.user?.userId);
   }
 
   @Put('posts/:postId/vote')

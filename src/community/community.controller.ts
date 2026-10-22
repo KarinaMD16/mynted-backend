@@ -31,6 +31,8 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { CommunityService } from './community.service';
+import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
+import { OptionalAuthenticatedRequest } from '../auth/types/authenticated-request';
 import { CreateCommunityDto } from './dto/create-community.dto';
 import { CreateCommunityRuleDto } from './dto/create-community-rule.dto';
 import { CreateCategoryDto } from './dto/create-category.dto';
@@ -222,16 +224,15 @@ export class CommunityController {
   }
 
   @Get('communities/by-slug/:slug')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
+  @UseGuards(OptionalJwtAuthGuard)
   @ApiOperation({ summary: 'Obtener el detalle de una comunidad por slug' })
   findCommunityDetailBySlug(
     @Param('slug') slug: string,
-    @Req() request: AuthenticatedRequest,
+    @Req() request: OptionalAuthenticatedRequest,
   ) {
     return this.communityService.findCommunityDetailBySlug(
       slug,
-      request.user.userId,
+      request.user?.userId,
     );
   }
 
