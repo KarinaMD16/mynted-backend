@@ -12,6 +12,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { BadgeEvents } from '../badges/badge-events';
+import { CommunityEvents, JoinRequestResolvedEvent } from './community-events';
 import {
   DataSource,
   FindOptionsWhere,
@@ -738,6 +739,7 @@ export class CommunityService {
       communityProfileId: accepted.communityProfileId,
       communityId,
     });
+    this.emitJoinRequestResolved(request, true, actingUserId);
 
     return accepted;
   }
@@ -756,7 +758,24 @@ export class CommunityService {
     request.status = CommunityJoinRequestStatus.REJECTED;
     request.resolvedAt = new Date();
     request.resolvedByProfileId = actingProfile.communityProfileId;
-    return this.communityJoinRequestRepository.save(request);
+    const saved = await this.communityJoinRequestRepository.save(request);
+    this.emitJoinRequestResolved(request, false, actingUserId);
+    return saved;
+  }
+
+  private emitJoinRequestResolved(
+    request: CommunityJoinRequest,
+    accepted: boolean,
+    resolvedByUserId: string,
+  ): void {
+    const event: JoinRequestResolvedEvent = {
+      requestId: request.id,
+      communityId: request.communityId,
+      userId: request.userId,
+      accepted,
+      resolvedByUserId,
+    };
+    this.eventEmitter?.emit(CommunityEvents.JOIN_REQUEST_RESOLVED, event);
   }
 
   private async resolveJoinRequest(

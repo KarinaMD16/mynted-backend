@@ -23,6 +23,11 @@ export interface PostCreatedEvent {
 
 export interface ReplyCreatedEvent {
   communityProfileId: number;
+  // Para notificaciones (BadgesListener solo usa communityProfileId).
+  postId: number;
+  replyId: number;
+  authorUserId: string;
+  parentReplyId: number | null;
 }
 
 export interface PostUpvotedEvent {

@@ -4,7 +4,9 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  Optional,
 } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { InjectRepository } from '@nestjs/typeorm';
 import { QueryFailedError, Repository } from 'typeorm';
 import {
@@ -16,6 +18,7 @@ import { PaymentTransaction } from '../payments/entities/payment-transaction.ent
 import { TransactionStatus } from '../payments/enums/transaction-status.enum';
 import { Product, ProductType } from './entities/product.entity';
 import { Review } from './entities/review.entity';
+import { ReviewCreatedEvent, ReviewEvents } from './review-events';
 
 export interface RatingSummary {
   ratingAverage: number | null;
@@ -63,6 +66,7 @@ export class ReviewsService {
     private readonly productRepository: Repository<Product>,
     @InjectRepository(PaymentTransaction)
     private readonly transactionRepository: Repository<PaymentTransaction>,
+    @Optional() private readonly eventEmitter?: EventEmitter2,
   ) {}
 
   // Orden: 404 producto, 403 dueño, 403 intercambio, 403 sin compra, 409
@@ -82,6 +86,14 @@ export class ReviewsService {
           comment: dto.comment ?? null,
         }),
       );
+      const event: ReviewCreatedEvent = {
+        reviewId: review.id,
+        productId,
+        authorId: userId,
+        sellerUserId: product.seller.userId,
+        rating: review.rating,
+      };
+      this.eventEmitter?.emit(ReviewEvents.CREATED, event);
       return this.findOneMapped(review.id, userId);
     } catch (error: unknown) {
       // Dos POST simultáneos: el índice único decide.

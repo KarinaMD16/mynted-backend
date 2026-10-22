@@ -202,4 +202,75 @@ describe('NotificationsListener', () => {
       );
     });
   });
+
+  describe('forum.reply.created', () => {
+    const event = {
+      communityProfileId: 9,
+      postId: 5,
+      replyId: 50,
+      authorUserId: 'replier',
+      parentReplyId: 40,
+    };
+    const row = (postAuthor: string, parentAuthor: string | null) => ({
+      post_title: 'Post',
+      post_author_id: postAuthor,
+      community_id: 2,
+      community_slug: 'foro',
+      parent_author_id: parentAuthor,
+      author_username: 'respondona',
+    });
+    const recipients = () =>
+      (notify.mock.calls[0] as [{ userId: string; type: string }[]])[0].map(
+        (input) => [input.userId, input.type],
+      );
+
+    it('avisa al autor de la respuesta padre y al del post', async () => {
+      query.mockResolvedValue([row('post-author', 'parent-author')]);
+      await listener.onReplyCreated(event);
+
+      expect(recipients()).toEqual([
+        ['parent-author', NotificationType.REPLY_REPLIED],
+        ['post-author', NotificationType.POST_REPLIED],
+      ]);
+    });
+
+    it('si el autor del post es el de la respuesta padre, una sola (reply_replied)', async () => {
+      query.mockResolvedValue([row('same', 'same')]);
+      await listener.onReplyCreated(event);
+
+      expect(recipients()).toEqual([['same', NotificationType.REPLY_REPLIED]]);
+    });
+
+    it('nunca a quien respondió', async () => {
+      query.mockResolvedValue([row('replier', 'replier')]);
+      await listener.onReplyCreated(event);
+
+      expect(recipients()).toEqual([]);
+    });
+  });
+
+  describe('autor de la acción', () => {
+    it('no avisa una reseña del propio vendedor', async () => {
+      await listener.onReviewCreated({
+        reviewId: 1,
+        productId: 2,
+        authorId: 'same',
+        sellerUserId: 'same',
+        rating: 5,
+      });
+      expect(query).not.toHaveBeenCalled();
+      expect(notify).not.toHaveBeenCalled();
+    });
+
+    it('no avisa una solicitud resuelta por quien la pidió', async () => {
+      await listener.onJoinRequestResolved({
+        requestId: 1,
+        communityId: 2,
+        userId: 'same',
+        accepted: true,
+        resolvedByUserId: 'same',
+      });
+      expect(notify).not.toHaveBeenCalled();
+    });
+  });
 });

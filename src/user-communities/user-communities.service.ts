@@ -7,6 +7,10 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { BadgeEvents } from '../badges/badge-events';
+import {
+  CommunityEvents,
+  JoinRequestCreatedEvent,
+} from '../community/community-events';
 import { In, QueryFailedError, Repository } from 'typeorm';
 import { Community } from '../community/entities/community.entity';
 import { CommunityTag } from '../community/entities/community-tag.entity';
@@ -155,6 +159,12 @@ export class UserCommunitiesService {
         }
         throw error;
       }
+      const event: JoinRequestCreatedEvent = {
+        requestId: request.id,
+        communityId,
+        userId,
+      };
+      this.eventEmitter?.emit(CommunityEvents.JOIN_REQUEST_CREATED, event);
 
       return { communityId, result: 'requested' };
     }

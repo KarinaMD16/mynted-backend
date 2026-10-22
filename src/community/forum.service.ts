@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { BadgeEvents } from '../badges/badge-events';
+import { BadgeEvents, ReplyCreatedEvent } from '../badges/badge-events';
 import { FavoriteNotificationsDto } from './dto/favorite-notifications.dto';
 import { DataSource, FindOptionsWhere, In, Not, Repository } from 'typeorm';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
@@ -500,9 +500,14 @@ export class ForumService {
     });
     const savedReply = await this.replyRepository.save(reply);
     void this.publishPostMetrics(postId);
-    this.eventEmitter?.emit(BadgeEvents.REPLY_CREATED, {
+    const replyEvent: ReplyCreatedEvent = {
       communityProfileId: profile.communityProfileId,
-    });
+      postId,
+      replyId: savedReply.id,
+      authorUserId: userId,
+      parentReplyId: savedReply.parentReplyId,
+    };
+    this.eventEmitter?.emit(BadgeEvents.REPLY_CREATED, replyEvent);
     return this.findReplyResponse(savedReply.id, userId);
   }
 

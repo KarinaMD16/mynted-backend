@@ -9,6 +9,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { BadgeEvents } from '../badges/badge-events';
+import { SellerEvents, SellerRejectedEvent } from './seller-events';
 import { DataSource, QueryFailedError, Repository } from 'typeorm';
 import {
   SellerRequestStatus,
@@ -299,6 +300,9 @@ export class SellersService {
       this.eventEmitter?.emit(BadgeEvents.SELLER_APPROVED, {
         userId: targetUserId,
       });
+    } else {
+      const event: SellerRejectedEvent = { userId: targetUserId };
+      this.eventEmitter?.emit(SellerEvents.REJECTED, event);
     }
 
     return updated;
