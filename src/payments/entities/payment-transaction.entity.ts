@@ -141,6 +141,15 @@ export class PaymentTransaction {
   @Column({ name: 'card_last4', type: 'char', length: 4, nullable: true })
   cardLast4!: string | null;
 
+  // Nullable: las transacciones anteriores a este campo no lo tienen.
+  @Column({
+    name: 'card_holder_name',
+    type: 'varchar',
+    length: 80,
+    nullable: true,
+  })
+  cardHolderName!: string | null;
+
   @Column({ name: 'gateway_reference', type: 'varchar', nullable: true })
   gatewayReference!: string | null;
 

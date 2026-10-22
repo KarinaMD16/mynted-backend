@@ -21,6 +21,7 @@ export class CheckoutResponseDto {
   gatewayReference!: string | null;
   cardBrand!: string | null;
   cardLast4!: string | null;
+  cardHolderName!: string | null;
   failureReason!: string | null;
   completedAt!: Date | null;
 }

@@ -29,6 +29,7 @@ describe('PaymentsService', () => {
     expiryMonth: 12,
     expiryYear: 2099,
     cvv: '123',
+    cardHolderName: 'María José Núñez',
   };
 
   const createHarness = (overrides: Record<string, unknown> = {}) => {
@@ -470,7 +471,106 @@ describe('PaymentsService', () => {
       });
       expect(JSON.stringify(body)).not.toContain('cardNumber');
       expect(JSON.stringify(body)).not.toContain('cvv');
+      expect(JSON.stringify(body)).not.toContain('María');
     }
+  });
+
+  describe('card holder name', () => {
+    it('stores and returns the normalized holder name on approval', async () => {
+      const h = createHarness();
+
+      const result = await h.service.checkout(
+        {
+          productId: 7,
+          card: { ...card, cardHolderName: '  María   José Núñez ' },
+        },
+        buyerId,
+        'checkout-holder-1',
+      );
+
+      expect(result).toMatchObject({
+        status: TransactionStatus.COMPLETED,
+        cardBrand: 'visa',
+        cardLast4: '4242',
+        cardHolderName: 'María José Núñez',
+      });
+      expect(h.txRepo.save).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          status: TransactionStatus.COMPLETED,
+          cardHolderName: 'María José Núñez',
+        }),
+      );
+      expect(h.txRepo.save).not.toHaveBeenCalledWith(
+        expect.objectContaining({ cardNumber: expect.anything() as unknown }),
+      );
+      expect(h.txRepo.save).not.toHaveBeenCalledWith(
+        expect.objectContaining({ cvv: expect.anything() as unknown }),
+      );
+    });
+
+    it('does not store the holder name when the payment is rejected', async () => {
+      const h = createHarness();
+      h.paymentGateway.charge.mockResolvedValue({
+        approved: false,
+        failureReason: 'card_declined',
+      });
+
+      await expect(
+        h.service.checkout(dto(), buyerId, 'checkout-holder-2'),
+      ).rejects.toBeInstanceOf(HttpException);
+      expect(h.txRepo.save).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          status: TransactionStatus.FAILED,
+          cardBrand: null,
+          cardLast4: null,
+          cardHolderName: null,
+        }),
+      );
+    });
+
+    it('replays the same idempotency key with the stored holder name', async () => {
+      const h = createHarness();
+      h.txRepo.findOne.mockResolvedValue({
+        id: 'existing',
+        productId: 7,
+        buyerId,
+        status: TransactionStatus.COMPLETED,
+        cardBrand: 'visa',
+        cardLast4: '4242',
+        cardHolderName: 'María José Núñez',
+      });
+
+      // La idempotencia compara comprador y producto, no el cuerpo: un
+      // reintento devuelve la transacción guardada tal cual.
+      await expect(
+        h.service.checkout(
+          { productId: 7, card: { ...card, cardHolderName: 'Otro Nombre' } },
+          buyerId,
+          'checkout-holder-3',
+        ),
+      ).resolves.toMatchObject({
+        id: 'existing',
+        cardHolderName: 'María José Núñez',
+      });
+      expect(h.paymentGateway.charge).not.toHaveBeenCalled();
+    });
+
+    it('returns null for transactions created before the field existed', async () => {
+      const h = createHarness();
+      h.txRepo.findOne.mockResolvedValue({
+        id: 'legacy',
+        productId: 7,
+        buyerId,
+        status: TransactionStatus.COMPLETED,
+        cardBrand: 'visa',
+        cardLast4: '4242',
+        cardHolderName: null,
+      });
+
+      await expect(
+        h.service.checkout(dto(), buyerId, 'checkout-holder-4'),
+      ).resolves.toMatchObject({ id: 'legacy', cardHolderName: null });
+    });
   });
 
   describe('quote', () => {
