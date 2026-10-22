@@ -408,7 +408,11 @@ export class ForumService {
     return counts;
   }
 
-  async findPost(postId: number, userId: string, knownCommunity?: Community) {
+  async findPost(
+    postId: number,
+    userId: string | undefined,
+    knownCommunity?: Community,
+  ) {
     const post = await this.postRepository.findOne({
       where: { id: postId },
       relations: {
@@ -428,14 +432,22 @@ export class ForumService {
     }
 
     const profile = community.isPrivate
-      ? await this.getMemberProfile(userId, community.id)
-      : await this.communityProfileRepository.findOne({
-          where: {
-            userId,
-            communityId: community.id,
-          },
-          select: { communityProfileId: true },
-        });
+      ? userId
+        ? await this.getMemberProfile(userId, community.id)
+        : (() => {
+            throw new ForbiddenException(
+              'Debes pertenecer a la comunidad para ver esta publicación',
+            );
+          })()
+      : userId
+        ? await this.communityProfileRepository.findOne({
+            where: {
+              userId,
+              communityId: community.id,
+            },
+            select: { communityProfileId: true },
+          })
+        : null;
     const metrics = await this.getPostMetrics(
       [post.id],
       profile?.communityProfileId,
@@ -488,25 +500,33 @@ export class ForumService {
 
   async findReplies(
     postId: number,
-    userId: string,
+    userId: string | undefined,
     knownProfile?: CommunityProfile | null,
   ) {
     const post = await this.getActivePost(postId);
     const profile =
       knownProfile !== undefined
         ? knownProfile
-        : post.communityProfile.community.isPrivate
-          ? await this.getMemberProfile(
-              userId,
-              post.communityProfile.communityId,
-            )
-          : await this.communityProfileRepository.findOne({
-              where: {
-                userId,
-                communityId: post.communityProfile.communityId,
-              },
-              select: { communityProfileId: true },
-            });
+          : post.communityProfile.community.isPrivate
+            ? userId
+              ? await this.getMemberProfile(
+                  userId,
+                  post.communityProfile.communityId,
+                )
+              : (() => {
+                  throw new ForbiddenException(
+                    'Debes pertenecer a la comunidad para ver estas respuestas',
+                  );
+                })()
+            : userId
+              ? await this.communityProfileRepository.findOne({
+                  where: {
+                    userId,
+                    communityId: post.communityProfile.communityId,
+                  },
+                  select: { communityProfileId: true },
+                })
+              : null;
     const replies = await this.replyRepository.find({
       where: { postId },
       relations: { communityProfile: { user: true } },
@@ -758,7 +778,7 @@ export class ForumService {
   private async getPostMetrics(
     postIds: number[],
     communityProfileId: number | undefined,
-    userId: string,
+    userId: string | undefined,
     profileByPostId?: Map<number, number | undefined>,
   ): Promise<Map<number, PostMetric>> {
     const result = new Map<number, PostMetric>();
@@ -800,7 +820,7 @@ export class ForumService {
   private async getReplyMetrics(
     replyIds: number[],
     communityProfileId: number | undefined,
-    userId: string,
+    userId: string | undefined,
   ): Promise<Map<number, PostMetric>> {
     const result = new Map<number, PostMetric>();
     if (replyIds.length === 0) return result;
