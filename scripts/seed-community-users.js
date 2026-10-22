@@ -444,7 +444,14 @@ async function clean(c) {
     // users -> community_profile/seller/... en cascada (posts, respuestas, votos, productos).
     await c.query('delete from users where id = any($1)', [users]);
   }
-  await c.query('delete from payment_info where number like $1', [`${PAYMENT_PREFIX}%`]);
+  // Solo los datos de pago que ya no usa ningún vendedor: seed-twilightbuns-products.js
+  // también usa el prefijo SEED- (SEED-TWILIGHTBUNS) y seller.payment_id es RESTRICT.
+  await c.query(
+    `delete from payment_info p
+      where p.number like $1
+        and not exists (select 1 from seller s where s.payment_id = p.payment_info_id)`,
+    [`${PAYMENT_PREFIX}%`],
+  );
   await c.query('delete from community where slug = $1', [MINECRAFT_SLUG]);
   return users.length;
 }
