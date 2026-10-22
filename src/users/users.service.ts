@@ -113,11 +113,16 @@ export class UsersService {
     };
   }
 
-  // Mapea a la vista pública con una sola consulta de vendedores.
+  // Mapea a la vista pública con una sola consulta de vendedores. Solo los
+  // aprobados (is_verified) cuentan como vendedores: el registro seller se crea
+  // al solicitar, así que un pendiente o rechazado sale sin objeto seller.
   async toPublicUsers(users: User[]): Promise<PublicUserDto[]> {
     const sellers = users.length
       ? await this.sellersRepository.find({
-          where: { userId: In(users.map((user) => user.id)) },
+          where: {
+            userId: In(users.map((user) => user.id)),
+            isVerified: true,
+          },
         })
       : [];
     const sellerByUserId = new Map(sellers.map((s) => [s.userId, s]));
@@ -151,7 +156,8 @@ export class UsersService {
   }
 
   // Rating del vendedor: promedio (1 decimal) y total de las reseñas de todos
-  // sus productos, calculado con agregado.
+  // sus productos, calculado con agregado. Un vendedor no aprobado no tiene
+  // rating (no aparece en el resultado).
   async getSellerRatings(
     sellerIds: number[],
   ): Promise<
@@ -170,6 +176,11 @@ export class UsersService {
       .addSelect('COUNT(*)', 'count')
       .from(Review, 'review')
       .innerJoin(Product, 'product', 'product.id = review.product_id')
+      .innerJoin(
+        Seller,
+        'seller',
+        'seller.seller_id = product.seller_id AND seller.is_verified = true',
+      )
       .where('product.seller_id IN (:...sellerIds)', { sellerIds })
       .groupBy('product.seller_id')
       .getRawMany<{ sellerId: number; average: string; count: string }>();

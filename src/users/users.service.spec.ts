@@ -29,6 +29,59 @@ describe('UsersService', () => {
     );
   });
 
+  describe('toPublicUsers', () => {
+    const approvedSeller = {
+      sellerId: 7,
+      userId: 'seller-id',
+      displayName: 'Funko Corner',
+      isVerified: true,
+    } as Seller;
+
+    const build = (sellers: Seller[]) => {
+      const sellersRepository = { find: jest.fn().mockResolvedValue(sellers) };
+      const publicService = new UsersService(
+        usersRepository as unknown as Repository<User>,
+        {} as Repository<UserOAuthAccount>,
+        cloudinaryService as unknown as CloudinaryService,
+        sellersRepository as unknown as Repository<Seller>,
+      );
+      jest
+        .spyOn(publicService, 'getSellerRatings')
+        .mockResolvedValue(
+          new Map([[7, { ratingAverage: 4.5, reviewsCount: 2 }]]),
+        );
+      return { publicService, sellersRepository };
+    };
+
+    it('solo consulta vendedores aprobados', async () => {
+      const { publicService, sellersRepository } = build([approvedSeller]);
+
+      const [seller] = await publicService.toPublicUsers([
+        { id: 'seller-id', username: 'karina' } as User,
+      ]);
+
+      expect(sellersRepository.find).toHaveBeenCalledWith({
+        where: { userId: expect.anything() as unknown, isVerified: true },
+      });
+      expect(seller.seller).toMatchObject({
+        displayName: 'Funko Corner',
+        ratingAverage: 4.5,
+        reviewsCount: 2,
+      });
+    });
+
+    it('un solicitante pendiente o rechazado sale sin objeto seller', async () => {
+      // La consulta filtrada por isVerified no lo devuelve.
+      const { publicService } = build([]);
+
+      const [pending] = await publicService.toPublicUsers([
+        { id: 'pending-id', username: 'pendiente' } as User,
+      ]);
+
+      expect(pending).not.toHaveProperty('seller');
+    });
+  });
+
   it('actualiza únicamente el perfil del usuario autenticado', async () => {
     const user = { id: 'user-id', username: 'anterior' } as User;
     const photo = { mimetype: 'image/png' } as Express.Multer.File;
