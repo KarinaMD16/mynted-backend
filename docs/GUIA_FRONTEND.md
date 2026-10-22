@@ -184,10 +184,11 @@ Renderiza según `type`.
   "status": "active", "type": "sale", "condition": "new",
   "tags": [{ "tagId": 1, "name": "..." }],
   "community": { "id": 1, "name": "..." },   // null si no tiene comunidad
-  "seller": { "sellerId": 4, "displayName": "...", "photoUrl": "...", "isVerified": true },
+  "seller": { "sellerId": 4, "userId": "6f1c2a9e-…", "displayName": "...", "photoUrl": "...", "isVerified": true },
   "isSaved": false
 }
 ```
+`seller.userId` es el `User.id` del vendedor: úsalo para enlazar a su perfil (`/users/:id`) o abrir un chat.
 
 ---
 
@@ -200,10 +201,10 @@ Renderiza según `type`.
 Errores: 400 token inválido/vencido/ya usado · 409 el correo ya está en uso (sin distinguir mayúsculas).
 
 ### `GET /users/me`
-Usuario completo: incluye `locale`, `currency`, `country`, `emailNotifications`, `pushNotifications`, `confirmUnfavorite`, `role`, `sellerRequestStatus`.
+Usuario completo: incluye `locale`, `currency`, `displayCurrency`, `country`, `emailNotifications`, `pushNotifications`, `confirmUnfavorite`, `role`, `sellerRequestStatus`.
 
 ### `PATCH /users/me` (multipart)
-Campos opcionales (manda al menos uno): `username`, `bio`, `location`, `locale`, `currency` (**ISO 4217**, ej. `CRC`, `USD`; se pasa a mayúsculas), `country` (**ISO 3166-1 alfa-2**, ej. `CR`), `emailNotifications`, `pushNotifications`, `confirmUnfavorite` (booleanos), `photo` (archivo, 5 MB).
+Campos opcionales (manda al menos uno): `username`, `bio`, `location`, `locale`, `currency` (**ISO 4217**, ej. `CRC`, `USD`; se pasa a mayúsculas; moneda de venta/comisión), `displayCurrency` (moneda en que se **ven** los precios; ver [GUIA_MONEDA_FRONTEND.md](GUIA_MONEDA_FRONTEND.md)), `country` (**ISO 3166-1 alfa-2**, ej. `CR`), `emailNotifications`, `pushNotifications`, `confirmUnfavorite` (booleanos), `photo` (archivo, 5 MB).
 
 - **`confirmUnfavorite`** (por defecto `true`): es una **preferencia que solo guarda el backend**; no cambia el comportamiento de la API. Si es `true`, el front debe mostrar un diálogo "¿Quitar de favoritos?" antes de llamar al `DELETE .../favorite`; si es `false`, lo quita directo. Sirve para un "No volver a preguntar" que se conserve entre dispositivos.
 - **Importante:** para publicar productos el usuario **debe tener `currency`**; si no, recibe 400.
@@ -222,7 +223,7 @@ Campos opcionales (manda al menos uno): `username`, `bio`, `location`, `locale`,
 
 ### Campos de precio
 - `price`: precio original (nunca se modifica). `discountPercent`: 0–100 o `null`. `finalPrice`: precio con descuento (calculado). **Muestra `finalPrice` y tacha `price` si hay descuento.**
-- Los filtros `priceMin/priceMax` comparan contra `finalPrice`.
+- Los filtros `priceMin/priceMax` comparan contra `finalPrice`, en la moneda de visualización (ver [GUIA_MONEDA_FRONTEND.md](GUIA_MONEDA_FRONTEND.md)).
 
 ### Otros campos
 `isVisible` (si es `false` no sale en listados públicos), `shipsTo` (`["CR","MX"]`), `publishedAt`, `currency`.
@@ -281,7 +282,7 @@ Un producto **sin comunidad** aparece en shop, `/products`, búsqueda, perfil de
 
 ### 4.3 Lecturas (funcionan **sin sesión**)
 
-**`GET /products`** – listado/filtros. Query: `communityId`, `tag`, `category`, `type`, `condition`, `currency` (ISO 4217), `priceMin`, `priceMax` (enteros, sobre el precio final), `shipTo` (ISO país), `page` (1), `limit` (10, máx. 100). Solo `active` + `isVisible`.
+**`GET /products`** – listado/filtros. Query: `communityId`, `tag`, `category`, `type`, `condition`, `currency` (ISO 4217, filtro por moneda del producto), `priceMin`, `priceMax` (decimales, sobre el precio final y **en la moneda de visualización**), `sort` (`newest`|`price_asc`|`price_desc`), `shipTo` (ISO país), `page` (1), `limit` (10, máx. 100). Solo `active` + `isVisible`. Cada producto trae además `displayPrice`, `displayFinalPrice`, `displayCurrency` e `isConverted` (ver [GUIA_MONEDA_FRONTEND.md](GUIA_MONEDA_FRONTEND.md)).
 → `{ data: ProductListItem[], pagination }`
 
 **`ProductListItem`** (también en `/products/recommended`, `/products/:id/related`, `/search`):
@@ -310,13 +311,26 @@ Un producto **sin comunidad** aparece en shop, `/products`, búsqueda, perfil de
   "isSaved": false,
   "ratingAverage": 4.5,            // null si no hay reseñas
   "reviewsCount": 8,
+  "canComment": false,             // ¿puede quien mira reseñarlo ahora? (ver abajo)
   "seller": {
-    "sellerId": 4, "displayName": "...", "isVerified": true,
+    "sellerId": 4, "userId": "6f1c2a9e-1b2c-4d3e-8f90-123456789abc",
+    "displayName": "...", "isVerified": true,
     "photoUrl": "...", "ratingAverage": 4.7, "reviewsCount": 12
   }
 }
 ```
 Un `draft` solo lo ve su dueño (404 para los demás). Borrado → 404.
+
+- **`seller.userId`** (uuid): el `User.id` del vendedor, para enlazar a su perfil o abrir un chat. Nunca se expone `paymentInfo`.
+- **`canComment`** (boolean, a nivel de producto, **no** dentro de `seller`): úsalo para mostrar u ocultar el formulario de reseña. Es `true` solo si se cumple todo:
+  1. hay sesión (sin sesión siempre `false`);
+  2. quien mira **no** es el dueño;
+  3. el producto **no** es `exchange`;
+  4. quien mira tiene una compra **completada** de ese producto;
+  5. quien mira todavía **no** lo ha reseñado.
+
+  Es exactamente la misma regla que valida `POST /products/:id/reviews`: si `canComment` es `true`, el POST va a funcionar; si es `false`, el POST responde 403 o 409. Después de reseñar, vuelve a pedir el detalle (o pon `canComment` en `false` localmente).
+- **Productos `exchange`:** todavía no se pueden reseñar (no existe el flujo de intercambio), así que `canComment` es siempre `false` y el POST responde 403.
 
 **`GET /products/:id/related`** → arreglo de `ProductListItem` con `isSellerChoice: boolean`. Primero los que eligió el vendedor, luego automáticos por tags/comunidad (y por tus intereses si hay sesión). Máx. 6, sin duplicados.
 
@@ -351,7 +365,7 @@ Query: `page` (1) y `limit` (3, máx. 20) → **secciones** por página · `prod
 - Un producto aparece **una sola vez** (en la primera sección cuyo tag tenga).
 - "Show all": `GET /products?tag=<tagId>`.
 
-`TagProductCard`: `id, title, price, discountPercent, finalPrice, currency, imageUrl, type, condition, isSaved, tags[], seller{sellerId, displayName, photoUrl, isVerified}`.
+`TagProductCard`: `id, title, price, discountPercent, finalPrice, currency, imageUrl, type, condition, isSaved, tags[], seller{sellerId, userId, displayName, photoUrl, isVerified}`.
 
 ---
 
@@ -372,7 +386,7 @@ Reactivar un pausado: `PATCH /products/:id/status` `{ "status": "active" }`.
 ### Reseñas (solo compradores con compra completada)
 | Endpoint | |
 | --- | --- |
-| `POST /products/:id/reviews` `{ rating: 1-5, comment? }` | 201. 403 si es tu propio producto o no lo compraste (compra `completed`) · 409 si ya reseñaste. |
+| `POST /products/:id/reviews` `{ rating: 1-5, comment? }` | 201. En este orden: 404 producto inexistente · 403 si es tu propio producto · 403 si es un producto `exchange` (aún no se pueden reseñar) · 403 si no lo compraste (compra `completed`) · 409 si ya reseñaste. Antes de mostrar el formulario, mira `canComment` en `GET /products/:id`. |
 | `GET /products/:id/reviews?page=&limit=` (sin sesión) | `{ ratingAverage, reviewsCount, data: Review[], pagination }` |
 | `PATCH /products/:id/reviews/me` | Edita mi reseña. |
 | `DELETE /products/:id/reviews/me` | Borra mi reseña (204). |

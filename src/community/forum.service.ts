@@ -10,6 +10,7 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { BadgeEvents } from '../badges/badge-events';
 import { DataSource, FindOptionsWhere, In, Not, Repository } from 'typeorm';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
+import { PriceDisplayService } from '../pricing/price-display.service';
 import { Product, ProductStatus } from '../products/entities/product.entity';
 import { escapeLike } from '../common/escape-like';
 import { PostEvents } from './post-events';
@@ -104,6 +105,7 @@ export class ForumService {
     private readonly productRepository: Repository<Product>,
     private readonly dataSource: DataSource,
     private readonly cloudinaryService: CloudinaryService,
+    private readonly priceDisplay: PriceDisplayService,
     @Optional()
     @InjectRepository(UserTag)
     private readonly userTagRepository?: Repository<UserTag>,
@@ -1037,8 +1039,12 @@ export class ForumService {
   }
 
   // Posts y productos publicados por el usuario, mezclados por fecha.
-  findMyContent(userId: string, query: GetMyFeedQueryDto) {
-    return this.findUserContent(userId, userId, query, false);
+  findMyContent(
+    userId: string,
+    query: GetMyFeedQueryDto,
+    displayCurrency: string,
+  ) {
+    return this.findUserContent(userId, userId, query, false, displayCurrency);
   }
 
   async findUserContent(
@@ -1046,6 +1052,7 @@ export class ForumService {
     viewerId: string,
     query: GetMyFeedQueryDto,
     publicOnly: boolean,
+    displayCurrency: string,
   ) {
     const entries: ContentEntry[] = [];
 
@@ -1077,7 +1084,7 @@ export class ForumService {
       }),
     );
 
-    return this.pageContent(entries, viewerId, query);
+    return this.pageContent(entries, viewerId, query, displayCurrency);
   }
 
   // Productos de un usuario: en su perfil público solo los activos y de
@@ -1086,6 +1093,7 @@ export class ForumService {
     ownerId: string,
     viewerId: string,
     query: GetMyFeedQueryDto,
+    displayCurrency: string,
   ) {
     const [rows, total] = await this.productRepository.findAndCount({
       where: this.userProductsWhere(ownerId, true),
@@ -1102,6 +1110,7 @@ export class ForumService {
       data: await this.buildProductCards(
         rows.map((row) => row.id),
         viewerId,
+        displayCurrency,
       ),
       pagination: this.buildPageInfo(query.page, query.limit, total),
     };
@@ -1124,7 +1133,11 @@ export class ForumService {
 
   // Posts y productos guardados como favoritos por el usuario; la fecha es
   // la de guardado. Se omiten los que ya no existen o no están disponibles.
-  async findMyFavorites(userId: string, query: GetMyContentQueryDto) {
+  async findMyFavorites(
+    userId: string,
+    query: GetMyContentQueryDto,
+    displayCurrency: string,
+  ) {
     const itemTypes = [
       ...(query.type !== ContentType.PRODUCTS ? [FavoriteItemType.POST] : []),
       ...(query.type !== ContentType.POSTS ? [FavoriteItemType.PRODUCT] : []),
@@ -1183,7 +1196,7 @@ export class ForumService {
       }
     }
 
-    return this.pageContent(entries, userId, query);
+    return this.pageContent(entries, userId, query, displayCurrency);
   }
 
   // Búsqueda global de posts: título o cuerpo, solo comunidades públicas y
@@ -1233,6 +1246,7 @@ export class ForumService {
     entries: ContentEntry[],
     userId: string,
     query: GetMyFeedQueryDto,
+    displayCurrency: string,
   ) {
     const sign = query.order === SortOrder.ASC ? 1 : -1;
     entries.sort(
@@ -1252,6 +1266,7 @@ export class ForumService {
       this.buildProductCards(
         pageEntries.filter((e) => e.type === 'product').map((e) => e.id),
         userId,
+        displayCurrency,
       ),
     ]);
     const postById = new Map(postCards.map((card) => [card.id, card]));
@@ -1349,7 +1364,11 @@ export class ForumService {
     }));
   }
 
-  private async buildProductCards(productIds: number[], userId: string) {
+  private async buildProductCards(
+    productIds: number[],
+    userId: string,
+    displayCurrency: string,
+  ) {
     if (productIds.length === 0) return [];
 
     const [products, favorites] = await Promise.all([
@@ -1372,7 +1391,7 @@ export class ForumService {
     const savedIds = new Set(favorites.map((favorite) => favorite.itemId));
     const productById = new Map(products.map((p) => [p.id, p]));
 
-    return productIds
+    const cards = productIds
       .map((id) => productById.get(id))
       .filter((product): product is Product => product !== undefined)
       .map((product) => ({
@@ -1395,11 +1414,13 @@ export class ForumService {
           : null,
         seller: {
           sellerId: product.seller.sellerId,
+          userId: product.seller.userId,
           displayName: product.seller.displayName,
           photoUrl: product.seller.user.photoUrl ?? null,
           isVerified: product.seller.isVerified,
         },
         isSaved: savedIds.has(product.id),
       }));
+    return this.priceDisplay.withDisplayPrices(cards, displayCurrency);
   }
 }

@@ -38,6 +38,10 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
 import { SellerGuard } from '../auth/guards/seller.guard';
 import {
+  ApiDisplayCurrencyHeader,
+  DisplayCurrency,
+} from '../pricing/display-currency.decorator';
+import {
   AuthenticatedRequest,
   OptionalAuthenticatedRequest,
 } from '../auth/types/authenticated-request';
@@ -220,13 +224,19 @@ export class ProductsController {
     summary:
       'Productos recomendados: combina los tags que sigue el usuario autenticado (si hay uno) ' +
       'y/o los tags y comunidad de currentProductId (si se pasa). Sin ninguna señal, ' +
-      'devuelve los productos activos más recientes. Funciona sin sesión',
+      'devuelve los productos activos más recientes. Funciona sin sesión. Cada producto trae displayPrice/displayFinalPrice en la moneda de visualización',
   })
+  @ApiDisplayCurrencyHeader()
   findRecommended(
     @Req() request: OptionalAuthenticatedRequest,
     @Query() query: GetRecommendedProductsQueryDto,
+    @DisplayCurrency() displayCurrency: string,
   ) {
-    return this.productsService.findRecommended(request.user?.userId, query);
+    return this.productsService.findRecommended(
+      request.user?.userId,
+      query,
+      displayCurrency,
+    );
   }
 
   @Get('products/shop')
@@ -236,13 +246,19 @@ export class ProductsController {
     summary:
       'Pantalla Shop con scroll infinito: una sección por tag (page/limit paginan las secciones; ' +
       'productsPage/productsLimit los productos de cada una). Con usuario autenticado primero van los tags de sus intereses; ' +
-      'sin usuario o sin intereses, los más populares. shipTo filtra por país de envío',
+      'sin usuario o sin intereses, los más populares. shipTo filtra por país de envío; priceMin/priceMax (en la moneda de visualización) y sort ordenan/filtran los productos de cada sección',
   })
+  @ApiDisplayCurrencyHeader()
   findShop(
     @Req() request: OptionalAuthenticatedRequest,
     @Query() query: GetShopQueryDto,
+    @DisplayCurrency() displayCurrency: string,
   ) {
-    return this.productsService.findShop(request.user?.userId, query);
+    return this.productsService.findShop(
+      request.user?.userId,
+      query,
+      displayCurrency,
+    );
   }
 
   @Get('products/me')
@@ -277,14 +293,20 @@ export class ProductsController {
   @ApiBearerAuth()
   @ApiOperation({
     summary:
-      'Listar/buscar productos activos y visibles con filtros combinables (comunidad, tag, categoría, type, condition, currency, rango de precio final, país de envío). ' +
-      'Funciona sin sesión; con sesión cada producto trae isSaved',
+      'Listar/buscar productos activos y visibles con filtros combinables (comunidad, tag, categoría, type, condition, currency, rango de precio final, país de envío) y sort (newest|price_asc|price_desc). ' +
+      'priceMin/priceMax se interpretan en la moneda de visualización. Funciona sin sesión; con sesión cada producto trae isSaved',
   })
+  @ApiDisplayCurrencyHeader()
   findAll(
     @Query() query: GetProductsQueryDto,
     @Req() request: OptionalAuthenticatedRequest,
+    @DisplayCurrency() displayCurrency: string,
   ) {
-    return this.productsService.findAll(query, request.user?.userId);
+    return this.productsService.findAll(
+      query,
+      request.user?.userId,
+      displayCurrency,
+    );
   }
 
   @Get('products/:id')
@@ -292,13 +314,20 @@ export class ProductsController {
   @ApiBearerAuth()
   @ApiOperation({
     summary:
-      'Detalle de un producto: precio, descuento y precio final, rating, datos públicos del vendedor (foto y rating) e isSaved. Funciona sin sesión; un borrador solo lo ve su dueño',
+      'Detalle de un producto: precio, descuento y precio final, rating, datos públicos del vendedor (userId, foto y rating), isSaved y canComment ' +
+      '(true si quien mira puede reseñarlo: con sesión, no es el dueño, no es exchange, tiene compra completada y aún no lo reseñó). Funciona sin sesión; un borrador solo lo ve su dueño',
   })
+  @ApiDisplayCurrencyHeader()
   findOne(
     @Param('id', ParseIntPipe) id: number,
     @Req() request: OptionalAuthenticatedRequest,
+    @DisplayCurrency() displayCurrency: string,
   ) {
-    return this.productsService.findDetail(id, request.user?.userId);
+    return this.productsService.findDetail(
+      id,
+      request.user?.userId,
+      displayCurrency,
+    );
   }
 
   @Get('products/:id/related')
@@ -308,11 +337,17 @@ export class ProductsController {
     summary:
       'Productos relacionados: primero los elegidos por el vendedor (isSellerChoice) y luego los automáticos por tags y comunidad',
   })
+  @ApiDisplayCurrencyHeader()
   findRelated(
     @Param('id', ParseIntPipe) id: number,
     @Req() request: OptionalAuthenticatedRequest,
+    @DisplayCurrency() displayCurrency: string,
   ) {
-    return this.productsService.findRelated(id, request.user?.userId);
+    return this.productsService.findRelated(
+      id,
+      request.user?.userId,
+      displayCurrency,
+    );
   }
 
   @Patch('products/:id')

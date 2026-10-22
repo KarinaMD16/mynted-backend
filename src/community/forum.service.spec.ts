@@ -12,6 +12,7 @@ import { Reply } from './entities/reply.entity';
 import { ReplyVote } from './entities/reply-vote.entity';
 import { Tag } from './entities/tag.entity';
 import { ForumService } from './forum.service';
+import { PriceDisplayService } from '../pricing/price-display.service';
 import { VoteType } from './entities/vote-type.enum';
 import { UserTag } from '../user-tags/entities/user-tag.entity';
 import { PostSort } from './post-ranking';
@@ -87,6 +88,7 @@ describe('ForumService', () => {
       productRepository as unknown as Repository<Product>,
       dataSource as never,
       cloudinary as unknown as CloudinaryService,
+      {} as PriceDisplayService,
       userTagRepository as unknown as Repository<UserTag>,
     );
     return {

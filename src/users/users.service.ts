@@ -198,6 +198,7 @@ export class UsersService {
       dto.location !== undefined ||
       dto.locale !== undefined ||
       dto.currency !== undefined ||
+      dto.displayCurrency !== undefined ||
       dto.emailNotifications !== undefined ||
       dto.pushNotifications !== undefined ||
       dto.confirmUnfavorite !== undefined ||
@@ -227,6 +228,9 @@ export class UsersService {
     if (dto.location !== undefined) user.location = dto.location;
     if (dto.locale !== undefined) user.locale = dto.locale;
     if (dto.currency !== undefined) user.currency = dto.currency;
+    if (dto.displayCurrency !== undefined) {
+      user.displayCurrency = dto.displayCurrency;
+    }
     if (dto.emailNotifications !== undefined) {
       user.emailNotifications = dto.emailNotifications;
     }
@@ -356,6 +360,7 @@ export class UsersService {
       privacyPolicyVersion?: string;
       locale?: string;
       currency?: string;
+      displayCurrency?: string;
     },
   ): Promise<void> {
     const update: Partial<User> = {};
@@ -366,13 +371,12 @@ export class UsersService {
     }
     if (meta.locale !== undefined) update.locale = meta.locale;
     if (meta.currency !== undefined) {
-      const currency = normalizeSupportedCurrency(meta.currency);
-      if (!isSupportedCurrency(currency)) {
-        throw new BadRequestException(
-          'La moneda no estÃ¡ soportada por Mynted',
-        );
-      }
-      update.currency = currency;
+      update.currency = this.supportedCurrencyOrFail(meta.currency);
+    }
+    if (meta.displayCurrency !== undefined) {
+      update.displayCurrency = this.supportedCurrencyOrFail(
+        meta.displayCurrency,
+      );
     }
 
     if (Object.keys(update).length > 0) {
@@ -460,6 +464,14 @@ export class UsersService {
     throw new ConflictException(
       'No se pudo generar un username único, intenta de nuevo',
     );
+  }
+
+  private supportedCurrencyOrFail(value: string): string {
+    const currency = normalizeSupportedCurrency(value);
+    if (!isSupportedCurrency(currency)) {
+      throw new BadRequestException('La moneda no está soportada por Mynted');
+    }
+    return currency;
   }
 
   private isUniqueViolation(error: unknown): boolean {

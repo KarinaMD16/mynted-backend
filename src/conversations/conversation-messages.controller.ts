@@ -30,6 +30,10 @@ import {
 } from '@nestjs/swagger';
 import 'multer';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import {
+  ApiDisplayCurrencyHeader,
+  DisplayCurrency,
+} from '../pricing/display-currency.decorator';
 import { ConversationEvents } from './conversation-events';
 import { conversationsValidationPipe } from './conversations.controller';
 import { CreateTextMessageDto } from './dto/create-text-message.dto';
@@ -86,14 +90,17 @@ export class ConversationMessagesController {
   @ApiBadRequestResponse({
     description: `cursor o limit inválidos, cursor de otra conversación, o ${CONVERSATION_ID_INVALID}`,
   })
+  @ApiDisplayCurrencyHeader()
   getHistory(
     @Query(conversationsValidationPipe) query: GetMessagesQueryDto,
     @Req() request: ConversationParticipantRequest,
+    @DisplayCurrency() displayCurrency: string,
   ): Promise<MessageHistoryResponseDto> {
     return this.messagesService.getHistory(
       request.conversation,
       request.user.userId,
       query,
+      displayCurrency,
     );
   }
 

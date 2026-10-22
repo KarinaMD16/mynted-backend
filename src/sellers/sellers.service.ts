@@ -52,14 +52,14 @@ export class SellersService {
     });
     if (!seller) {
       throw new NotFoundException(
-        'No se encontrÃ³ el registro de vendedor para este usuario',
+        'No se encontró el registro de vendedor para este usuario',
       );
     }
 
     const user = await this.usersService.findById(userId);
     if (typeof user.currency !== 'string' || user.currency.trim() === '') {
       throw new BadRequestException(
-        'Configura tu moneda antes de estimar una comisiÃ³n',
+        'Configura tu moneda antes de estimar una comisión',
       );
     }
     const currency = user.currency.trim().toUpperCase();

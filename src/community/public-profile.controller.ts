@@ -10,6 +10,10 @@ import {
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AuthenticatedRequest } from '../auth/types/authenticated-request';
+import {
+  ApiDisplayCurrencyHeader,
+  DisplayCurrency,
+} from '../pricing/display-currency.decorator';
 import { UsersService } from '../users/users.service';
 import { GetMyFeedQueryDto } from './dto/get-my-feed-query.dto';
 import { GetMyPostsQueryDto } from './dto/get-my-posts-query.dto';
@@ -34,10 +38,12 @@ export class PublicProfileController {
     summary:
       'Posts y productos publicados por un usuario, mezclados por fecha (solo contenido público)',
   })
+  @ApiDisplayCurrencyHeader()
   async findPosts(
     @Param('id', ParseUUIDPipe) id: string,
     @Query() query: GetMyFeedQueryDto,
     @Req() request: AuthenticatedRequest,
+    @DisplayCurrency() displayCurrency: string,
   ) {
     await this.usersService.findPublicById(id);
     return this.forumService.findUserContent(
@@ -45,6 +51,7 @@ export class PublicProfileController {
       request.user.userId,
       query,
       true,
+      displayCurrency,
     );
   }
 
@@ -72,12 +79,19 @@ export class PublicProfileController {
     summary:
       'Productos activos de un usuario vendedor, paginados (solo comunidades públicas)',
   })
+  @ApiDisplayCurrencyHeader()
   async findProducts(
     @Param('id', ParseUUIDPipe) id: string,
     @Query() query: GetMyFeedQueryDto,
     @Req() request: AuthenticatedRequest,
+    @DisplayCurrency() displayCurrency: string,
   ) {
     await this.usersService.findPublicById(id);
-    return this.forumService.findUserProducts(id, request.user.userId, query);
+    return this.forumService.findUserProducts(
+      id,
+      request.user.userId,
+      query,
+      displayCurrency,
+    );
   }
 }

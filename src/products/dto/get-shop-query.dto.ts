@@ -1,8 +1,11 @@
 import { Transform, TransformFnParams, Type } from 'class-transformer';
 import { IsInt, IsISO31661Alpha2, IsOptional, Max, Min } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
+import { ProductPriceQueryDto } from './product-price-query.dto';
 
-export class GetShopQueryDto {
+// priceMin, priceMax y sort (orden de los productos dentro de cada sección)
+// vienen de ProductPriceQueryDto.
+export class GetShopQueryDto extends ProductPriceQueryDto {
   @ApiPropertyOptional({
     type: Number,
     example: 1,

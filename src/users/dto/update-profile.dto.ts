@@ -13,6 +13,7 @@ import { Transform, TransformFnParams } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { parseBoolean } from '../../community/dto/create-community.dto';
 import { SUPPORTED_CURRENCIES } from '../../payments/exchange-rate/exchange-rate.constants';
+import { IsBcp47Locale } from '../../common/is-bcp47-locale';
 
 export class UpdateProfileDto {
   @ApiPropertyOptional({
@@ -48,16 +49,18 @@ export class UpdateProfileDto {
 
   @ApiPropertyOptional({
     example: 'es-CR',
-    description: 'Locale del usuario',
+    description: 'Locale del usuario (etiqueta BCP 47)',
   })
   @IsOptional()
   @IsString()
   @MaxLength(35, { message: 'El locale no puede superar 35 caracteres' })
+  @IsBcp47Locale()
   locale?: string;
 
   @ApiPropertyOptional({
     example: 'CRC',
-    description: 'Moneda preferida del usuario',
+    description:
+      'Moneda de venta y de comisión (la de los productos nuevos del vendedor). No cambia la moneda en que se muestran los precios: eso es displayCurrency',
   })
   @Transform(({ value }: TransformFnParams) =>
     typeof value === 'string' ? value.trim().toUpperCase() : (value as unknown),
@@ -70,6 +73,23 @@ export class UpdateProfileDto {
     message: 'La moneda no está soportada por Mynted',
   })
   currency?: string;
+
+  @ApiPropertyOptional({
+    example: 'USD',
+    description:
+      'Moneda en la que el usuario quiere ver los precios (solo visualización)',
+  })
+  @Transform(({ value }: TransformFnParams) =>
+    typeof value === 'string' ? value.trim().toUpperCase() : (value as unknown),
+  )
+  @IsOptional()
+  @IsISO4217CurrencyCode({
+    message: 'displayCurrency debe ser un código ISO 4217 (p. ej. CRC, USD)',
+  })
+  @IsIn(SUPPORTED_CURRENCIES, {
+    message: 'displayCurrency no está soportada por Mynted',
+  })
+  displayCurrency?: string;
 
   @ApiPropertyOptional({
     example: 'CR',

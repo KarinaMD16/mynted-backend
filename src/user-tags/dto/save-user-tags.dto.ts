@@ -9,6 +9,7 @@ import {
 import { Transform, TransformFnParams } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { SUPPORTED_CURRENCIES } from '../../payments/exchange-rate/exchange-rate.constants';
+import { IsBcp47Locale } from '../../common/is-bcp47-locale';
 
 export class SaveUserTagsDto {
   @ApiProperty({
@@ -39,11 +40,13 @@ export class SaveUserTagsDto {
   @IsOptional()
   @IsString()
   @MaxLength(35)
+  @IsBcp47Locale()
   locale?: string;
 
   @ApiPropertyOptional({
     example: 'CRC',
-    description: 'Moneda detectada del navegador del usuario',
+    description:
+      'Moneda detectada del navegador del usuario (moneda de venta/comisión si llega a ser vendedor)',
   })
   @Transform(({ value }: TransformFnParams) =>
     typeof value === 'string' ? value.trim().toUpperCase() : (value as unknown),
@@ -55,4 +58,20 @@ export class SaveUserTagsDto {
     message: 'La moneda no está soportada por Mynted',
   })
   currency?: string;
+
+  @ApiPropertyOptional({
+    example: 'CRC',
+    description:
+      'Moneda en la que mostrar los precios. Si no se envía, se usa currency',
+  })
+  @Transform(({ value }: TransformFnParams) =>
+    typeof value === 'string' ? value.trim().toUpperCase() : (value as unknown),
+  )
+  @IsOptional()
+  @IsString()
+  @MaxLength(10)
+  @IsIn(SUPPORTED_CURRENCIES, {
+    message: 'displayCurrency no está soportada por Mynted',
+  })
+  displayCurrency?: string;
 }

@@ -9,15 +9,20 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { BadgeEvents } from '../badges/badge-events';
 import {
-  ArrayContains,
   DataSource,
   FindOptionsRelations,
   FindOptionsWhere,
   ILike,
   In,
   Repository,
+  SelectQueryBuilder,
 } from 'typeorm';
 import { escapeLike } from '../common/escape-like';
+import { UsdRates } from '../pricing/currency';
+import {
+  PriceDisplayService,
+  WithDisplayPrice,
+} from '../pricing/price-display.service';
 import { CommunityProfile } from '../community/entities/community-profile.entity';
 import { Community } from '../community/entities/community.entity';
 import {
@@ -37,6 +42,10 @@ import { GetRecommendedProductsQueryDto } from './dto/get-recommended-products-q
 import { GetShopQueryDto } from './dto/get-shop-query.dto';
 import { GetMyProductsQueryDto } from './dto/get-my-products-query.dto';
 import {
+  ProductPriceQueryDto,
+  ProductSort,
+} from './dto/product-price-query.dto';
+import {
   Product,
   ProductCondition,
   ProductStatus,
@@ -52,6 +61,10 @@ import {
   computeFinalPrice,
   finalPriceWhere,
 } from './product-pricing';
+import {
+  applyDisplayPriceRange,
+  applyProductSort,
+} from './product-price-query';
 import { ReviewsService } from './reviews.service';
 
 // Máximo de productos que devuelve /products/:id/related (los elegidos por el
@@ -78,6 +91,7 @@ export interface TagProductCard {
   tags: { tagId: number; name: string }[];
   seller: {
     sellerId: number;
+    userId: string;
     displayName: string;
     photoUrl: string | null;
     isVerified: boolean;
@@ -90,7 +104,7 @@ export interface ShopSection {
   tag: { tagId: number; name: string };
   source: ShopSectionSource;
   totalProducts: number;
-  products: TagProductCard[];
+  products: WithDisplayPrice<TagProductCard>[];
   pagination: {
     page: number;
     limit: number;
@@ -113,6 +127,23 @@ export interface ShopResult {
 interface TagGroup {
   tagId: number;
   ids: number[];
+}
+
+// Lo mínimo para agrupar productos por tag (Shop y /products/me).
+interface TaggedProduct {
+  id: number;
+  productTags: { tagId: number }[];
+}
+
+// Filtros de los listados públicos que se resuelven en SQL.
+interface PublicProductFilters {
+  communityId?: number;
+  type?: ProductType;
+  condition?: ProductCondition;
+  currency?: string;
+  shipTo?: string;
+  category?: number;
+  tag?: number;
 }
 
 interface SectionPaginationQuery {
@@ -182,11 +213,14 @@ export interface Paginated<T> {
 }
 
 // Producto tal como lo devuelven los listados públicos: la entidad más el
-// precio final (con descuento) y si el usuario autenticado lo guardó.
-export type ProductListItem = Product & {
-  finalPrice: number;
-  isSaved: boolean;
-};
+// precio final (con descuento), si el usuario autenticado lo guardó y el
+// precio en la moneda de visualización.
+export type ProductListItem = WithDisplayPrice<
+  Product & {
+    finalPrice: number;
+    isSaved: boolean;
+  }
+>;
 
 interface PublishableFields {
   description: string | null | undefined;
@@ -221,6 +255,7 @@ export class ProductsService {
     private readonly reviewsService: ReviewsService,
     private readonly cloudinaryService: CloudinaryService,
     private readonly dataSource: DataSource,
+    private readonly priceDisplay: PriceDisplayService,
     @Optional()
     private readonly eventEmitter?: EventEmitter2,
   ) {}
@@ -361,6 +396,7 @@ export class ProductsService {
     page: number,
     limit: number,
     viewerId: string | undefined,
+    displayCurrency: string,
   ): Promise<Paginated<ProductListItem>> {
     const text = `%${escapeLike(q)}%`;
     const where = PUBLIC_COMMUNITY_ALTERNATIVES.flatMap((alternative) => [
@@ -377,7 +413,7 @@ export class ProductsService {
     });
 
     return {
-      data: await this.withSaved(data, viewerId),
+      data: await this.withSaved(data, viewerId, displayCurrency),
       pagination: this.buildPagination(page, limit, total),
     };
   }
@@ -385,41 +421,135 @@ export class ProductsService {
   async findAll(
     query: GetProductsQueryDto,
     viewerId: string | undefined,
+    displayCurrency: string,
   ): Promise<Paginated<ProductListItem>> {
-    // Usa la API de repository (no QueryBuilder) a propósito: con relaciones
-    // "to-many" (productTags), TypeORM pagina correctamente los productos
-    // raíz primero y luego hidrata las relaciones, evitando que un producto
-    // con varios tags rompa el skip/take.
-    const where: FindOptionsWhere<Product> = { ...PUBLIC_PRODUCT_WHERE };
+    // El QueryBuilder solo resuelve ids (filtros y orden por precio en SQL).
+    // Luego se hidratan con la API de repository: con la relación "to-many"
+    // productTags, un join paginado rompería el skip/take.
+    const qb = this.publicProductsQuery(query);
+    const rates = await this.applyPriceQuery(qb, query, displayCurrency);
 
-    if (query.communityId !== undefined) where.communityId = query.communityId;
-    if (query.type !== undefined) where.type = query.type;
-    if (query.condition !== undefined) where.condition = query.condition;
-    if (query.currency !== undefined) where.currency = query.currency;
-    if (query.shipTo !== undefined) {
-      where.shipsTo = ArrayContains([query.shipTo]);
-    }
-    if (query.category !== undefined) {
-      where.community = { categoryId: query.category };
-    }
-    if (query.tag !== undefined) {
-      where.productTags = { tagId: query.tag };
-    }
-    const price = finalPriceWhere(query.priceMin, query.priceMax);
-    if (price) where.price = price;
-
-    const [data, total] = await this.productRepository.findAndCount({
-      where,
-      relations: { productTags: { tag: true } },
-      order: { createdAt: 'DESC' },
-      skip: (query.page - 1) * query.limit,
-      take: query.limit,
-    });
+    const total = await qb.getCount();
+    const rows = await qb
+      .select('product.id', 'id')
+      .offset((query.page - 1) * query.limit)
+      .limit(query.limit)
+      .getRawMany<{ id: number }>();
+    const data = await this.findInOrder(
+      rows.map((row) => row.id),
+      { productTags: { tag: true } },
+    );
 
     return {
-      data: await this.withSaved(data, viewerId),
+      data: await this.withSaved(data, viewerId, displayCurrency, rates),
       pagination: this.buildPagination(query.page, query.limit, total),
     };
+  }
+
+  // Activos y visibles (el borrado lógico lo excluye el QueryBuilder).
+  private publicProductsQuery(
+    filters: PublicProductFilters,
+  ): SelectQueryBuilder<Product> {
+    const qb = this.productRepository
+      .createQueryBuilder('product')
+      .where('product.status = :status', { status: ProductStatus.ACTIVE })
+      .andWhere('product.isVisible = :isVisible', { isVisible: true });
+
+    if (filters.communityId !== undefined) {
+      qb.andWhere('product.communityId = :communityId', {
+        communityId: filters.communityId,
+      });
+    }
+    if (filters.type !== undefined) {
+      qb.andWhere('product.type = :type', { type: filters.type });
+    }
+    if (filters.condition !== undefined) {
+      qb.andWhere('product.condition = :condition', {
+        condition: filters.condition,
+      });
+    }
+    if (filters.currency !== undefined) {
+      qb.andWhere('product.currency = :currency', {
+        currency: filters.currency,
+      });
+    }
+    if (filters.shipTo !== undefined) {
+      qb.andWhere(':shipTo = ANY(product.shipsTo)', { shipTo: filters.shipTo });
+    }
+    if (filters.category !== undefined) {
+      qb.andWhere(
+        'EXISTS (SELECT 1 FROM community c WHERE c.id = product.communityId AND c.category_id = :category)',
+        { category: filters.category },
+      );
+    }
+    if (filters.tag !== undefined) {
+      qb.andWhere(
+        'EXISTS (SELECT 1 FROM product_tag pt WHERE pt.product_id = product.id AND pt.tag_id = :tag)',
+        { tag: filters.tag },
+      );
+    }
+    return qb;
+  }
+
+  // Aplica rango (en la moneda de visualización) y orden. Solo consulta tasas
+  // si hacen falta, y devuelve las mismas para mostrar los precios.
+  private async applyPriceQuery(
+    qb: SelectQueryBuilder<Product>,
+    query: ProductPriceQueryDto,
+    displayCurrency: string,
+  ): Promise<UsdRates | undefined> {
+    const usesPrice =
+      query.priceMin !== undefined ||
+      query.priceMax !== undefined ||
+      query.sort !== ProductSort.NEWEST;
+
+    const rates = usesPrice
+      ? await this.priceDisplay.getUsdRates([
+          displayCurrency,
+          ...(await this.publicProductCurrencies()),
+        ])
+      : undefined;
+    if (rates) {
+      applyDisplayPriceRange(
+        qb,
+        'product',
+        rates,
+        displayCurrency,
+        query.priceMin,
+        query.priceMax,
+      );
+    }
+    applyProductSort(qb, 'product', query.sort, rates);
+    return rates;
+  }
+
+  // Monedas en uso entre los productos públicos (para pedir solo esas tasas).
+  private async publicProductCurrencies(): Promise<string[]> {
+    const rows = await this.productRepository
+      .createQueryBuilder('product')
+      .select('product.currency', 'currency')
+      .distinct(true)
+      .where('product.status = :status', { status: ProductStatus.ACTIVE })
+      .andWhere('product.isVisible = :isVisible', { isVisible: true })
+      .andWhere('product.currency IS NOT NULL')
+      .getRawMany<{ currency: string }>();
+    return rows.map((row) => row.currency);
+  }
+
+  // Carga productos por id respetando el orden recibido.
+  private async findInOrder(
+    ids: number[],
+    relations: FindOptionsRelations<Product>,
+  ): Promise<Product[]> {
+    if (ids.length === 0) return [];
+    const products = await this.productRepository.find({
+      where: { id: In(ids) },
+      relations,
+    });
+    const byId = new Map(products.map((product) => [product.id, product]));
+    return ids
+      .map((id) => byId.get(id))
+      .filter((product): product is Product => product !== undefined);
   }
 
   /**
@@ -436,16 +566,27 @@ export class ProductsService {
   async findShop(
     userId: string | undefined,
     query: GetShopQueryDto,
+    displayCurrency: string,
   ): Promise<ShopResult> {
-    const active = await this.productRepository.find({
-      where: {
-        ...PUBLIC_PRODUCT_WHERE,
-        ...(query.shipTo ? { shipsTo: ArrayContains([query.shipTo]) } : {}),
-      },
-      select: { id: true, createdAt: true, productTags: { tagId: true } },
-      relations: { productTags: true },
-      order: { createdAt: 'DESC', id: 'DESC' },
-    });
+    const qb = this.publicProductsQuery({ shipTo: query.shipTo });
+    const rates = await this.applyPriceQuery(qb, query, displayCurrency);
+    const rows = await qb
+      .leftJoin('product.productTags', 'productTag')
+      .select('product.id', 'id')
+      .addSelect('productTag.tagId', 'tagId')
+      .getRawMany<{ id: number; tagId: number | null }>();
+
+    // Una fila por (producto, tag), ya en el orden pedido.
+    const byId = new Map<number, TaggedProduct>();
+    for (const row of rows) {
+      let product = byId.get(row.id);
+      if (!product) {
+        product = { id: row.id, productTags: [] };
+        byId.set(row.id, product);
+      }
+      if (row.tagId !== null) product.productTags.push({ tagId: row.tagId });
+    }
+    const active = [...byId.values()];
 
     const interestTagIds = new Set<number>();
     if (userId) {
@@ -469,16 +610,19 @@ export class ProductsService {
       (product) => this.toTagProductCard(product),
     );
 
-    // isSaved: una sola consulta de favoritos para toda la página.
-    const saved = await this.getSavedProductIds(
-      userId,
-      sections.flatMap((section) => section.products.map((p) => p.id)),
-    );
-    sections.forEach((section) =>
-      section.products.forEach((card) => {
-        card.isSaved = saved.has(card.id);
-      }),
-    );
+    // isSaved y tasas: una sola consulta de cada uno para toda la página.
+    const cards = sections.flatMap((section) => section.products);
+    const [saved, usdRates] = await Promise.all([
+      this.getSavedProductIds(
+        userId,
+        cards.map((card) => card.id),
+      ),
+      rates ??
+        this.priceDisplay.getDisplayRates(
+          displayCurrency,
+          cards.map((card) => card.currency),
+        ),
+    ]);
 
     return {
       sections: sections.map((section) => ({
@@ -486,13 +630,18 @@ export class ProductsService {
         source: interestTagIds.has(section.tag.tagId)
           ? ('interest' as const)
           : ('popular' as const),
+        products: section.products.map((card) => ({
+          ...card,
+          isSaved: saved.has(card.id),
+          ...this.priceDisplay.toDisplay(card, displayCurrency, usdRates),
+        })),
       })),
       pagination,
     };
   }
 
   // Tags ordenados por cantidad de productos (desc) y luego por id.
-  private rankTagIds(products: Product[]): number[] {
+  private rankTagIds(products: TaggedProduct[]): number[] {
     const counts = new Map<number, number>();
     for (const product of products) {
       for (const { tagId } of product.productTags) {
@@ -507,7 +656,7 @@ export class ProductsService {
   // Asigna cada producto al primer tag (según orderedTagIds) que tenga, de
   // modo que no se repita entre secciones. Omite tags sin productos propios.
   private groupIdsByTag(
-    products: Product[],
+    products: TaggedProduct[],
     orderedTagIds: number[],
   ): TagGroup[] {
     const rankOf = new Map(orderedTagIds.map((tagId, index) => [tagId, index]));
@@ -610,6 +759,7 @@ export class ProductsService {
       })),
       seller: {
         sellerId: product.seller.sellerId,
+        userId: product.seller.userId,
         displayName: product.seller.displayName,
         photoUrl: product.seller.user.photoUrl ?? null,
         isVerified: product.seller.isVerified,
@@ -713,10 +863,13 @@ export class ProductsService {
   }
 
   // Detalle: producto + precio final + rating real + datos públicos del
-  // vendedor (foto y rating). Nunca expone userId ni paymentInfo del vendedor.
+  // vendedor (userId, foto y rating; nunca paymentInfo) + canComment (si quien
+  // mira puede reseñarlo, con la misma regla que POST /products/:id/reviews).
   // Un borrador solo lo puede ver su dueño; un producto borrado (soft delete)
   // devuelve 404.
-  async findDetail(id: number, viewerId?: string) {
+  // Con displayCurrency (GET /products/:id) agrega el precio en esa moneda;
+  // las respuestas de crear/editar/publicar no lo traen.
+  async findDetail(id: number, viewerId?: string, displayCurrency?: string) {
     const product = await this.productRepository.findOne({
       where: { id },
       relations: { ...DETAIL_RELATIONS, seller: { user: true } },
@@ -740,17 +893,17 @@ export class ProductsService {
       throw new NotFoundException('Producto no encontrado');
     }
 
-    const [rating, sellerRatings, saved] = await Promise.all([
+    const [rating, sellerRatings, saved, canComment] = await Promise.all([
       this.reviewsService.getProductRating(id),
       this.usersService.getSellerRatings([product.seller.sellerId]),
       this.getSavedProductIds(viewerId, [id]),
+      this.reviewsService.canUserReview(product, viewerId),
     ]);
     const sellerRating = sellerRatings.get(product.seller.sellerId);
-    // userId (y el user completo) se descartan: solo sale lo público.
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { user, userId, ...seller } = product.seller;
+    // El user completo se descarta: del vendedor solo sale lo público.
+    const { user, ...seller } = product.seller;
 
-    return {
+    const detail = {
       ...product,
       finalPrice:
         product.price == null
@@ -765,7 +918,14 @@ export class ProductsService {
       },
       ratingAverage: rating.ratingAverage,
       reviewsCount: rating.reviewsCount,
+      canComment,
     };
+    if (displayCurrency === undefined) return detail;
+    const [withDisplay] = await this.priceDisplay.withDisplayPrices(
+      [detail],
+      displayCurrency,
+    );
+    return withDisplay;
   }
 
   // Relacionados: primero los elegidos por el vendedor (solo si siguen
@@ -773,7 +933,8 @@ export class ProductsService {
   // sesión, tags de interés del usuario), sin duplicados y con tope.
   async findRelated(
     id: number,
-    viewerId?: string,
+    viewerId: string | undefined,
+    displayCurrency: string,
   ): Promise<(ProductListItem & { isSellerChoice: boolean })[]> {
     const product = await this.productRepository.findOne({
       where: { id },
@@ -844,7 +1005,11 @@ export class ProductsService {
     }
 
     const chosenSet = new Set(chosen.map((p) => p.id));
-    const items = await this.withSaved([...chosen, ...automatic], viewerId);
+    const items = await this.withSaved(
+      [...chosen, ...automatic],
+      viewerId,
+      displayCurrency,
+    );
     return items.map((item) => ({
       ...item,
       isSellerChoice: chosenSet.has(item.id),
@@ -1080,6 +1245,7 @@ export class ProductsService {
   async findRecommended(
     userId: string | undefined,
     query: GetRecommendedProductsQueryDto,
+    displayCurrency: string,
   ): Promise<ProductListItem[]> {
     const tagIds = new Set<number>();
     let communityId: number | undefined;
@@ -1137,7 +1303,7 @@ export class ProductsService {
         order: { createdAt: 'DESC' },
         take: query.limit,
       });
-      return this.withSaved(latest, userId);
+      return this.withSaved(latest, userId, displayCurrency);
     }
 
     const queryBuilder = this.productRepository
@@ -1171,7 +1337,7 @@ export class ProductsService {
       .take(query.limit)
       .getMany();
 
-    return this.withSaved(products, userId);
+    return this.withSaved(products, userId, displayCurrency);
   }
 
   // Ids de productos guardados (favoritos) por el usuario, en una sola
@@ -1193,20 +1359,28 @@ export class ProductsService {
     return new Set(favorites.map((favorite) => favorite.itemId));
   }
 
-  // Agrega finalPrice e isSaved a una lista de productos.
+  // Agrega finalPrice, isSaved y el precio en la moneda de visualización a
+  // una lista de productos. rates permite reutilizar las tasas ya usadas
+  // para filtrar u ordenar.
   private async withSaved(
     products: Product[],
     viewerId: string | undefined,
+    displayCurrency: string,
+    rates?: UsdRates,
   ): Promise<ProductListItem[]> {
     const saved = await this.getSavedProductIds(
       viewerId,
       products.map((product) => product.id),
     );
-    return products.map((product) => ({
-      ...product,
-      finalPrice: computeFinalPrice(product.price, product.discountPercent),
-      isSaved: saved.has(product.id),
-    }));
+    return this.priceDisplay.withDisplayPrices(
+      products.map((product) => ({
+        ...product,
+        finalPrice: computeFinalPrice(product.price, product.discountPercent),
+        isSaved: saved.has(product.id),
+      })),
+      displayCurrency,
+      rates,
+    );
   }
 
   private async getSellerOrFail(userId: string): Promise<Seller> {
