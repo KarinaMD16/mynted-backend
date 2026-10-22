@@ -28,6 +28,15 @@ export class Seller {
   @Column({ name: 'completed_sales_count', type: 'int', default: 0 })
   completedSalesCount!: number;
 
+  // Fecha en que se aprobó la solicitud. Null en los aprobados antes de que
+  // existiera la columna (la tienda usa entonces el badge verified_seller).
+  @Column({
+    name: 'approved_at',
+    type: 'timestamp with time zone',
+    nullable: true,
+  })
+  approvedAt!: Date | null;
+
   @Column({ name: 'user_id', unique: true })
   userId!: string;
 

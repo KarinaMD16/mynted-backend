@@ -3,6 +3,7 @@ import {
   CreateDateColumn,
   DeleteDateColumn,
   Entity,
+  Index,
   JoinColumn,
   ManyToOne,
   OneToMany,
@@ -35,6 +36,8 @@ export enum ProductCondition {
 }
 
 @Entity('product')
+// Listados y conteos por vendedor (tienda, /products/me, ratings).
+@Index('IDX_product_seller_id', ['sellerId'])
 export class Product {
   @PrimaryGeneratedColumn()
   id!: number;
