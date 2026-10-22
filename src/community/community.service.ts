@@ -524,7 +524,7 @@ export class CommunityService {
     };
   }
 
-  async findCommunityDetailBySlug(slug: string, userId: string) {
+  async findCommunityDetailBySlug(slug: string, userId: string | undefined) {
     const community = await this.communityRepository.findOne({
       where: { slug, isActive: true },
       relations: {
@@ -544,14 +544,18 @@ export class CommunityService {
           where: { communityId: community.id },
         }),
         this.countRecentPosts(community.id),
-        this.communityProfileRepository.findOne({
-          where: { userId, communityId: community.id },
-          select: { communityProfileId: true, role: true },
-        }),
-        this.communityJoinRequestRepository.findOne({
-          where: { userId, communityId: community.id },
-          order: { createdAt: 'DESC' },
-        }),
+        userId
+          ? this.communityProfileRepository.findOne({
+              where: { userId, communityId: community.id },
+              select: { communityProfileId: true, role: true },
+            })
+          : Promise.resolve(null),
+        userId
+          ? this.communityJoinRequestRepository.findOne({
+              where: { userId, communityId: community.id },
+              order: { createdAt: 'DESC' },
+            })
+          : Promise.resolve(null),
       ]);
     const forumPosts =
       community.isPrivate && !membership
@@ -1608,7 +1612,7 @@ export class CommunityService {
   private async getForumPostMetrics(
     posts: Post[],
     communityProfileId: number | undefined,
-    userId: string,
+    userId: string | undefined,
   ) {
     const metrics = new Map<
       number,

@@ -88,7 +88,7 @@ export class ForumController {
   }
 
   @Get('communities/:communityId/posts')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(OptionalJwtAuthGuard)
   @ApiOperation({
     summary:
       'Posts de una comunidad. sort=hot (por defecto, upvotes/downvotes + frescura), new o top',
@@ -96,9 +96,9 @@ export class ForumController {
   findPosts(
     @Param('communityId', ParseIntPipe) communityId: number,
     @Query() query: GetCommunityPostsQueryDto,
-    @Req() request: AuthenticatedRequest,
+    @Req() request: OptionalAuthenticatedRequest,
   ) {
-    return this.forumService.findPosts(communityId, request.user.userId, query);
+    return this.forumService.findPosts(communityId, request.user?.userId, query);
   }
 
   @Get('posts')

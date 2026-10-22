@@ -172,11 +172,16 @@ export class ForumService {
   // defecto), new o top.
   async findPosts(
     communityId: number,
-    userId: string,
+    userId: string | undefined,
     query: GetCommunityPostsQueryDto,
   ) {
     const community = await this.getActiveCommunity(communityId);
     if (community.isPrivate) {
+      if (!userId) {
+        throw new ForbiddenException(
+          'Debes pertenecer a la comunidad para ver sus publicaciones',
+        );
+      }
       await this.getMemberProfile(userId, communityId);
     }
 
