@@ -369,15 +369,17 @@ Query: `status` (`draft|active|inactive|sold`), `q` (busca por título), `type`,
 
 Reactivar un pausado: `PATCH /products/:id/status` `{ "status": "active" }`.
 
-### Reseñas (cualquier usuario autenticado)
+### Reseñas (solo compradores con compra completada)
 | Endpoint | |
 | --- | --- |
-| `POST /products/:id/reviews` `{ rating: 1-5, comment? }` | 201. 403 si es tu propio producto · 409 si ya reseñaste. |
+| `POST /products/:id/reviews` `{ rating: 1-5, comment? }` | 201. 403 si es tu propio producto o no lo compraste (compra `completed`) · 409 si ya reseñaste. |
 | `GET /products/:id/reviews?page=&limit=` (sin sesión) | `{ ratingAverage, reviewsCount, data: Review[], pagination }` |
 | `PATCH /products/:id/reviews/me` | Edita mi reseña. |
 | `DELETE /products/:id/reviews/me` | Borra mi reseña (204). |
 
-`Review`: `{ id, productId, rating, comment, createdAt, updatedAt, author{id, username, photoUrl}, isMine }`. Aún no se exige haber comprado el producto.
+`Review`: `{ id, productId, rating, comment, createdAt, updatedAt, author{id, username, photoUrl}, isMine }`. Editar y borrar la propia reseña no vuelve a exigir la compra.
+
+Reputación de un usuario: `GET /profiles/:perfilId/reputation` (sin sesión) → `{ userId, isSeller, ratingAverage, reviewsCount, completedSalesCount, ratingDistribution{1..5}, badges[] }`. Si el usuario no es vendedor: `isSeller: false`, `ratingAverage: null` y conteos en 0.
 
 ---
 
