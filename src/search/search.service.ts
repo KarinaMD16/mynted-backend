@@ -31,7 +31,11 @@ export class SearchService {
     private readonly forumService: ForumService,
   ) {}
 
-  async search(query: SearchQueryDto, viewerId: string | undefined) {
+  async search(
+    query: SearchQueryDto,
+    viewerId: string | undefined,
+    displayCurrency: string,
+  ) {
     if (query.type) {
       return {
         type: query.type,
@@ -41,22 +45,26 @@ export class SearchService {
           query.page,
           query.limit,
           viewerId,
+          displayCurrency,
         )),
       };
     }
 
     // Resumen: los primeros resultados de cada tipo con su total.
-    const [users, posts, products, communities] = await Promise.all([
-      this.searchType(SearchType.USERS, query.q, 1, SUMMARY_LIMIT, viewerId),
-      this.searchType(SearchType.POSTS, query.q, 1, SUMMARY_LIMIT, viewerId),
-      this.searchType(SearchType.PRODUCTS, query.q, 1, SUMMARY_LIMIT, viewerId),
+    const summaryOf = (type: SearchType) =>
       this.searchType(
-        SearchType.COMMUNITIES,
+        type,
         query.q,
         1,
         SUMMARY_LIMIT,
         viewerId,
-      ),
+        displayCurrency,
+      );
+    const [users, posts, products, communities] = await Promise.all([
+      summaryOf(SearchType.USERS),
+      summaryOf(SearchType.POSTS),
+      summaryOf(SearchType.PRODUCTS),
+      summaryOf(SearchType.COMMUNITIES),
     ]);
 
     const summarize = <T>(result: SearchPage<T>) => ({
@@ -79,12 +87,19 @@ export class SearchService {
     page: number,
     limit: number,
     viewerId: string | undefined,
+    displayCurrency: string,
   ): Promise<SearchPage<unknown>> {
     switch (type) {
       case SearchType.USERS:
         return this.usersService.searchPublic({ q, page, limit });
       case SearchType.PRODUCTS:
-        return this.productsService.searchPublic(q, page, limit, viewerId);
+        return this.productsService.searchPublic(
+          q,
+          page,
+          limit,
+          viewerId,
+          displayCurrency,
+        );
       case SearchType.COMMUNITIES:
         return this.searchCommunities(q, page, limit);
       case SearchType.POSTS:

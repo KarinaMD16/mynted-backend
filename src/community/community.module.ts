@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { CloudinaryModule } from '../cloudinary/cloudinary.module';
 import { UsersModule } from '../users/users.module';
+import { PricingModule } from '../pricing/pricing.module';
 import { SuperAdminGuard } from '../auth/guards/super-admin.guard';
 import { CommunityController } from './community.controller';
 import { CommunityService } from './community.service';
@@ -50,6 +51,7 @@ import { UserTag } from '../user-tags/entities/user-tag.entity';
     ]),
     CloudinaryModule,
     UsersModule,
+    PricingModule,
   ],
   controllers: [CommunityController, ForumController, PublicProfileController],
   providers: [

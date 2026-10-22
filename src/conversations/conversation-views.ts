@@ -51,7 +51,13 @@ export function toProductSummary(product: {
   };
 }
 
-export function toProductContext(product: Product): ProductContextDto {
+// Sin los campos display*: los agrega MessagesService con PriceDisplayService.
+export function toProductContext(
+  product: Product,
+): Omit<
+  ProductContextDto,
+  'displayPrice' | 'displayFinalPrice' | 'displayCurrency' | 'isConverted'
+> {
   return {
     ...toProductSummary(product),
     status: product.status,

@@ -12,8 +12,10 @@ import {
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { ProductCondition, ProductType } from '../entities/product.entity';
 import { SUPPORTED_CURRENCIES } from '../../payments/exchange-rate/exchange-rate.constants';
+import { ProductPriceQueryDto } from './product-price-query.dto';
 
-export class GetProductsQueryDto {
+// priceMin, priceMax y sort vienen de ProductPriceQueryDto.
+export class GetProductsQueryDto extends ProductPriceQueryDto {
   @ApiPropertyOptional({
     type: Number,
     example: 5,
@@ -67,7 +69,7 @@ export class GetProductsQueryDto {
   @ApiPropertyOptional({
     example: 'CRC',
     description:
-      'Solo productos en esta moneda (ISO 4217). Recomendado al usar priceMin/priceMax',
+      'Filtro: solo productos publicados en esta moneda (ISO 4217). No cambia la moneda en que se muestran los precios (eso es X-Display-Currency)',
   })
   @Transform(({ value }: TransformFnParams) =>
     typeof value === 'string' ? value.trim().toUpperCase() : (value as unknown),
@@ -78,28 +80,6 @@ export class GetProductsQueryDto {
     message: 'currency no está soportada por Mynted',
   })
   currency?: string;
-
-  @ApiPropertyOptional({
-    type: Number,
-    example: 10,
-    description: 'Precio final mínimo (con descuento aplicado)',
-  })
-  @Type(() => Number)
-  @IsOptional()
-  @IsInt()
-  @Min(0)
-  priceMin?: number;
-
-  @ApiPropertyOptional({
-    type: Number,
-    example: 100,
-    description: 'Precio final máximo (con descuento aplicado)',
-  })
-  @Type(() => Number)
-  @IsOptional()
-  @IsInt()
-  @Min(0)
-  priceMax?: number;
 
   @ApiPropertyOptional({ type: Number, example: 1, default: 1, minimum: 1 })
   @Type(() => Number)

@@ -200,10 +200,10 @@ Renderiza según `type`.
 Errores: 400 token inválido/vencido/ya usado · 409 el correo ya está en uso (sin distinguir mayúsculas).
 
 ### `GET /users/me`
-Usuario completo: incluye `locale`, `currency`, `country`, `emailNotifications`, `pushNotifications`, `confirmUnfavorite`, `role`, `sellerRequestStatus`.
+Usuario completo: incluye `locale`, `currency`, `displayCurrency`, `country`, `emailNotifications`, `pushNotifications`, `confirmUnfavorite`, `role`, `sellerRequestStatus`.
 
 ### `PATCH /users/me` (multipart)
-Campos opcionales (manda al menos uno): `username`, `bio`, `location`, `locale`, `currency` (**ISO 4217**, ej. `CRC`, `USD`; se pasa a mayúsculas), `country` (**ISO 3166-1 alfa-2**, ej. `CR`), `emailNotifications`, `pushNotifications`, `confirmUnfavorite` (booleanos), `photo` (archivo, 5 MB).
+Campos opcionales (manda al menos uno): `username`, `bio`, `location`, `locale`, `currency` (**ISO 4217**, ej. `CRC`, `USD`; se pasa a mayúsculas; moneda de venta/comisión), `displayCurrency` (moneda en que se **ven** los precios; ver [GUIA_MONEDA_FRONTEND.md](GUIA_MONEDA_FRONTEND.md)), `country` (**ISO 3166-1 alfa-2**, ej. `CR`), `emailNotifications`, `pushNotifications`, `confirmUnfavorite` (booleanos), `photo` (archivo, 5 MB).
 
 - **`confirmUnfavorite`** (por defecto `true`): es una **preferencia que solo guarda el backend**; no cambia el comportamiento de la API. Si es `true`, el front debe mostrar un diálogo "¿Quitar de favoritos?" antes de llamar al `DELETE .../favorite`; si es `false`, lo quita directo. Sirve para un "No volver a preguntar" que se conserve entre dispositivos.
 - **Importante:** para publicar productos el usuario **debe tener `currency`**; si no, recibe 400.
@@ -222,7 +222,7 @@ Campos opcionales (manda al menos uno): `username`, `bio`, `location`, `locale`,
 
 ### Campos de precio
 - `price`: precio original (nunca se modifica). `discountPercent`: 0–100 o `null`. `finalPrice`: precio con descuento (calculado). **Muestra `finalPrice` y tacha `price` si hay descuento.**
-- Los filtros `priceMin/priceMax` comparan contra `finalPrice`.
+- Los filtros `priceMin/priceMax` comparan contra `finalPrice`, en la moneda de visualización (ver [GUIA_MONEDA_FRONTEND.md](GUIA_MONEDA_FRONTEND.md)).
 
 ### Otros campos
 `isVisible` (si es `false` no sale en listados públicos), `shipsTo` (`["CR","MX"]`), `publishedAt`, `currency`.
@@ -281,7 +281,7 @@ Un producto **sin comunidad** aparece en shop, `/products`, búsqueda, perfil de
 
 ### 4.3 Lecturas (funcionan **sin sesión**)
 
-**`GET /products`** – listado/filtros. Query: `communityId`, `tag`, `category`, `type`, `condition`, `currency` (ISO 4217), `priceMin`, `priceMax` (enteros, sobre el precio final), `shipTo` (ISO país), `page` (1), `limit` (10, máx. 100). Solo `active` + `isVisible`.
+**`GET /products`** – listado/filtros. Query: `communityId`, `tag`, `category`, `type`, `condition`, `currency` (ISO 4217, filtro por moneda del producto), `priceMin`, `priceMax` (decimales, sobre el precio final y **en la moneda de visualización**), `sort` (`newest`|`price_asc`|`price_desc`), `shipTo` (ISO país), `page` (1), `limit` (10, máx. 100). Solo `active` + `isVisible`. Cada producto trae además `displayPrice`, `displayFinalPrice`, `displayCurrency` e `isConverted` (ver [GUIA_MONEDA_FRONTEND.md](GUIA_MONEDA_FRONTEND.md)).
 → `{ data: ProductListItem[], pagination }`
 
 **`ProductListItem`** (también en `/products/recommended`, `/products/:id/related`, `/search`):

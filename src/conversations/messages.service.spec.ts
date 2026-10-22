@@ -11,6 +11,7 @@ import { Conversation } from './entities/conversation.entity';
 import { Message } from './entities/message.entity';
 import { MessageType } from './enums/message-type.enum';
 import { MessagesService } from './messages.service';
+import { PriceDisplayService } from '../pricing/price-display.service';
 
 describe('MessagesService', () => {
   const buyerId = 'buyer-1';
@@ -109,12 +110,25 @@ describe('MessagesService', () => {
         .fn()
         .mockResolvedValue({ url: 'https://res.cloudinary.com/x/a.jpg' }),
     };
+    // Precio en la moneda del producto: sin conversión.
+    const priceDisplay = {
+      getDisplayRates: jest.fn().mockResolvedValue(new Map([['USD', 1]])),
+      toDisplay: jest.fn(
+        (product: { price: number; currency: string }, target: string) => ({
+          displayPrice: product.price,
+          displayFinalPrice: product.price,
+          displayCurrency: target,
+          isConverted: false,
+        }),
+      ),
+    };
     const service = new MessagesService(
       messageRepository as unknown as Repository<Message>,
       conversationRepository as unknown as Repository<Conversation>,
       sellerRepository as unknown as Repository<Seller>,
       dataSource as unknown as DataSource,
       cloudinaryService as unknown as CloudinaryService,
+      priceDisplay as unknown as PriceDisplayService,
     );
     return {
       service,
@@ -323,9 +337,12 @@ describe('MessagesService', () => {
       const qb = buildQb({ getMany: [message(30), message(29), message(28)] });
       h.messageRepository.createQueryBuilder.mockReturnValue(qb);
 
-      const result = await h.service.getHistory(conversation, buyerId, {
-        limit: 2,
-      });
+      const result = await h.service.getHistory(
+        conversation,
+        buyerId,
+        { limit: 2 },
+        'CRC',
+      );
 
       expect(result.data.map((m) => m.id)).toEqual([30, 29]);
       expect(result.nextCursor).toBe(29);
@@ -339,10 +356,12 @@ describe('MessagesService', () => {
       const qb = buildQb({ getMany: [message(28)] });
       h.messageRepository.createQueryBuilder.mockReturnValue(qb);
 
-      const result = await h.service.getHistory(conversation, buyerId, {
-        cursor: 29,
-        limit: 2,
-      });
+      const result = await h.service.getHistory(
+        conversation,
+        buyerId,
+        { cursor: 29, limit: 2 },
+        'CRC',
+      );
 
       expect(result.nextCursor).toBeNull();
       expect(h.messageRepository.exists).toHaveBeenCalledWith({
@@ -359,7 +378,12 @@ describe('MessagesService', () => {
       h.messageRepository.exists.mockResolvedValue(false);
 
       await expect(
-        h.service.getHistory(conversation, buyerId, { cursor: 999, limit: 2 }),
+        h.service.getHistory(
+          conversation,
+          buyerId,
+          { cursor: 999, limit: 2 },
+          'CRC',
+        ),
       ).rejects.toThrow(BadRequestException);
       expect(h.messageRepository.createQueryBuilder).not.toHaveBeenCalled();
     });
@@ -370,9 +394,12 @@ describe('MessagesService', () => {
         buildQb({ getMany: [] }),
       );
 
-      const result = await h.service.getHistory(conversation, buyerId, {
-        limit: 30,
-      });
+      const result = await h.service.getHistory(
+        conversation,
+        buyerId,
+        { limit: 30 },
+        'CRC',
+      );
 
       expect(result.conversation).toEqual({
         id: 15,
@@ -385,6 +412,10 @@ describe('MessagesService', () => {
           imageUrl: 'https://cdn/cover.png',
           status: ProductStatus.SOLD,
           isAvailable: false,
+          displayPrice: 25000,
+          displayFinalPrice: 25000,
+          displayCurrency: 'CRC',
+          isConverted: false,
         },
         otherParticipant: {
           id: sellerUserId,

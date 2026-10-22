@@ -62,4 +62,31 @@ export class ProductContextDto extends ProductSummaryDto {
       'false si el producto ya no está activo, está oculto o fue borrado. El chat sigue disponible igual',
   })
   isAvailable!: boolean;
+
+  @ApiProperty({
+    type: Number,
+    nullable: true,
+    example: 47.5,
+    description:
+      'price en la moneda de visualización (informativo); null si no hay tipo de cambio',
+  })
+  displayPrice!: number | null;
+
+  @ApiProperty({
+    type: Number,
+    nullable: true,
+    example: 42.75,
+    description:
+      'finalPrice en la moneda de visualización (informativo); null si no hay tipo de cambio',
+  })
+  displayFinalPrice!: number | null;
+
+  @ApiProperty({ example: 'USD' })
+  displayCurrency!: string;
+
+  @ApiProperty({
+    description:
+      'true si displayPrice se obtuvo convirtiendo; false si la moneda coincide o no hubo tasa',
+  })
+  isConverted!: boolean;
 }

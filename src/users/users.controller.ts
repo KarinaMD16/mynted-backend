@@ -88,7 +88,7 @@ export class UsersController {
   @ApiBearerAuth()
   @ApiOperation({
     summary:
-      'Actualizar el perfil del usuario autenticado (username, bio, location, locale, currency, ' +
+      'Actualizar el perfil del usuario autenticado (username, bio, location, locale, currency, displayCurrency, ' +
       'país, preferencias de notificación, confirmUnfavorite y/o foto)',
   })
   @ApiConsumes('multipart/form-data')
@@ -103,8 +103,23 @@ export class UsersController {
           example: 'Coleccionista de Funko Pop desde 2015',
         },
         location: { type: 'string', example: 'San José, Costa Rica' },
-        locale: { type: 'string', example: 'es-CR' },
-        currency: { type: 'string', example: 'CRC', description: 'ISO 4217' },
+        locale: {
+          type: 'string',
+          example: 'es-CR',
+          description: 'Etiqueta BCP 47',
+        },
+        currency: {
+          type: 'string',
+          example: 'CRC',
+          description:
+            'Moneda de venta y comisión (ISO 4217). No cambia cómo se muestran los precios',
+        },
+        displayCurrency: {
+          type: 'string',
+          example: 'USD',
+          description:
+            'Moneda en la que ver los precios (ISO 4217 soportado; solo visualización)',
+        },
         country: {
           type: 'string',
           example: 'CR',

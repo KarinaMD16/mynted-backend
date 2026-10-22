@@ -8,6 +8,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import 'multer';
 import { DataSource, IsNull, Not, Repository } from 'typeorm';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
+import { PriceDisplayService } from '../pricing/price-display.service';
 import { Seller } from '../sellers/entities/seller.entity';
 import {
   otherParticipantId,
@@ -70,6 +71,7 @@ export class MessagesService {
     private readonly sellerRepository: Repository<Seller>,
     private readonly dataSource: DataSource,
     private readonly cloudinaryService: CloudinaryService,
+    private readonly priceDisplay: PriceDisplayService,
   ) {}
 
   // Más recientes primero, paginado por cursor (id del último mensaje
@@ -79,6 +81,7 @@ export class MessagesService {
     conversation: Conversation,
     viewerId: string,
     query: GetMessagesQueryDto,
+    displayCurrency: string,
   ): Promise<MessageHistoryResponseDto> {
     if (query.cursor !== undefined) {
       const cursorExists = await this.messageRepository.exists({
@@ -109,7 +112,7 @@ export class MessagesService {
         .addOrderBy('m.id', 'DESC')
         .limit(query.limit + 1)
         .getMany(),
-      this.getContext(conversation.id, viewerId),
+      this.getContext(conversation.id, viewerId, displayCurrency),
     ]);
 
     const hasMore = messages.length > query.limit;
@@ -232,7 +235,11 @@ export class MessagesService {
     };
   }
 
-  private async getContext(conversationId: number, viewerId: string) {
+  private async getContext(
+    conversationId: number,
+    viewerId: string,
+    displayCurrency: string,
+  ) {
     // withDeleted: un producto borrado lógicamente conserva sus conversaciones.
     const conversation = await this.conversationRepository.findOneOrFail({
       where: { id: conversationId },
@@ -243,14 +250,26 @@ export class MessagesService {
       conversation.buyerId === viewerId
         ? conversation.seller
         : conversation.buyer;
-    const otherSeller = await this.sellerRepository.findOne({
-      where: { userId: other.id },
-      select: { sellerId: true, displayName: true, isVerified: true },
-    });
+    const [otherSeller, rates] = await Promise.all([
+      this.sellerRepository.findOne({
+        where: { userId: other.id },
+        select: { sellerId: true, displayName: true, isVerified: true },
+      }),
+      this.priceDisplay.getDisplayRates(displayCurrency, [
+        conversation.product.currency,
+      ]),
+    ]);
 
     return {
       id: conversation.id,
-      product: toProductContext(conversation.product),
+      product: {
+        ...toProductContext(conversation.product),
+        ...this.priceDisplay.toDisplay(
+          conversation.product,
+          displayCurrency,
+          rates,
+        ),
+      },
       otherParticipant: toParticipantSummary(other, otherSeller),
     };
   }

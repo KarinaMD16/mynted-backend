@@ -57,8 +57,14 @@ export class User {
   @Column({ type: 'varchar', nullable: true })
   locale!: string | null;
 
+  // Moneda de venta y de comisión del vendedor (y de sus productos nuevos).
   @Column({ type: 'varchar', nullable: true })
   currency!: string | null;
+
+  // Moneda en la que el usuario prefiere ver los precios. Solo afecta la
+  // visualización; si es null se usa currency.
+  @Column({ name: 'display_currency', type: 'varchar', nullable: true })
+  displayCurrency!: string | null;
 
   @Column({
     name: 'accepted_privacy_policy_at',

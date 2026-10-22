@@ -46,6 +46,10 @@ import { GetMyContentQueryDto } from './dto/get-my-content-query.dto';
 import { VoteDto } from './dto/vote.dto';
 import { FavoriteItemType } from './entities/favorite.entity';
 import { ForumService } from './forum.service';
+import {
+  ApiDisplayCurrencyHeader,
+  DisplayCurrency,
+} from '../pricing/display-currency.decorator';
 
 interface ForumFiles {
   images?: Express.Multer.File[];
@@ -172,11 +176,17 @@ export class ForumController {
     summary:
       'Posts y productos publicados por el usuario autenticado, mezclados por fecha (el tab Todo). Para solo posts o solo productos usar /forums/me y /products/me',
   })
+  @ApiDisplayCurrencyHeader()
   findMyContent(
     @Query() query: GetMyFeedQueryDto,
     @Req() request: AuthenticatedRequest,
+    @DisplayCurrency() displayCurrency: string,
   ) {
-    return this.forumService.findMyContent(request.user.userId, query);
+    return this.forumService.findMyContent(
+      request.user.userId,
+      query,
+      displayCurrency,
+    );
   }
 
   @Get('favorites/me')
@@ -185,11 +195,17 @@ export class ForumController {
     summary:
       'Posts y productos guardados como favoritos por el usuario autenticado, del más recientemente guardado al más antiguo. type: all | posts | products',
   })
+  @ApiDisplayCurrencyHeader()
   findMyFavorites(
     @Query() query: GetMyContentQueryDto,
     @Req() request: AuthenticatedRequest,
+    @DisplayCurrency() displayCurrency: string,
   ) {
-    return this.forumService.findMyFavorites(request.user.userId, query);
+    return this.forumService.findMyFavorites(
+      request.user.userId,
+      query,
+      displayCurrency,
+    );
   }
 
   @Get('users/me/recommended-posts')

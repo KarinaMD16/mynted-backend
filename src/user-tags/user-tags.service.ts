@@ -65,12 +65,14 @@ export class UserTagsService {
     if (
       dto.privacyPolicyVersion !== undefined ||
       dto.locale !== undefined ||
-      dto.currency !== undefined
+      dto.currency !== undefined ||
+      dto.displayCurrency !== undefined
     ) {
       await this.usersService.updateOnboardingMeta(userId, {
         privacyPolicyVersion: dto.privacyPolicyVersion,
         locale: dto.locale,
         currency: dto.currency,
+        displayCurrency: dto.displayCurrency,
       });
     }
 
