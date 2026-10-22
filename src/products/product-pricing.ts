@@ -1,5 +1,28 @@
 import { FindOptionsWhere, IsNull, Raw } from 'typeorm';
 import { Product, ProductStatus } from './entities/product.entity';
+import { UnavailableReason } from './product-events';
+
+type AvailabilityFields = Pick<Product, 'status' | 'isVisible' | 'deletedAt'>;
+
+// Disponible para comprar: activo, visible y no borrado.
+export function isProductAvailable(product: AvailabilityFields): boolean {
+  return (
+    product.status === ProductStatus.ACTIVE &&
+    product.isVisible &&
+    !product.deletedAt
+  );
+}
+
+// Motivo por el que no está disponible (null si lo está).
+export function unavailableReason(
+  product: AvailabilityFields,
+): UnavailableReason | null {
+  if (product.deletedAt) return 'deleted';
+  if (product.status === ProductStatus.SOLD) return 'sold';
+  if (product.status !== ProductStatus.ACTIVE) return 'inactive';
+  if (!product.isVisible) return 'hidden';
+  return null;
+}
 
 // Precio final = price con el descuento aplicado, redondeado a 2 decimales.
 // price nunca se sobrescribe: el original queda en price.

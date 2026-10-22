@@ -27,6 +27,27 @@ export interface NotifyOptions {
   preserveKeys?: string[];
 }
 
+// Columna de favorite que guarda cada aviso (nunca se interpola otra cosa).
+const FAVORITE_PREFERENCE_COLUMNS = {
+  price: 'notify_price',
+  availability: 'notify_availability',
+} as const;
+
+export interface FavoritersNotification {
+  productId: number;
+  // Qué aviso pidió el usuario al guardar el producto.
+  preference: keyof typeof FAVORITE_PREFERENCE_COLUMNS;
+  // Autores de la acción (vendedor, comprador): no se les avisa.
+  excludeUserIds: string[];
+  type: NotificationType;
+  data: Record<string, unknown>;
+  message: string;
+  dedupeKey: string;
+  preserveKeys?: string[];
+  // Se evalúa sobre la data ya unificada; si es true, se borra.
+  discardIf?: (data: Record<string, unknown>) => boolean;
+}
+
 // Fila que devuelve el INSERT ... RETURNING.
 export interface NotificationRow {
   id: string;
@@ -92,6 +113,64 @@ export class NotificationsService {
       ],
     );
     return this.emitCreated(rows);
+  }
+
+  // Avisa a todos los que guardaron el producto y pidieron ese aviso, en un
+  // solo INSERT ... SELECT desde favorite. Filtra cuentas activas, a los
+  // autores de la acción y a quien ya no tiene acceso al producto: si está en
+  // una comunidad privada o inactiva, solo a sus miembros.
+  async notifyFavoriters(
+    input: FavoritersNotification,
+  ): Promise<NotificationDto[]> {
+    const rows = await this.dataSource.query<NotificationRow[]>(
+      `INSERT INTO notification (user_id, type, data, message, dedupe_key)
+       SELECT f.user_id, $2::notification_type_enum, $3::jsonb, $4, $5
+         FROM favorite f
+         JOIN users u ON u.id = f.user_id AND u.is_active = true
+         JOIN product p ON p.id = f.item_id
+         LEFT JOIN community c ON c.id = p.community_id
+        WHERE f."itemType" = 'PRODUCT'
+          AND f.item_id = $1
+          AND f.${FAVORITE_PREFERENCE_COLUMNS[input.preference]} = true
+          AND f.user_id <> ALL($6::uuid[])
+          AND (
+            p.community_id IS NULL
+            OR (c.is_active = true AND c.is_private = false)
+            OR EXISTS (
+              SELECT 1 FROM community_profile cp
+               WHERE cp.user_id = f.user_id
+                 AND cp.community_id = p.community_id
+            )
+          )
+       ${dedupeUpsertSql(7)}`,
+      [
+        input.productId,
+        input.type,
+        JSON.stringify(input.data),
+        input.message,
+        input.dedupeKey,
+        input.excludeUserIds,
+        input.preserveKeys ?? [],
+      ],
+    );
+
+    // Al unificar puede quedar sin cambio real (p. ej. el precio volvió al
+    // que el usuario vio): esa notificación se borra en vez de emitirse.
+    const discarded = input.discardIf
+      ? rows.filter((row) => input.discardIf!(row.data))
+      : [];
+    if (discarded.length > 0) {
+      await this.notificationRepository.delete(discarded.map((row) => row.id));
+      const counts = await this.unreadCounts(
+        discarded.map((row) => row.user_id),
+      );
+      for (const userId of new Set(discarded.map((row) => row.user_id))) {
+        this.gateway.emitUnreadCount(userId, {
+          unreadCount: counts.get(userId) ?? 0,
+        });
+      }
+    }
+    return this.emitCreated(rows.filter((row) => !discarded.includes(row)));
   }
 
   // Emite notification:new a cada destinatario con su contador actualizado

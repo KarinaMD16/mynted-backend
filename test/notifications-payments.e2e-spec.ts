@@ -1,4 +1,8 @@
 import request from 'supertest';
+import {
+  Favorite,
+  FavoriteItemType,
+} from '../src/community/entities/favorite.entity';
 import { Notification } from '../src/notifications/entities/notification.entity';
 import { NotificationType } from '../src/notifications/enums/notification-type.enum';
 import {
@@ -33,6 +37,7 @@ describe('Notificaciones de pagos (e2e)', () => {
   let ctx: NotificationsTestApp;
   let buyer: User;
   let sellerUser: User;
+  let fan: User;
   let product: Product;
 
   const checkout = (idempotencyKey: string) =>
@@ -55,7 +60,7 @@ describe('Notificaciones de pagos (e2e)', () => {
   beforeAll(async () => {
     ctx = await createNotificationsTestApp();
     const users = ctx.repo(User);
-    [buyer, sellerUser] = await users.save([
+    [buyer, sellerUser, fan] = await users.save([
       users.create({ email: 'buyer@e2e.test', username: 'compradora' }),
       users.create({
         email: 'seller@e2e.test',
@@ -63,6 +68,7 @@ describe('Notificaciones de pagos (e2e)', () => {
         role: UserRole.SELLER,
         currency: 'CRC',
       }),
+      users.create({ email: 'fan@e2e.test', username: 'fan' }),
     ]);
     const paymentInfo = await ctx.repo(PaymentInfo).save({
       ownerFullName: 'Karina',
@@ -89,6 +95,15 @@ describe('Notificaciones de pagos (e2e)', () => {
       condition: ProductCondition.NEW,
       sellerId: store.sellerId,
     });
+    // El fan y la propia compradora lo tenían en favoritos con aviso.
+    await ctx.repo(Favorite).insert(
+      [fan, buyer].map((user) => ({
+        userId: user.id,
+        itemId: product.id,
+        itemType: FavoriteItemType.PRODUCT,
+        notifyAvailability: true,
+      })),
+    );
   });
 
   afterAll(async () => {
@@ -131,6 +146,23 @@ describe('Notificaciones de pagos (e2e)', () => {
     });
   });
 
+  it('avisa "vendido" a quien lo guardó, pero no a la compradora', async () => {
+    await ctx.waitFor(async () => {
+      expect(await notificationsOf(fan)).toHaveLength(1);
+    });
+    const [sold] = await notificationsOf(fan);
+    expect(sold).toMatchObject({
+      type: NotificationType.FAVORITE_UNAVAILABLE,
+      data: {
+        productId: product.id,
+        productTitle: 'Funko Pop Goku SSJ',
+        reason: 'sold',
+      },
+    });
+    const buyerTypes = (await notificationsOf(buyer)).map((n) => n.type);
+    expect(buyerTypes).toEqual([NotificationType.PURCHASE_COMPLETED]);
+  });
+
   it('repetir la clave de idempotencia no vuelve a notificar', async () => {
     await checkout('checkout-notif-0001').expect(201);
     // Margen para que un listener (si se hubiera emitido) termine.
@@ -138,5 +170,6 @@ describe('Notificaciones de pagos (e2e)', () => {
 
     expect(await notificationsOf(buyer)).toHaveLength(1);
     expect(await notificationsOf(sellerUser)).toHaveLength(1);
+    expect(await notificationsOf(fan)).toHaveLength(1);
   });
 });

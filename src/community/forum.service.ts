@@ -8,6 +8,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { BadgeEvents } from '../badges/badge-events';
+import { FavoriteNotificationsDto } from './dto/favorite-notifications.dto';
 import { DataSource, FindOptionsWhere, In, Not, Repository } from 'typeorm';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
 import { PriceDisplayService } from '../pricing/price-display.service';
@@ -679,18 +680,30 @@ export class ForumService {
     );
   }
 
+  // prefs (avisos de precio/disponibilidad) solo aplica a productos; si se
+  // envía sobre un favorito existente, lo actualiza.
   async saveFavorite(
     itemType: FavoriteItemType,
     itemId: number,
     userId: string,
+    prefs: FavoriteNotificationsDto = {},
   ) {
-    await this.validateFavoriteTarget(itemType, itemId);
-    const existing = await this.favoriteRepository.findOne({
+    await this.validateFavoriteTarget(itemType, itemId, userId);
+    const notify =
+      itemType === FavoriteItemType.PRODUCT ? this.notifyPrefs(prefs) : {};
+    let favorite = await this.favoriteRepository.findOne({
       where: { userId, itemId, itemType },
     });
-    if (!existing) {
-      await this.favoriteRepository.save(
-        this.favoriteRepository.create({ userId, itemId, itemType }),
+    if (!favorite) {
+      favorite = await this.favoriteRepository.save(
+        this.favoriteRepository.create({
+          userId,
+          itemId,
+          itemType,
+          notifyPrice: false,
+          notifyAvailability: false,
+          ...notify,
+        }),
       );
       // Puede sumar al badge community_collector.
       this.eventEmitter?.emit(BadgeEvents.FAVORITE_SAVED, {
@@ -698,22 +711,82 @@ export class ForumService {
         itemType,
         itemId,
       });
+    } else if (Object.keys(notify).length > 0) {
+      await this.favoriteRepository.update(favorite.id, notify);
+      Object.assign(favorite, notify);
     }
     if (itemType === FavoriteItemType.POST)
       void this.publishPostMetrics(itemId);
-    return { itemId, itemType, isSaved: true };
+    return {
+      itemId,
+      itemType,
+      isSaved: true,
+      ...(itemType === FavoriteItemType.PRODUCT
+        ? {
+            notifyPrice: favorite.notifyPrice,
+            notifyAvailability: favorite.notifyAvailability,
+          }
+        : {}),
+    };
   }
 
+  // Cambia los avisos de un producto ya guardado. No exige que el producto
+  // siga activo (se pueden apagar los avisos de uno vendido o pausado).
+  async updateFavoriteNotifications(
+    productId: number,
+    userId: string,
+    prefs: FavoriteNotificationsDto,
+  ) {
+    const notify = this.notifyPrefs(prefs);
+    if (Object.keys(notify).length === 0) {
+      throw new BadRequestException(
+        'Debe enviar notifyPrice o notifyAvailability',
+      );
+    }
+    const favorite = await this.favoriteRepository.findOne({
+      where: { userId, itemId: productId, itemType: FavoriteItemType.PRODUCT },
+    });
+    if (!favorite) {
+      throw new NotFoundException('No tienes este producto en favoritos');
+    }
+    await this.favoriteRepository.update(favorite.id, notify);
+    Object.assign(favorite, notify);
+    return {
+      itemId: productId,
+      itemType: FavoriteItemType.PRODUCT,
+      isSaved: true,
+      notifyPrice: favorite.notifyPrice,
+      notifyAvailability: favorite.notifyAvailability,
+    };
+  }
+
+  // Un producto se puede quitar aunque ya no esté activo (vendido, pausado o
+  // borrado); posts y respuestas siguen validándose.
   async removeFavorite(
     itemType: FavoriteItemType,
     itemId: number,
     userId: string,
   ) {
-    await this.validateFavoriteTarget(itemType, itemId);
+    if (itemType !== FavoriteItemType.PRODUCT) {
+      await this.validateFavoriteTarget(itemType, itemId, userId);
+    }
     await this.favoriteRepository.delete({ userId, itemId, itemType });
     if (itemType === FavoriteItemType.POST)
       void this.publishPostMetrics(itemId);
     return { itemId, itemType, isSaved: false };
+  }
+
+  private notifyPrefs(
+    prefs: FavoriteNotificationsDto,
+  ): Partial<Pick<Favorite, 'notifyPrice' | 'notifyAvailability'>> {
+    return {
+      ...(prefs.notifyPrice !== undefined
+        ? { notifyPrice: prefs.notifyPrice }
+        : {}),
+      ...(prefs.notifyAvailability !== undefined
+        ? { notifyAvailability: prefs.notifyAvailability }
+        : {}),
+    };
   }
 
   private async getActiveCommunity(communityId: number): Promise<Community> {
@@ -927,6 +1000,7 @@ export class ForumService {
   private async validateFavoriteTarget(
     itemType: FavoriteItemType,
     itemId: number,
+    userId: string,
   ): Promise<void> {
     if (itemType === FavoriteItemType.POST) {
       await this.getActivePost(itemId);
@@ -938,8 +1012,26 @@ export class ForumService {
     }
     const product = await this.productRepository.findOne({
       where: { id: itemId, status: ProductStatus.ACTIVE, isVisible: true },
+      relations: { community: true },
     });
-    if (!product) throw new NotFoundException('Producto no encontrado');
+    // Un producto de una comunidad privada (o inactiva) solo lo guardan sus
+    // miembros; para el resto es como si no existiera.
+    if (!product || !(await this.canAccessProductCommunity(product, userId))) {
+      throw new NotFoundException('Producto no encontrado');
+    }
+  }
+
+  private async canAccessProductCommunity(
+    product: Product,
+    userId: string,
+  ): Promise<boolean> {
+    if (product.communityId === null) return true;
+    if (product.community?.isActive && !product.community.isPrivate) {
+      return true;
+    }
+    return this.communityProfileRepository.exists({
+      where: { userId, communityId: product.communityId },
+    });
   }
 
   private mapPost(
@@ -1229,6 +1321,7 @@ export class ForumService {
   }
 
   // Solo los ids guardados (para pintar el corazón sin traer las tarjetas).
+  // Para productos agrega items con los avisos de cada uno (ids no cambia).
   async findMyFavoriteIds(userId: string, query: GetFavoriteIdsQueryDto) {
     const itemType =
       query.type === FavoriteIdsType.POSTS
@@ -1236,10 +1329,22 @@ export class ForumService {
         : FavoriteItemType.PRODUCT;
     const favorites = await this.favoriteRepository.find({
       where: { userId, itemType },
-      select: { itemId: true },
+      select: { itemId: true, notifyPrice: true, notifyAvailability: true },
       order: { createdAt: 'DESC', id: 'DESC' },
     });
-    return { type: query.type, ids: favorites.map((f) => f.itemId) };
+    return {
+      type: query.type,
+      ids: favorites.map((f) => f.itemId),
+      ...(itemType === FavoriteItemType.PRODUCT
+        ? {
+            items: favorites.map((f) => ({
+              id: f.itemId,
+              notifyPrice: f.notifyPrice,
+              notifyAvailability: f.notifyAvailability,
+            })),
+          }
+        : {}),
+    };
   }
 
   private async pageContent(
@@ -1388,7 +1493,9 @@ export class ForumService {
         },
       }),
     ]);
-    const savedIds = new Set(favorites.map((favorite) => favorite.itemId));
+    const favoriteById = new Map(
+      favorites.map((favorite) => [favorite.itemId, favorite]),
+    );
     const productById = new Map(products.map((p) => [p.id, p]));
 
     const cards = productIds
@@ -1419,7 +1526,11 @@ export class ForumService {
           photoUrl: product.seller.user.photoUrl ?? null,
           isVerified: product.seller.isVerified,
         },
-        isSaved: savedIds.has(product.id),
+        isSaved: favoriteById.has(product.id),
+        // Avisos de quien mira (false si no lo guardó).
+        notifyPrice: favoriteById.get(product.id)?.notifyPrice ?? false,
+        notifyAvailability:
+          favoriteById.get(product.id)?.notifyAvailability ?? false,
       }));
     return this.priceDisplay.withDisplayPrices(cards, displayCurrency);
   }
