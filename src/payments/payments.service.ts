@@ -18,6 +18,7 @@ import {
   ProductStatus,
   ProductType,
 } from '../products/entities/product.entity';
+import { computeFinalPrice } from '../products/product-pricing';
 import { Seller } from '../sellers/entities/seller.entity';
 import { User } from '../users/entities/user.entity';
 import { PaymentTransaction } from './entities/payment-transaction.entity';
@@ -79,7 +80,8 @@ export class PaymentsService {
     if (!product) throw new NotFoundException('Producto no encontrado');
     this.validateQuoteProduct(product);
     this.assertEnoughStock(product, quantity);
-    const amount = this.lineTotal(product.price, quantity);
+    const unitPrice = this.unitPrice(product);
+    const amount = this.lineTotal(unitPrice, quantity);
 
     const seller = await this.sellerRepository.findOne({
       where: { sellerId: product.sellerId },
@@ -102,7 +104,7 @@ export class PaymentsService {
     const response: QuoteResponseDto = {
       productId: product.id,
       quantity,
-      unitPrice: product.price,
+      unitPrice,
       availableQuantity: product.quantity,
       amount,
       currency,
@@ -246,7 +248,8 @@ export class PaymentsService {
     // el checkout; solo se valida aquí y se descuenta al aprobar el pago.
     const quantity = dto.quantity ?? 1;
     this.assertEnoughStock(product, quantity);
-    const amount = this.lineTotal(product.price, quantity);
+    const unitPrice = this.unitPrice(product);
+    const amount = this.lineTotal(unitPrice, quantity);
 
     const seller = await manager.getRepository(Seller).findOne({
       where: { sellerId: product.sellerId },
@@ -273,7 +276,7 @@ export class PaymentsService {
       buyerId,
       sellerId: seller.sellerId,
       quantity,
-      unitPrice: product.price,
+      unitPrice,
       amount,
       currency,
       exchangeRate: commission.exchangeRate,
@@ -426,6 +429,16 @@ export class PaymentsService {
       // Las transacciones anteriores a quantity equivalen a 1 unidad.
       (transaction.quantity ?? 1) !== (dto.quantity ?? 1)
     );
+  }
+
+  // Precio unitario que se cobra: el precio final (price con el descuento del
+  // producto aplicado), el mismo que ven los listados.
+  private unitPrice(product: Product): number {
+    const unitPrice = computeFinalPrice(product.price, product.discountPercent);
+    if (!Number.isFinite(unitPrice) || unitPrice <= 0) {
+      throw new BadRequestException('El precio final del producto es inválido');
+    }
+    return unitPrice;
   }
 
   // Total de la línea: precio unitario × cantidad, a 2 decimales.

@@ -912,4 +912,126 @@ describe('PaymentsService', () => {
       );
     });
   });
+  describe('discount (final price)', () => {
+    it('charges and commissions the price without discount when there is none', async () => {
+      const h = createHarness({ product: { discountPercent: null } });
+
+      const result = await h.service.checkout(dto(), buyerId, 'discount-key-0');
+
+      expect(result).toMatchObject({ unitPrice: 120000, amount: 120000 });
+      expect(h.commissionService.calculate).toHaveBeenCalledWith(
+        120000,
+        'CRC',
+        9,
+      );
+      expect(h.paymentGateway.charge).toHaveBeenCalledWith(
+        expect.objectContaining({ amount: 120000 }),
+      );
+    });
+
+    it('uses the final price as unit price for a discounted product', async () => {
+      const h = createHarness({ product: { discountPercent: 20 } });
+
+      const result = await h.service.checkout(dto(), buyerId, 'discount-key-1');
+
+      expect(result).toMatchObject({ unitPrice: 96000, amount: 96000 });
+      expect(h.commissionService.calculate).toHaveBeenCalledWith(
+        96000,
+        'CRC',
+        9,
+      );
+      expect(h.paymentGateway.charge).toHaveBeenCalledWith(
+        expect.objectContaining({ amount: 96000 }),
+      );
+      expect(h.txRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ unitPrice: 96000, amount: 96000 }),
+      );
+    });
+
+    it('multiplies the discounted unit price by the quantity', async () => {
+      const h = createHarness({
+        product: { discountPercent: 20, quantity: 5 },
+      });
+
+      const result = await h.service.checkout(
+        { ...dto(), quantity: 3 },
+        buyerId,
+        'discount-key-2',
+      );
+
+      expect(result).toMatchObject({
+        quantity: 3,
+        unitPrice: 96000,
+        amount: 288000,
+      });
+      expect(h.commissionService.calculate).toHaveBeenCalledWith(
+        288000,
+        'CRC',
+        9,
+      );
+      expect(h.paymentGateway.charge).toHaveBeenCalledWith(
+        expect.objectContaining({ amount: 288000 }),
+      );
+    });
+
+    it('rounds the discounted unit price to 2 decimals before multiplying', async () => {
+      const h = createHarness({
+        product: {
+          price: 10,
+          currency: 'USD',
+          discountPercent: 33.33,
+          quantity: 3,
+        },
+      });
+
+      const result = await h.service.checkout(
+        { ...dto(), quantity: 3 },
+        buyerId,
+        'discount-key-3',
+      );
+
+      // 10 * (1 - 0.3333) = 6.667 -> 6.67 por unidad; 3 unidades = 20.01
+      expect(result).toMatchObject({ unitPrice: 6.67, amount: 20.01 });
+    });
+
+    it('rejects a product whose final price is 0 (100% discount)', async () => {
+      const h = createHarness({ product: { discountPercent: 100 } });
+
+      await expect(
+        h.service.checkout(dto(), buyerId, 'discount-key-4'),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(h.paymentGateway.charge).not.toHaveBeenCalled();
+    });
+
+    it('quotes the discounted unit price and total', async () => {
+      const h = createHarness({
+        product: { discountPercent: 20, quantity: 5 },
+      });
+
+      await expect(h.service.quote(7, buyerId)).resolves.toMatchObject({
+        quantity: 1,
+        unitPrice: 96000,
+        amount: 96000,
+      });
+      await expect(h.service.quote(7, buyerId, 2)).resolves.toMatchObject({
+        quantity: 2,
+        unitPrice: 96000,
+        amount: 192000,
+      });
+      expect(h.commissionService.calculate).toHaveBeenLastCalledWith(
+        192000,
+        'CRC',
+        9,
+      );
+    });
+
+    it('quotes the full price when the product has no discount', async () => {
+      const h = createHarness({ product: { discountPercent: null } });
+
+      await expect(h.service.quote(7, buyerId)).resolves.toMatchObject({
+        unitPrice: 120000,
+        amount: 120000,
+      });
+    });
+  });
 });
