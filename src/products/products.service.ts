@@ -93,6 +93,9 @@ export interface TagProductCard {
   imageUrl: string;
   type: ProductType;
   condition: ProductCondition;
+  // Unidades disponibles y si se puede comprar (activo, visible, con stock).
+  quantity: number;
+  isAvailable: boolean;
   isSaved: boolean;
   tags: { tagId: number; name: string }[];
   seller: {
@@ -203,6 +206,8 @@ export interface MyProductCard {
   currency: string | null;
   imageUrl: string | null;
   status: ProductStatus;
+  quantity: number;
+  isAvailable: boolean;
   isVisible: boolean;
   publishedAt: Date | null;
   type: ProductType | null;
@@ -252,6 +257,7 @@ export interface Paginated<T> {
 export type ProductListItem = WithDisplayPrice<
   Product & {
     finalPrice: number;
+    isAvailable: boolean;
     isSaved: boolean;
   }
 >;
@@ -264,6 +270,7 @@ interface PublishableFields {
   tagCount: number;
   hasImage: boolean;
   currency: string | null | undefined;
+  quantity: number;
 }
 
 @Injectable()
@@ -347,6 +354,7 @@ export class ProductsService {
         tagCount: dto.tagIds?.length ?? 0,
         hasImage: image !== undefined,
         currency,
+        quantity: dto.quantity ?? 1,
       });
     }
 
@@ -363,6 +371,7 @@ export class ProductsService {
         description: dto.description,
         price: dto.price,
         discountPercent: dto.discountPercent ?? null,
+        quantity: dto.quantity ?? 1,
         currency: currency ?? undefined,
         imageUrl: coverUpload?.url,
         status: saveAsDraft ? ProductStatus.DRAFT : ProductStatus.ACTIVE,
@@ -846,6 +855,8 @@ export class ProductsService {
       imageUrl: product.imageUrl,
       type: product.type,
       condition: product.condition,
+      quantity: product.quantity,
+      isAvailable: isProductAvailable(product),
       isSaved: false,
       tags: product.productTags.map((productTag) => ({
         tagId: productTag.tag.tagId,
@@ -942,6 +953,8 @@ export class ProductsService {
       currency: product.currency ?? null,
       imageUrl: product.imageUrl ?? null,
       status: product.status,
+      quantity: product.quantity,
+      isAvailable: isProductAvailable(product),
       isVisible: product.isVisible,
       publishedAt: product.publishedAt,
       type: product.type ?? null,
@@ -1003,6 +1016,7 @@ export class ProductsService {
         product.price == null
           ? null
           : computeFinalPrice(product.price, product.discountPercent),
+      isAvailable: isProductAvailable(product),
       isSaved: saved.has(id),
       seller: {
         ...seller,
@@ -1129,7 +1143,7 @@ export class ProductsService {
     if (product.seller.userId !== userId) {
       throw new ForbiddenException('No eres el dueño de este producto');
     }
-    const before = this.favoriteSnapshot(product);
+    let before = this.favoriteSnapshot(product);
 
     // Un producto publicado siempre conserva exactamente 3 tags; un borrador
     // puede tener menos hasta que se publique.
@@ -1187,6 +1201,18 @@ export class ProductsService {
     if (coverUpload) product.imageUrl = coverUpload.url;
 
     await this.dataSource.transaction(async (manager) => {
+      // Con el producto bloqueado se toman el stock y el status vigentes: una
+      // compra concurrente no se pisa con una lectura vieja.
+      const locked = await manager.getRepository(Product).findOne({
+        where: { id },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!locked) throw new NotFoundException('Producto no encontrado');
+      product.quantity = locked.quantity;
+      product.status = locked.status;
+      before = this.favoriteSnapshot(locked);
+      this.applyQuantityChange(product, dto.quantity);
+
       await manager.save(Product, product);
 
       if (dto.tagIds !== undefined) {
@@ -1258,6 +1284,7 @@ export class ProductsService {
       tagCount: product.productTags.length,
       hasImage: Boolean(product.imageUrl),
       currency,
+      quantity: product.quantity,
     });
 
     product.status = ProductStatus.ACTIVE;
@@ -1295,9 +1322,21 @@ export class ProductsService {
       );
     }
 
+    if (dto.status === ProductStatus.ACTIVE && product.quantity <= 0) {
+      throw new BadRequestException(
+        'No se puede reactivar un producto sin stock: actualiza quantity',
+      );
+    }
+
     const before = this.favoriteSnapshot(product);
     product.status = dto.status;
-    await this.productRepository.save(product);
+    // Marcarlo vendido a mano lo deja agotado. Solo se escriben estas
+    // columnas: un guardado completo pisaría el stock con una lectura vieja.
+    if (dto.status === ProductStatus.SOLD) product.quantity = 0;
+    await this.productRepository.update(id, {
+      status: product.status,
+      quantity: product.quantity,
+    });
     this.emitFavoriteChanges(product, before, userId);
 
     return this.findDetail(id, userId);
@@ -1311,6 +1350,21 @@ export class ProductsService {
     await this.productRepository.softDelete(id);
     product.deletedAt = new Date();
     this.emitFavoriteChanges(product, before, userId);
+  }
+
+  // quantity 0 deja agotado (active -> sold); reponer stock lo reactiva
+  // (sold -> active). Borradores y pausados conservan su status.
+  private applyQuantityChange(
+    product: Product,
+    quantity: number | undefined,
+  ): void {
+    if (quantity === undefined) return;
+    product.quantity = quantity;
+    if (quantity === 0 && product.status === ProductStatus.ACTIVE) {
+      product.status = ProductStatus.SOLD;
+    } else if (quantity > 0 && product.status === ProductStatus.SOLD) {
+      product.status = ProductStatus.ACTIVE;
+    }
   }
 
   private favoriteSnapshot(product: Product): FavoriteSnapshot {
@@ -1525,6 +1579,7 @@ export class ProductsService {
       products.map((product) => ({
         ...product,
         finalPrice: computeFinalPrice(product.price, product.discountPercent),
+        isAvailable: isProductAvailable(product),
         isSaved: saved.has(product.id),
       })),
       displayCurrency,
@@ -1575,6 +1630,9 @@ export class ProductsService {
     }
     if (!fields.hasImage) {
       missing.push('Debe proporcionar una imagen de portada');
+    }
+    if (fields.quantity < 1) {
+      missing.push('quantity debe ser al menos 1 para publicar');
     }
     if (!fields.currency) {
       missing.push(

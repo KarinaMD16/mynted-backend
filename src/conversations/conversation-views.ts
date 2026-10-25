@@ -64,7 +64,8 @@ export function toProductContext(
     isAvailable:
       product.status === ProductStatus.ACTIVE &&
       product.isVisible &&
-      !product.deletedAt,
+      !product.deletedAt &&
+      product.quantity > 0,
   };
 }
 

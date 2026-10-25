@@ -16,6 +16,7 @@ import { Product, ProductStatus } from '../products/entities/product.entity';
 import { escapeLike } from '../common/escape-like';
 import { PostEvents } from './post-events';
 import {
+  isProductAvailable,
   PUBLIC_COMMUNITY_ALTERNATIVES,
   computeFinalPrice,
 } from '../products/product-pricing';
@@ -1511,6 +1512,8 @@ export class ForumService {
         title: product.title,
         price: product.price,
         discountPercent: product.discountPercent,
+        quantity: product.quantity,
+        isAvailable: isProductAvailable(product),
         finalPrice: computeFinalPrice(product.price, product.discountPercent),
         currency: product.currency,
         imageUrl: product.imageUrl,

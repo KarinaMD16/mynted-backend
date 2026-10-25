@@ -92,9 +92,11 @@ export class NotificationsListener {
         },
       ]);
 
-      // Vendido: a quienes lo guardaron, solo si estaba disponible (el
-      // checkout exige activo, pero no visible). Sin comprador ni vendedor.
-      if (row.product_visible && !row.product_deleted_at) {
+      // Agotado: a quienes lo guardaron, solo si este pago se llevó la última
+      // unidad (no por cada descuento intermedio de stock) y estaba
+      // disponible (el checkout exige activo, pero no visible). Sin comprador
+      // ni vendedor.
+      if (event.soldOut && row.product_visible && !row.product_deleted_at) {
         await this.notifyAvailability({
           productId: event.productId,
           productTitle: row.product_title,

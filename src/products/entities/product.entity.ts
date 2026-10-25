@@ -1,5 +1,6 @@
 import {
   Column,
+  Check,
   CreateDateColumn,
   DeleteDateColumn,
   Entity,
@@ -36,6 +37,8 @@ export enum ProductCondition {
 }
 
 @Entity('product')
+// quantity nunca es negativa (0 = agotado).
+@Check('CHK_product_quantity_non_negative', '"quantity" >= 0')
 // Listados y conteos por vendedor (tienda, /products/me, ratings).
 @Index('IDX_product_seller_id', ['sellerId'])
 export class Product {
@@ -91,6 +94,12 @@ export class Product {
     default: ProductStatus.ACTIVE,
   })
   status!: ProductStatus;
+
+  // Unidades disponibles. 0 = agotado: un producto activo con quantity 0
+  // pasa a status sold; al reponer stock vuelve a active. El descuento de
+  // stock en una compra es atómico (UPDATE condicional en el checkout).
+  @Column({ type: 'int', default: 1 })
+  quantity!: number;
 
   @Column({ type: 'enum', enum: ProductType, nullable: true })
   type!: ProductType;

@@ -24,6 +24,7 @@ import {
 } from '../../community/dto/create-community.dto';
 import { ProductCondition, ProductType } from '../entities/product.entity';
 import {
+  MAX_PRODUCT_QUANTITY,
   MAX_RELATED_PRODUCTS,
   REQUIRED_PRODUCT_TAG_COUNT,
 } from './create-product.dto';
@@ -98,6 +99,23 @@ export class UpdateProductDto {
   @IsInt()
   @Min(1)
   communityId?: number | null;
+
+  @ApiPropertyOptional({
+    type: Number,
+    example: 3,
+    minimum: 0,
+    maximum: MAX_PRODUCT_QUANTITY,
+    description:
+      'Unidades disponibles. 0 deja el producto agotado (status sold); si pasa de 0 a más de 0 vuelve a estar disponible (active)',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt({ message: 'quantity debe ser un entero' })
+  @Min(0, { message: 'quantity no puede ser negativa' })
+  @Max(MAX_PRODUCT_QUANTITY, {
+    message: `quantity no puede superar ${MAX_PRODUCT_QUANTITY}`,
+  })
+  quantity?: number;
 
   @ApiPropertyOptional({
     type: Number,

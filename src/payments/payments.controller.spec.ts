@@ -52,7 +52,16 @@ describe('PaymentsController', () => {
     await expect(
       controller.quote(7, { user: { userId: 'buyer-1' } } as never),
     ).resolves.toEqual({ productId: 7, amount: 100, currency: 'USD' });
-    expect(quote).toHaveBeenCalledWith(7, 'buyer-1');
+    expect(quote).toHaveBeenCalledWith(7, 'buyer-1', undefined);
+  });
+
+  it('passes the requested quantity to quote', async () => {
+    const quote = jest.fn().mockResolvedValue({});
+    const controller = new PaymentsController({ quote } as never);
+
+    await controller.quote(7, { user: { userId: 'buyer-1' } } as never, 3);
+
+    expect(quote).toHaveBeenCalledWith(7, 'buyer-1', 3);
   });
 
   it('passes userId, DTO and Idempotency-Key to PaymentsService', async () => {

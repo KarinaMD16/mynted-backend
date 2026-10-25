@@ -43,6 +43,21 @@ export class PaymentTransaction {
   @JoinColumn({ name: 'seller_id', referencedColumnName: 'sellerId' })
   seller!: Seller;
 
+  // Unidades compradas. amount es el total: unitPrice × quantity.
+  @Column({ type: 'int', default: 1 })
+  quantity!: number;
+
+  // Precio unitario al momento del pago (null en transacciones anteriores).
+  @Column({
+    name: 'unit_price',
+    type: 'numeric',
+    precision: 12,
+    scale: 2,
+    nullable: true,
+    transformer: numericTransformer,
+  })
+  unitPrice!: number | null;
+
   @Column({
     type: 'numeric',
     precision: 12,

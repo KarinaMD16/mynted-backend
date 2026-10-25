@@ -113,12 +113,21 @@ export class PaymentsController {
   @ApiBearerAuth()
   @ApiParam({ name: 'productId', type: Number, example: 42 })
   @ApiOkResponse({ type: QuoteResponseDto })
+  @ApiQuery({
+    name: 'quantity',
+    required: false,
+    type: Number,
+    example: 2,
+    description: 'Unidades a cotizar (por defecto 1, máximo el stock)',
+  })
   @ApiOperation({ summary: 'Cotizar un producto antes del checkout' })
   quote(
     @Param('productId', ParseIntPipe) productId: number,
     @Req() request: AuthenticatedRequest,
+    @Query('quantity', new ParseIntPipe({ optional: true }))
+    quantity?: number,
   ) {
-    return this.paymentsService.quote(productId, request.user.userId);
+    return this.paymentsService.quote(productId, request.user.userId, quantity);
   }
 
   @Post('checkout')
