@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/require-await */
+/* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/require-await */
 
 import {
   BadRequestException,
@@ -40,6 +40,7 @@ describe('PaymentsService', () => {
       currency: 'CRC',
       type: ProductType.SALE,
       status: ProductStatus.ACTIVE,
+      quantity: 1,
       ...(overrides.product as object | undefined),
     } as Product;
     const seller = {
@@ -72,12 +73,39 @@ describe('PaymentsService', () => {
         rateDate: '2026-10-19',
       }),
     };
+    // Imita el UPDATE condicional del checkout sobre el producto bloqueado:
+    // solo descuenta si quantity >= n y pasa a sold al llegar a 0.
+    const stockUpdate = {
+      calls: 0,
+      params: {} as { productId?: number; quantity?: number },
+    };
+    const updateBuilder = {
+      update: jest.fn().mockReturnThis(),
+      set: jest.fn().mockReturnThis(),
+      returning: jest.fn().mockReturnThis(),
+      where: jest.fn((_sql: string, params: typeof stockUpdate.params) => {
+        stockUpdate.params = params;
+        return updateBuilder;
+      }),
+      execute: jest.fn(async () => {
+        stockUpdate.calls += 1;
+        const wanted = stockUpdate.params.quantity ?? 1;
+        if (product.quantity < wanted) return { affected: 0, raw: [] };
+        product.quantity -= wanted;
+        if (product.quantity === 0) product.status = ProductStatus.SOLD;
+        return {
+          affected: 1,
+          raw: [{ quantity: product.quantity, status: product.status }],
+        };
+      }),
+    };
     const manager = {
       getRepository: jest.fn((entity) => {
         if (entity === Product) return productRepo;
         if (entity === Seller) return sellerRepo;
         return txRepo;
       }),
+      createQueryBuilder: jest.fn(() => updateBuilder),
     };
     const dataSource = {
       transaction: jest.fn(async (callback) => callback(manager)),
@@ -103,6 +131,7 @@ describe('PaymentsService', () => {
         cardLast4: '4242',
       }),
     };
+    const eventEmitter = { emit: jest.fn() };
     const service = new PaymentsService(
       dataSource as never,
       productRepo as never,
@@ -112,6 +141,7 @@ describe('PaymentsService', () => {
       paymentGateway,
       userRepo as never,
       exchangeRateService as never,
+      eventEmitter as never,
     );
     return {
       service,
@@ -122,6 +152,9 @@ describe('PaymentsService', () => {
       sellerRepo,
       dataSource,
       manager,
+      stockUpdate,
+      updateBuilder,
+      eventEmitter,
       commissionService,
       paymentGateway,
       userRepo,
@@ -581,6 +614,9 @@ describe('PaymentsService', () => {
 
       expect(result).toEqual({
         productId: 7,
+        quantity: 1,
+        unitPrice: 120000,
+        availableQuantity: 1,
         amount: 120000,
         currency: 'CRC',
       });
@@ -656,6 +692,9 @@ describe('PaymentsService', () => {
 
       await expect(h.service.quote(7, buyerId)).resolves.toEqual({
         productId: 7,
+        quantity: 1,
+        unitPrice: 120000,
+        availableQuantity: 1,
         amount: 120000,
         currency: 'CRC',
       });
@@ -698,6 +737,178 @@ describe('PaymentsService', () => {
 
       await expect(h.service.quote(7, buyerId)).rejects.toBeInstanceOf(
         ServiceUnavailableException,
+      );
+    });
+  });
+  describe('quantity (stock)', () => {
+    const completed = (h: ReturnType<typeof createHarness>) =>
+      h.eventEmitter.emit.mock.calls.find(
+        ([name]: [string]) => name === 'payment.checkout.completed',
+      )?.[1];
+
+    it('buys 1 unit with stock 3: leaves 2, stays active and does not announce sold out', async () => {
+      const h = createHarness({ product: { quantity: 3 } });
+
+      const result = await h.service.checkout(dto(), buyerId, 'stock-key-1');
+
+      expect(result).toMatchObject({
+        status: TransactionStatus.COMPLETED,
+        quantity: 1,
+        unitPrice: 120000,
+        amount: 120000,
+      });
+      expect(h.product.quantity).toBe(2);
+      expect(h.product.status).toBe(ProductStatus.ACTIVE);
+      expect(completed(h)).toMatchObject({ quantity: 1, soldOut: false });
+    });
+
+    it('charges unit price x quantity and uses it for the commission', async () => {
+      const h = createHarness({ product: { quantity: 5 } });
+
+      const result = await h.service.checkout(
+        { ...dto(), quantity: 3 },
+        buyerId,
+        'stock-key-2',
+      );
+
+      expect(result).toMatchObject({
+        quantity: 3,
+        unitPrice: 120000,
+        amount: 360000,
+      });
+      expect(h.commissionService.calculate).toHaveBeenCalledWith(
+        360000,
+        'CRC',
+        9,
+      );
+      expect(h.paymentGateway.charge).toHaveBeenCalledWith(
+        expect.objectContaining({ amount: 360000 }),
+      );
+      expect(h.product.quantity).toBe(2);
+      // Una compra suma una venta completada, sin importar las unidades.
+      expect(h.seller.completedSalesCount).toBe(10);
+    });
+
+    it('moves the product to sold when the purchase takes the last units', async () => {
+      const h = createHarness({ product: { quantity: 3 } });
+
+      await h.service.checkout(
+        { ...dto(), quantity: 3 },
+        buyerId,
+        'stock-key-3',
+      );
+
+      expect(h.product.quantity).toBe(0);
+      expect(h.product.status).toBe(ProductStatus.SOLD);
+      expect(completed(h)).toMatchObject({ quantity: 3, soldOut: true });
+    });
+
+    it('conditionally updates stock inside the same transaction', async () => {
+      const h = createHarness({ product: { quantity: 3 } });
+
+      await h.service.checkout(
+        { ...dto(), quantity: 2 },
+        buyerId,
+        'stock-key-4',
+      );
+
+      expect(h.manager.createQueryBuilder).toHaveBeenCalled();
+      expect(h.updateBuilder.where).toHaveBeenCalledWith(
+        expect.stringContaining('quantity >= :quantity'),
+        { productId: 7, quantity: 2 },
+      );
+    });
+
+    it('rejects buying more than the available stock without charging', async () => {
+      const h = createHarness({ product: { quantity: 3 } });
+
+      await expect(
+        h.service.checkout({ ...dto(), quantity: 4 }, buyerId, 'stock-key-5'),
+      ).rejects.toBeInstanceOf(ConflictException);
+
+      expect(h.paymentGateway.charge).not.toHaveBeenCalled();
+      expect(h.txRepo.save).not.toHaveBeenCalled();
+      expect(h.stockUpdate.calls).toBe(0);
+      expect(h.product.quantity).toBe(3);
+    });
+
+    it('rejects an out-of-stock product', async () => {
+      const h = createHarness({ product: { quantity: 0 } });
+
+      await expect(
+        h.service.checkout(dto(), buyerId, 'stock-key-6'),
+      ).rejects.toThrow('agotado');
+      expect(h.paymentGateway.charge).not.toHaveBeenCalled();
+    });
+
+    it('leaves the stock untouched when the payment is declined', async () => {
+      const h = createHarness({ product: { quantity: 3 } });
+      h.paymentGateway.charge.mockResolvedValue({
+        approved: false,
+        failureReason: 'card_declined',
+      });
+
+      await expect(
+        h.service.checkout({ ...dto(), quantity: 2 }, buyerId, 'stock-key-7'),
+      ).rejects.toBeInstanceOf(HttpException);
+
+      expect(h.stockUpdate.calls).toBe(0);
+      expect(h.product.quantity).toBe(3);
+      expect(h.product.status).toBe(ProductStatus.ACTIVE);
+      expect(h.eventEmitter.emit).not.toHaveBeenCalled();
+    });
+
+    it('lets only one of two concurrent purchases of the last unit pass', async () => {
+      const h = createHarness({ product: { quantity: 1 } });
+      // Ambos ven el stock "viejo" (1): el UPDATE condicional decide.
+      h.productRepo.findOne.mockImplementation(async () => ({ ...h.product }));
+
+      const results = await Promise.allSettled([
+        h.service.checkout(dto(), 'buyer-a', 'concurrent-key-a'),
+        h.service.checkout(dto(), 'buyer-b', 'concurrent-key-b'),
+      ]);
+
+      const fulfilled = results.filter((r) => r.status === 'fulfilled');
+      const rejected = results.filter(
+        (r): r is PromiseRejectedResult => r.status === 'rejected',
+      );
+      expect(fulfilled).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+      expect(rejected[0].reason).toBeInstanceOf(ConflictException);
+      expect(h.product.quantity).toBe(0);
+      expect(
+        h.eventEmitter.emit.mock.calls.filter(
+          ([name]: [string]) => name === 'payment.checkout.completed',
+        ),
+      ).toHaveLength(1);
+    });
+
+    it('treats the same idempotency key with another quantity as another operation', async () => {
+      const h = createHarness({ product: { quantity: 5 } });
+      h.txRepo.findOne.mockResolvedValue({
+        id: 'existing',
+        buyerId,
+        productId: 7,
+        quantity: 1,
+        status: TransactionStatus.COMPLETED,
+      });
+
+      await expect(
+        h.service.checkout({ ...dto(), quantity: 2 }, buyerId, 'same-key-1'),
+      ).rejects.toThrow('clave de idempotencia');
+    });
+
+    it('quotes the total for several units and caps it by the stock', async () => {
+      const h = createHarness({ product: { quantity: 3 } });
+
+      await expect(h.service.quote(7, buyerId, 2)).resolves.toMatchObject({
+        quantity: 2,
+        unitPrice: 120000,
+        availableQuantity: 3,
+        amount: 240000,
+      });
+      await expect(h.service.quote(7, buyerId, 4)).rejects.toBeInstanceOf(
+        ConflictException,
       );
     });
   });

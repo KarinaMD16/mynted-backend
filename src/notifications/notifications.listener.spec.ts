@@ -43,6 +43,8 @@ describe('NotificationsListener', () => {
       sellerId: 4,
       amount: 25000,
       currency: 'CRC',
+      quantity: 1,
+      soldOut: true,
     };
 
     it('notifica compra al comprador y venta al vendedor (resuelto desde seller_id)', async () => {
@@ -107,6 +109,20 @@ describe('NotificationsListener', () => {
           dedupeKey: 'product:22:availability',
         }),
       );
+    });
+
+    it('no avisa a los favoritos si la compra deja stock (no es una transición a agotado)', async () => {
+      query.mockResolvedValue([soldRow(true)]);
+
+      await listener.onCheckoutCompleted({
+        ...event,
+        quantity: 1,
+        soldOut: false,
+      });
+
+      // La compra y la venta se notifican; el aviso de disponibilidad no.
+      expect(notify).toHaveBeenCalledTimes(1);
+      expect(notifyFavoriters).not.toHaveBeenCalled();
     });
 
     it('no avisa "vendido" si el producto ya no estaba disponible (oculto o borrado)', async () => {

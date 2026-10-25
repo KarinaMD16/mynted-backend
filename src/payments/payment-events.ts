@@ -14,4 +14,7 @@ export interface CheckoutCompletedEvent {
   sellerId: number;
   amount: number;
   currency: string;
+  // Unidades compradas y si este pago dejó el producto agotado.
+  quantity: number;
+  soldOut: boolean;
 }

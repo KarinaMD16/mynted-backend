@@ -15,6 +15,9 @@ export class CheckoutCommissionSnapshotDto {
 export class CheckoutResponseDto {
   id!: string;
   status!: TransactionStatus;
+  // Unidades compradas y precio unitario; amount es el total (unitPrice × quantity).
+  quantity!: number;
+  unitPrice!: number | null;
   amount!: number;
   currency!: string;
   commission!: CheckoutCommissionSnapshotDto;

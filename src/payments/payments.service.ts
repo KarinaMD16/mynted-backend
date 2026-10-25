@@ -39,7 +39,12 @@ import { CheckoutCompletedEvent, PaymentEvents } from './payment-events';
 // isNew: el pago se aprobó en esta llamada (no es la repetición de una clave
 // de idempotencia ya usada).
 type CheckoutResult =
-  | { kind: 'completed'; transaction: PaymentTransaction; isNew?: true }
+  | {
+      kind: 'completed';
+      transaction: PaymentTransaction;
+      isNew?: true;
+      soldOut?: boolean;
+    }
   | { kind: 'failed'; transaction: PaymentTransaction };
 
 const IDEMPOTENCY_UNIQUE_CONSTRAINT = 'UQ_payment_transaction_idempotency_key';
@@ -63,12 +68,18 @@ export class PaymentsService {
     @Optional() private readonly eventEmitter?: EventEmitter2,
   ) {}
 
-  async quote(productId: number, userId: string): Promise<QuoteResponseDto> {
+  async quote(
+    productId: number,
+    userId: string,
+    quantity = 1,
+  ): Promise<QuoteResponseDto> {
     const product = await this.productRepository.findOne({
       where: { id: productId },
     });
     if (!product) throw new NotFoundException('Producto no encontrado');
     this.validateQuoteProduct(product);
+    this.assertEnoughStock(product, quantity);
+    const amount = this.lineTotal(product.price, quantity);
 
     const seller = await this.sellerRepository.findOne({
       where: { sellerId: product.sellerId },
@@ -84,20 +95,23 @@ export class PaymentsService {
 
     const currency = this.normalizeProductCurrency(product.currency);
     const commission = await this.commissionService.calculate(
-      product.price,
+      amount,
       currency,
       seller.completedSalesCount,
     );
     const response: QuoteResponseDto = {
       productId: product.id,
-      amount: product.price,
+      quantity,
+      unitPrice: product.price,
+      availableQuantity: product.quantity,
+      amount,
       currency,
     };
 
     const userCurrency = this.normalizeOptionalCurrency(user.currency);
     if (userCurrency && userCurrency !== currency) {
       const converted = await this.exchangeRateService.convert(
-        product.price,
+        amount,
         currency,
         userCurrency,
       );
@@ -132,8 +146,7 @@ export class PaymentsService {
     const existing = await this.paymentTransactionRepository.findOne({
       where: { idempotencyKey },
     });
-    if (existing)
-      return this.replayOrConflict(existing, buyerId, dto.productId);
+    if (existing) return this.replayOrConflict(existing, buyerId, dto);
 
     let result: CheckoutResult;
     try {
@@ -157,7 +170,7 @@ export class PaymentsService {
           'No fue posible resolver la idempotencia del pago',
         );
       }
-      return this.replayOrConflict(concurrent, buyerId, dto.productId);
+      return this.replayOrConflict(concurrent, buyerId, dto);
     }
 
     if (result.kind === 'failed') {
@@ -173,6 +186,8 @@ export class PaymentsService {
         sellerId: result.transaction.sellerId,
         amount: result.transaction.amount,
         currency: result.transaction.currency,
+        quantity: result.transaction.quantity,
+        soldOut: result.soldOut === true,
       };
       this.eventEmitter?.emit(PaymentEvents.CHECKOUT_COMPLETED, event);
     }
@@ -190,7 +205,7 @@ export class PaymentsService {
       where: { idempotencyKey },
     });
     if (existing) {
-      return this.replayResultOrConflict(existing, buyerId, dto.productId);
+      return this.replayResultOrConflict(existing, buyerId, dto);
     }
 
     const product = await manager.getRepository(Product).findOne({
@@ -206,7 +221,7 @@ export class PaymentsService {
       return this.replayResultOrConflict(
         existingAfterProductLock,
         buyerId,
-        dto.productId,
+        dto,
       );
     }
 
@@ -227,6 +242,12 @@ export class PaymentsService {
     }
     const currency = this.normalizeProductCurrency(product.currency);
 
+    // El producto está bloqueado: este stock es el vigente. No se reserva en
+    // el checkout; solo se valida aquí y se descuenta al aprobar el pago.
+    const quantity = dto.quantity ?? 1;
+    this.assertEnoughStock(product, quantity);
+    const amount = this.lineTotal(product.price, quantity);
+
     const seller = await manager.getRepository(Seller).findOne({
       where: { sellerId: product.sellerId },
       lock: { mode: 'pessimistic_write' },
@@ -242,7 +263,7 @@ export class PaymentsService {
 
     const salesCountBefore = seller.completedSalesCount;
     const commission = await this.commissionService.calculate(
-      product.price,
+      amount,
       currency,
       salesCountBefore,
     );
@@ -251,7 +272,9 @@ export class PaymentsService {
       productId: product.id,
       buyerId,
       sellerId: seller.sellerId,
-      amount: product.price,
+      quantity,
+      unitPrice: product.price,
+      amount,
       currency,
       exchangeRate: commission.exchangeRate,
       normalizedAmountCrc: commission.normalizedAmountCrc,
@@ -276,7 +299,7 @@ export class PaymentsService {
     let gatewayResult: PaymentGatewayResult;
     try {
       gatewayResult = await this.paymentGateway.charge({
-        amount: product.price,
+        amount,
         currency,
         card: dto.card,
       });
@@ -306,24 +329,51 @@ export class PaymentsService {
     ) as string;
     pending.failureReason = null;
     pending.completedAt = new Date();
-    product.status = ProductStatus.SOLD;
     seller.completedSalesCount = salesCountBefore + 1;
 
+    // Descuento atómico del stock, en la misma transacción que confirma el
+    // pago: UPDATE condicional (no baja de 0 aunque falle algún otro candado)
+    // y pasa a sold cuando llega a 0. Si no hay stock, el error revierte todo
+    // (incluida la transacción pending) y el stock no se toca.
+    const stock = await manager
+      .createQueryBuilder()
+      .update(Product)
+      .set({
+        quantity: () => 'quantity - :quantity',
+        status: () =>
+          "CASE WHEN quantity - :quantity = 0 THEN 'sold' ELSE status END",
+      })
+      .where('id = :productId AND quantity >= :quantity', {
+        productId: product.id,
+        quantity,
+      })
+      .returning(['quantity', 'status'])
+      .execute();
+    const updated = (
+      stock.raw as { quantity: number; status: ProductStatus }[]
+    )[0];
+    if (!stock.affected || !updated) {
+      throw new ConflictException(
+        'Stock insuficiente para completar la compra',
+      );
+    }
+
     await transactionRepository.save(pending);
-    await manager.getRepository(Product).save(product);
     await manager.getRepository(Seller).save(seller);
-    return { kind: 'completed', transaction: pending, isNew: true };
+    return {
+      kind: 'completed',
+      transaction: pending,
+      isNew: true,
+      soldOut: updated.quantity === 0,
+    };
   }
 
   private replayOrConflict(
     transaction: PaymentTransaction,
     buyerId: string,
-    productId: number,
+    dto: CheckoutDto,
   ): CheckoutResponseDto {
-    if (
-      transaction.buyerId !== buyerId ||
-      transaction.productId !== productId
-    ) {
+    if (this.isOtherOperation(transaction, buyerId, dto)) {
       throw new ConflictException(
         'La clave de idempotencia ya pertenece a otra operación',
       );
@@ -344,12 +394,9 @@ export class PaymentsService {
   private replayResultOrConflict(
     transaction: PaymentTransaction,
     buyerId: string,
-    productId: number,
+    dto: CheckoutDto,
   ): CheckoutResult {
-    if (
-      transaction.buyerId !== buyerId ||
-      transaction.productId !== productId
-    ) {
+    if (this.isOtherOperation(transaction, buyerId, dto)) {
       throw new ConflictException(
         'La clave de idempotencia ya pertenece a otra operación',
       );
@@ -367,6 +414,35 @@ export class PaymentsService {
     );
   }
 
+  // Misma clave con otro comprador, producto o cantidad: es otra operación.
+  private isOtherOperation(
+    transaction: PaymentTransaction,
+    buyerId: string,
+    dto: CheckoutDto,
+  ): boolean {
+    return (
+      transaction.buyerId !== buyerId ||
+      transaction.productId !== dto.productId ||
+      // Las transacciones anteriores a quantity equivalen a 1 unidad.
+      (transaction.quantity ?? 1) !== (dto.quantity ?? 1)
+    );
+  }
+
+  // Total de la línea: precio unitario × cantidad, a 2 decimales.
+  private lineTotal(unitPrice: number, quantity: number): number {
+    return Math.round(unitPrice * quantity * 100) / 100;
+  }
+
+  private assertEnoughStock(product: Product, quantity: number): void {
+    if (product.quantity < quantity) {
+      throw new ConflictException(
+        product.quantity <= 0
+          ? 'El producto está agotado'
+          : `Stock insuficiente: solo quedan ${product.quantity} unidades`,
+      );
+    }
+  }
+
   private paymentRequired(transaction: PaymentTransaction): HttpException {
     return new HttpException(
       {
@@ -382,6 +458,8 @@ export class PaymentsService {
     return {
       id: transaction.id,
       status: transaction.status,
+      quantity: transaction.quantity,
+      unitPrice: transaction.unitPrice ?? null,
       amount: transaction.amount,
       currency: transaction.currency,
       commission: {

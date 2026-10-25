@@ -597,3 +597,15 @@ Imprime los intereses y comunidades de cada usuario. Ej.: `seed_ana` (intereses 
 - `/products/shop` y `/products/me`: `page/limit` paginan **secciones** y `productsPage/productsLimit` los productos.
 - Crear producto ya **no exige** `image`, `description`, etc. si es borrador; al publicar los errores vienen como arreglo.
 - Para publicar, el usuario necesita `currency` (ya no hay USD por defecto).
+
+---
+
+## 14. Stock de productos (`quantity`)
+
+- **Crear:** `quantity` opcional (entero 1–9999, por defecto 1) en `POST /products` y `POST /communities/:id/products`.
+- **Editar:** `PATCH /products/:id` acepta `quantity` (0–9999). **0 = agotado**: el producto pasa a `status: "sold"`. Si pasa de 0 a más de 0 vuelve a `active` (reposición). Un producto pausado (`inactive`) o borrador conserva su estado.
+- **Marcar vendido a mano** (`PATCH /products/:id/status` `sold`) lo deja con `quantity: 0`. Reactivar un producto sin stock da 400: primero actualiza `quantity`.
+- **Respuestas:** todas las tarjetas/listados/detalle traen `quantity` e `isAvailable` (`true` solo si está activo, visible, no borrado **y con stock**). Los agotados no salen en listados públicos ni en shop, pero sí en `/products/me` y en favoritos del usuario (`isAvailable: false`, `status: "sold"`): píntalos como "Agotado".
+- **Compra:** `POST /payments/checkout` acepta `quantity` (por defecto 1). El total es **precio unitario × cantidad**. Respuestas: `quantity`, `unitPrice` y `amount` (total). Si pides más que el stock → **409** `Stock insuficiente: solo quedan N unidades`; si ya no hay → **409** `El producto está agotado`. El stock se descuenta atómicamente al aprobarse el pago (no se reserva en el checkout); si el pago falla, no se descuenta.
+- **Cotizar:** `GET /payments/quote/:productId?quantity=2` devuelve `quantity`, `unitPrice`, `availableQuantity` y `amount` (total).
+- **Notificaciones a favoritos:** solo cuando pasa a agotado o vuelve a estar disponible (no por cada descuento de stock).
