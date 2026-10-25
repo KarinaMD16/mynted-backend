@@ -29,6 +29,7 @@ import { ProductCondition, ProductType } from '../entities/product.entity';
 
 export const REQUIRED_PRODUCT_TAG_COUNT = 3;
 export const MAX_RELATED_PRODUCTS = 6;
+export const MAX_PRODUCT_QUANTITY = 9999;
 
 /**
  * Para publicar (saveAsDraft = false, el valor por defecto) el servicio exige
@@ -101,6 +102,23 @@ export class CreateProductDto {
   @IsInt({ each: true, message: 'Cada tagId debe ser un número entero' })
   @Min(1, { each: true })
   tagIds?: number[];
+
+  @ApiPropertyOptional({
+    type: Number,
+    example: 3,
+    default: 1,
+    minimum: 1,
+    maximum: MAX_PRODUCT_QUANTITY,
+    description: 'Unidades disponibles (por defecto 1)',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt({ message: 'quantity debe ser un entero' })
+  @Min(1, { message: 'quantity debe ser al menos 1' })
+  @Max(MAX_PRODUCT_QUANTITY, {
+    message: `quantity no puede superar ${MAX_PRODUCT_QUANTITY}`,
+  })
+  quantity?: number;
 
   @ApiPropertyOptional({
     type: Number,

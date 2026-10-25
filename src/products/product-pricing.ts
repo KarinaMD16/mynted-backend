@@ -1,15 +1,19 @@
-import { FindOptionsWhere, IsNull, Raw } from 'typeorm';
+import { FindOptionsWhere, IsNull, MoreThan, Raw } from 'typeorm';
 import { Product, ProductStatus } from './entities/product.entity';
 import { UnavailableReason } from './product-events';
 
-type AvailabilityFields = Pick<Product, 'status' | 'isVisible' | 'deletedAt'>;
+type AvailabilityFields = Pick<
+  Product,
+  'status' | 'isVisible' | 'deletedAt' | 'quantity'
+>;
 
-// Disponible para comprar: activo, visible y no borrado.
+// Disponible para comprar: activo, visible, no borrado y con stock.
 export function isProductAvailable(product: AvailabilityFields): boolean {
   return (
     product.status === ProductStatus.ACTIVE &&
     product.isVisible &&
-    !product.deletedAt
+    !product.deletedAt &&
+    product.quantity > 0
   );
 }
 
@@ -20,6 +24,7 @@ export function unavailableReason(
   if (product.deletedAt) return 'deleted';
   if (product.status === ProductStatus.SOLD) return 'sold';
   if (product.status !== ProductStatus.ACTIVE) return 'inactive';
+  if (product.quantity <= 0) return 'sold';
   if (!product.isVisible) return 'hidden';
   return null;
 }
@@ -34,11 +39,13 @@ export function computeFinalPrice(
   return Math.round(price * (1 - discountPercent / 100) * 100) / 100;
 }
 
-// Condición de producto visible al público: activo, visible y (por el
+// Condición de producto visible al público: activo, visible, con stock y (por el
 // @DeleteDateColumn) no borrado.
 export const PUBLIC_PRODUCT_WHERE: FindOptionsWhere<Product> = {
   status: ProductStatus.ACTIVE,
   isVisible: true,
+  // Un producto agotado no se lista aunque su status no se haya sincronizado.
+  quantity: MoreThan(0),
 };
 
 // Filtro por rango de precio comparando contra el precio final (con
