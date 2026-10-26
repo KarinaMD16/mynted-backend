@@ -242,6 +242,10 @@ describe('Destacados: marcar, quitar y resumen (e2e)', () => {
           featuredEnabled: true,
           isFeatured: true,
         });
+        // La fecha de la respuesta es la que quedó guardada.
+        expect(json(response).featuredAt).toBe(
+          (await featuredAtOf(key))?.toISOString(),
+        );
       }
 
       const fourth = await mark(pro, 'D').expect(409);
@@ -405,7 +409,9 @@ describe('Destacados: marcar, quitar y resumen (e2e)', () => {
 
       expect(a.status).toBe(200);
       expect(b.status).toBe(200);
+      expect(typeof json(a).featuredAt).toBe('string');
       expect(json(a).featuredAt).toBe(json(b).featuredAt);
+      expect(json(a).featuredAt).toBe((await featuredAtOf('F'))?.toISOString());
       await expect(summaryOf(pro)).resolves.toMatchObject({ used: 1 });
     });
   });

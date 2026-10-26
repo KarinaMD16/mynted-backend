@@ -1506,10 +1506,15 @@ export class ProductsService {
           `Ya tienes ${MAX_FEATURED_PER_SELLER} productos destacados. Quita uno para destacar otro`,
         );
       }
+      // El UPDATE va en un CTE: un UPDATE ... RETURNING crudo devuelve
+      // [filas, cantidad] y no las filas.
       const rows = await manager.query<{ featured_at: Date }[]>(
-        `UPDATE product SET featured_at = now()
-          WHERE id = $1 AND featured_at IS NULL
-      RETURNING featured_at`,
+        `WITH marked AS (
+           UPDATE product SET featured_at = now()
+            WHERE id = $1 AND featured_at IS NULL
+        RETURNING featured_at
+         )
+         SELECT featured_at FROM marked`,
         [id],
       );
       // Otra petición lo marcó entre medias: se conserva su fecha.

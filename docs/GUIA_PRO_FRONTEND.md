@@ -335,7 +335,93 @@ Los tres tipos nuevos llegan por el flujo normal de notificaciones (ver la [guí
 
 ---
 
-## 11. Errores comunes
+## 11. Productos destacados
+
+Un vendedor **aprobado con Pro vigente** puede destacar hasta **3 productos** a la vez. Los destacados suben en los listados y llevan la etiqueta **"Destacado"**, que dibuja el front a partir de `isFeatured`.
+
+### Qué es un destacado "efectivo"
+
+Marcar un producto solo guarda la **preferencia**. Que de verdad se eleve se calcula al leer, sin ningún proceso en segundo plano, y exige **todo** esto a la vez:
+
+- el producto está **activo, visible, con stock y no borrado**;
+- el vendedor está **aprobado**, su cuenta está activa y tiene **Pro vigente**;
+- el producto **no tiene comunidad, o su comunidad es pública y activa**. Un producto de una comunidad privada o inactiva **nunca** se eleva (aunque se pueda marcar).
+
+Si deja de cumplirse (Pro vencido, producto vendido o desactivado, sin stock, etc.), el producto vuelve a su lugar normal **sin perder la preferencia**: al renovar Pro o reactivar el producto, vuelve a elevarse solo. Es lo que el vendedor ve como un destacado **"en pausa"**.
+
+El tope de 3 cuenta solo los efectivos. Si un vendedor llega a tener más efectivos que el tope (por ejemplo, al reactivar productos que conservaban su marca), se elevan los 3 marcados más recientemente y el resto se muestra como producto normal.
+
+### Marcar y quitar
+
+| Endpoint | Qué hace |
+|---|---|
+| `PUT /products/:id/featured` | Destaca un producto propio. Idempotente: si ya estaba destacado responde `200` sin cambiar la fecha |
+| `DELETE /products/:id/featured` | Quita el destacado. Idempotente (`204`) y **no exige Pro** (se puede limpiar aunque haya vencido) |
+| `GET /products/me/featured/summary` | Cupos del vendedor |
+
+`PUT` responde:
+
+```json
+{ "productId": 42, "featuredEnabled": true, "isFeatured": true, "featuredAt": "2026-10-26T20:15:03.120Z" }
+```
+
+`featuredEnabled` es la preferencia; `isFeatured`, si se eleva ahora. Puede ser `true` / `false` (por ejemplo, en una comunidad privada).
+
+`GET /products/me/featured/summary`:
+
+```json
+{ "limit": 3, "used": 2, "remaining": 1 }
+```
+
+`used` son los destacados **efectivos ahora**. Úsalo para mostrar "2 de 3 destacados" y deshabilitar el botón cuando `remaining` sea `0`.
+
+| Código | `PUT` / `DELETE` |
+|---|---|
+| `401` | sin sesión |
+| `404` | el producto no existe **o no es tuyo** (no se distingue) |
+| `403` | (solo `PUT`) la tienda no está aprobada o no tienes Pro vigente |
+| `409` | (solo `PUT`) el producto no está activo, o ya tienes 3 destacados efectivos |
+
+### Dónde viene `isFeatured`
+
+| Dónde | Campo |
+|---|---|
+| `GET /products` y `GET /sellers/:sellerId/products` | `isFeatured` en cada ítem |
+| `GET /products/:id` | `isFeatured` |
+| `GET /products/me` | en cada tarjeta, `isFeatured` (se eleva ahora) y `featuredEnabled` (la preferencia) |
+
+En `GET /products/me`, una tarjeta con `featuredEnabled: true` e `isFeatured: false` es un destacado **en pausa**: muestra un aviso ("Tu destacado está en pausa: renueva Pro" o "el producto no está activo") en lugar de la etiqueta.
+
+```json
+{ "id": 1, "title": "Goku SSJ", "status": "active", "isAvailable": true, "featuredEnabled": true, "isFeatured": true }
+```
+
+Los demás listados (`/products/shop`, `/products/recommended`, `/products/:id/related` y la búsqueda) **no** priorizan destacados ni traen `isFeatured`.
+
+### Cómo se reparten en la lista
+
+Se aplica solo a `GET /products` y a `GET /sellers/:sellerId/products`, y **respeta tus filtros y el `sort`** (precio en la moneda de visualización, tag, tipo, condición, comunidad...): un destacado que no cumple los filtros no aparece.
+
+- En cada página, los destacados van **primero** (el marcado más recientemente, arriba) y el resto sigue el orden que eligió el usuario.
+- Como máximo **una cuarta parte de la página**: con `limit=12` son 3 por página, con `limit=8`, 2; con `limit=1` no hay cuota. (Cuota = `floor(limit / 4)`, mínimo 1 cuando `limit` es 2 o más.)
+- Cada producto sale **una sola vez** en todo el recorrido: los destacados que sobran de una página pasan a la siguiente, y cuando ya no quedan productos normales con qué llenar una página, los destacados restantes la completan.
+- **La paginación no cambia**: `pagination.total` es el total de productos (destacados y no), `totalPages = ceil(total / limit)` y el formato de la respuesta es el de siempre. Sin destacados, el resultado es exactamente el de antes.
+
+```json
+{
+  "data": [
+    { "id": 3, "title": "Gohan", "price": 18, "isFeatured": true },
+    { "id": 1, "title": "Goku SSJ", "price": 25, "isFeatured": true },
+    { "id": 4, "title": "Piccolo", "price": 12, "isFeatured": false },
+    { "id": 2, "title": "Vegeta", "price": 30, "isFeatured": false }
+  ],
+  "pagination": { "page": 1, "limit": 8, "total": 4, "totalPages": 1 }
+}
+```
+
+---
+
+## 12. Errores comunes
 
 | Situación | Qué ves |
 |---|---|
@@ -345,13 +431,15 @@ Los tres tipos nuevos llegan por el flujo normal de notificaciones (ver la [guí
 | Subir banner sin Pro | `403` |
 | Banner de más de 8 MB | `413` |
 | Cancelar sin Pro vigente | `409` |
+| Destacar un producto sin Pro vigente o con la tienda sin aprobar | `403` |
+| Destacar un producto que no es tuyo o no existe | `404` |
+| Destacar un producto no activo, o con 3 destacados ya en uso | `409` |
 | Cualquier endpoint con sesión, sin sesión | `401` |
 
 ---
 
-## 12. Pendiente (fuera de esta entrega)
+## 13. Pendiente (fuera de esta entrega)
 
-- **Productos destacados** para vendedores aprobados Pro (hasta 3 activos, etiqueta "Destacado" y prioridad en los listados).
 - **Reportes y moderación del banner propio.** Hoy **no existe** ningún mecanismo para reportar un banner ni para que un administrador lo remueva: queda como dependencia del módulo de moderación. Mientras tanto, el único control es el tipo y tamaño del archivo.
 - Animaciones de perfil, estadísticas del vendedor, vitrina del perfil, descuento de comisión, prioridad en la búsqueda de tiendas y accesorios del ganso.
 
