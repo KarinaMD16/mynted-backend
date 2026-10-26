@@ -2,8 +2,6 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { BadgesService } from '../badges/badges.service';
-import { Product } from '../products/entities/product.entity';
-import { Review } from '../products/entities/review.entity';
 import { Seller } from '../sellers/entities/seller.entity';
 import { User } from '../users/entities/user.entity';
 import { UsersService } from '../users/users.service';
@@ -19,8 +17,6 @@ export class ReputationService {
     private readonly usersRepository: Repository<User>,
     @InjectRepository(Seller)
     private readonly sellersRepository: Repository<Seller>,
-    @InjectRepository(Review)
-    private readonly reviewRepository: Repository<Review>,
     private readonly usersService: UsersService,
     private readonly badgesService: BadgesService,
   ) {}
@@ -73,23 +69,17 @@ export class ReputationService {
   }
 
   // Reseñas por estrellas de todos los productos del vendedor, con el mismo
-  // alcance (review JOIN product) que UsersService.getSellerRatings.
+  // alcance que el rating (UsersService, productos borrados incluidos).
   private async getRatingDistribution(
     sellerId: number,
   ): Promise<RatingDistributionDto> {
-    const rows = await this.reviewRepository
-      .createQueryBuilder('review')
-      .select('review.rating', 'rating')
-      .addSelect('COUNT(*)', 'count')
-      .innerJoin(Product, 'product', 'product.id = review.product_id')
-      .where('product.seller_id = :sellerId', { sellerId })
-      .groupBy('review.rating')
-      .getRawMany<{ rating: number; count: string }>();
+    const counts =
+      await this.usersService.getSellerRatingDistribution(sellerId);
 
     const distribution = this.emptyDistribution();
-    for (const row of rows) {
-      const stars = String(row.rating) as keyof RatingDistributionDto;
-      if (stars in distribution) distribution[stars] = Number(row.count);
+    for (const [rating, count] of counts) {
+      const stars = String(rating) as keyof RatingDistributionDto;
+      if (stars in distribution) distribution[stars] = count;
     }
     return distribution;
   }

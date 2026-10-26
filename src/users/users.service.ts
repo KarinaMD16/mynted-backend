@@ -183,9 +183,46 @@ export class UsersService {
     });
   }
 
+  // Única definición de "las reseñas que cuentan para un vendedor": todas las
+  // reseñas de sus productos, también las de productos que borró (soft delete;
+  // si no, borrar un producto mal reseñado mejoraría su promedio), y solo si el
+  // vendedor está aprobado. withDeleted afecta a toda la consulta, pero de las
+  // tres entidades solo Product tiene deleted_at (Review y Seller no), así que
+  // lo único que reincorpora son esos productos; el filtro de aprobado va
+  // explícito en la unión. El rating y el conteo de vendedor, y la
+  // distribución por estrellas, salen de aquí para que no puedan divergir. El
+  // rating de un producto individual (ReviewsService) no usa esta consulta.
+  private sellerReviewsQuery() {
+    return this.sellersRepository.manager
+      .createQueryBuilder()
+      .from(Review, 'review')
+      .withDeleted()
+      .innerJoin(Product, 'product', 'product.id = review.product_id')
+      .innerJoin(
+        Seller,
+        'seller',
+        'seller.seller_id = product.seller_id AND seller.is_verified = true',
+      );
+  }
+
+  // Reseñas del vendedor por cantidad de estrellas (1 a 5), con el mismo
+  // alcance que getSellerRatings. Solo trae las estrellas que tienen reseñas.
+  async getSellerRatingDistribution(
+    sellerId: number,
+  ): Promise<Map<number, number>> {
+    const rows = await this.sellerReviewsQuery()
+      .select('review.rating', 'rating')
+      .addSelect('COUNT(*)', 'count')
+      .where('product.seller_id = :sellerId', { sellerId })
+      .groupBy('review.rating')
+      .getRawMany<{ rating: number; count: string }>();
+
+    return new Map(rows.map((row) => [Number(row.rating), Number(row.count)]));
+  }
+
   // Rating del vendedor: promedio (1 decimal) y total de las reseñas de todos
-  // sus productos, calculado con agregado. Un vendedor no aprobado no tiene
-  // rating (no aparece en el resultado).
+  // sus productos (borrados incluidos), calculado con agregado. Un vendedor no
+  // aprobado no tiene rating (no aparece en el resultado).
   async getSellerRatings(
     sellerIds: number[],
   ): Promise<
@@ -197,18 +234,10 @@ export class UsersService {
     >();
     if (sellerIds.length === 0) return result;
 
-    const rows = await this.sellersRepository.manager
-      .createQueryBuilder()
+    const rows = await this.sellerReviewsQuery()
       .select('product.seller_id', 'sellerId')
       .addSelect('ROUND(AVG(review.rating)::numeric, 1)', 'average')
       .addSelect('COUNT(*)', 'count')
-      .from(Review, 'review')
-      .innerJoin(Product, 'product', 'product.id = review.product_id')
-      .innerJoin(
-        Seller,
-        'seller',
-        'seller.seller_id = product.seller_id AND seller.is_verified = true',
-      )
       .where('product.seller_id IN (:...sellerIds)', { sellerIds })
       .groupBy('product.seller_id')
       .getRawMany<{ sellerId: number; average: string; count: string }>();

@@ -2,7 +2,6 @@ import { NotFoundException } from '@nestjs/common';
 import { Repository } from 'typeorm';
 import { BadgesService } from '../badges/badges.service';
 import { BadgeRarity, BadgeScope } from '../badges/entities/badge.entity';
-import { Review } from '../products/entities/review.entity';
 import { Seller } from '../sellers/entities/seller.entity';
 import { User } from '../users/entities/user.entity';
 import { UsersService } from '../users/users.service';
@@ -23,9 +22,10 @@ describe('ReputationService', () => {
   let service: ReputationService;
   let usersRepository: { existsBy: jest.Mock };
   let sellersRepository: { findOne: jest.Mock };
-  let distributionQuery: Record<string, jest.Mock>;
-  let reviewRepository: { createQueryBuilder: jest.Mock };
-  let usersService: { getSellerRatings: jest.Mock };
+  let usersService: {
+    getSellerRatings: jest.Mock;
+    getSellerRatingDistribution: jest.Mock;
+  };
   let badgesService: { findUserBadges: jest.Mock };
 
   beforeEach(() => {
@@ -35,27 +35,15 @@ describe('ReputationService', () => {
         .fn()
         .mockResolvedValue({ sellerId: 7, completedSalesCount: 15 }),
     };
-    distributionQuery = {};
-    for (const method of [
-      'select',
-      'addSelect',
-      'innerJoin',
-      'where',
-      'groupBy',
-    ]) {
-      distributionQuery[method] = jest.fn().mockReturnValue(distributionQuery);
-    }
-    distributionQuery.getRawMany = jest.fn().mockResolvedValue([]);
-    reviewRepository = {
-      createQueryBuilder: jest.fn().mockReturnValue(distributionQuery),
+    usersService = {
+      getSellerRatings: jest.fn().mockResolvedValue(new Map()),
+      getSellerRatingDistribution: jest.fn().mockResolvedValue(new Map()),
     };
-    usersService = { getSellerRatings: jest.fn().mockResolvedValue(new Map()) };
     badgesService = { findUserBadges: jest.fn().mockResolvedValue([badge]) };
 
     service = new ReputationService(
       usersRepository as unknown as Repository<User>,
       sellersRepository as unknown as Repository<Seller>,
-      reviewRepository as unknown as Repository<Review>,
       usersService as unknown as UsersService,
       badgesService as unknown as BadgesService,
     );
@@ -65,11 +53,13 @@ describe('ReputationService', () => {
     usersService.getSellerRatings.mockResolvedValue(
       new Map([[7, { ratingAverage: 4.6, reviewsCount: 12 }]]),
     );
-    distributionQuery.getRawMany.mockResolvedValue([
-      { rating: 5, count: '8' },
-      { rating: 4, count: '3' },
-      { rating: 3, count: '1' },
-    ]);
+    usersService.getSellerRatingDistribution.mockResolvedValue(
+      new Map([
+        [5, 8],
+        [4, 3],
+        [3, 1],
+      ]),
+    );
 
     await expect(service.getUserReputation(userId)).resolves.toEqual({
       userId,
@@ -81,10 +71,7 @@ describe('ReputationService', () => {
       badges: [badge],
     });
     expect(usersService.getSellerRatings).toHaveBeenCalledWith([7]);
-    expect(distributionQuery.where).toHaveBeenCalledWith(
-      'product.seller_id = :sellerId',
-      { sellerId: 7 },
-    );
+    expect(usersService.getSellerRatingDistribution).toHaveBeenCalledWith(7);
   });
 
   it('devuelve ratingAverage null y conteos en 0 si el vendedor no tiene reseñas', async () => {
@@ -128,7 +115,7 @@ describe('ReputationService', () => {
       badges: [],
     });
     expect(usersService.getSellerRatings).not.toHaveBeenCalled();
-    expect(reviewRepository.createQueryBuilder).not.toHaveBeenCalled();
+    expect(usersService.getSellerRatingDistribution).not.toHaveBeenCalled();
   });
 
   it('lanza 404 si el usuario no existe o está desactivado', async () => {
