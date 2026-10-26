@@ -19,6 +19,14 @@ import { TransactionStatus } from '../payments/enums/transaction-status.enum';
 import { Product, ProductStatus, ProductType } from './entities/product.entity';
 import { Review } from './entities/review.entity';
 import { ReviewCreatedEvent, ReviewEvents } from './review-events';
+import {
+  NO_SESSION_REVIEW_STATUS,
+  ReviewIneligibility,
+  ReviewStatus,
+  resolveReviewIneligibility,
+} from './review-eligibility';
+
+export { ReviewIneligibility };
 
 export interface RatingSummary {
   ratingAverage: number | null;
@@ -27,16 +35,6 @@ export interface RatingSummary {
 
 interface PostgresError {
   code?: string;
-}
-
-// Por qué un usuario no puede reseñar un producto, en el orden en que se
-// evalúa. Lo comparten POST /products/:id/reviews (como 403/409) y canComment
-// de GET /products/:id, así nunca divergen.
-export enum ReviewIneligibility {
-  OWN_PRODUCT = 'own_product',
-  EXCHANGE_PRODUCT = 'exchange_product',
-  NOT_PURCHASED = 'not_purchased',
-  ALREADY_REVIEWED = 'already_reviewed',
 }
 
 const INELIGIBILITY_ERRORS: Record<ReviewIneligibility, () => Error> = {
@@ -74,7 +72,7 @@ export class ReviewsService {
   async create(productId: number, userId: string, dto: CreateReviewDto) {
     const product = await this.getReviewableProduct(productId, userId);
 
-    const ineligibility = await this.getReviewIneligibility(product, userId);
+    const { ineligibility } = await this.getReviewState(product, userId);
     if (ineligibility) throw INELIGIBILITY_ERRORS[ineligibility]();
 
     try {
@@ -107,39 +105,58 @@ export class ReviewsService {
     }
   }
 
-  // Regla única para reseñar: no ser el dueño, que el producto no sea de
-  // intercambio (aún no hay flujo para ellos), tener una compra completada y
-  // no haberlo reseñado. Solo usa consultas exists. null = puede reseñar.
-  async getReviewIneligibility(
+  // Regla única para reseñar (create y canReview la comparten): no ser el
+  // dueño, que el producto no sea de intercambio (aún no hay flujo para
+  // ellos), tener una compra completada y no haberlo reseñado. Devuelve además
+  // hasReviewed y reviewId (reseña propia, si existe). La compra solo se
+  // consulta si hace falta; ambas son consultas exists/select mínimas.
+  async getReviewState(
     product: ReviewTarget,
     userId: string,
-  ): Promise<ReviewIneligibility | null> {
-    if (product.seller.userId === userId) {
-      return ReviewIneligibility.OWN_PRODUCT;
+  ): Promise<
+    ReviewStatus & {
+      ineligibility: ReviewIneligibility | null;
     }
-    if (product.type === ProductType.EXCHANGE) {
-      return ReviewIneligibility.EXCHANGE_PRODUCT;
-    }
+  > {
+    const isOwner = product.seller.userId === userId;
+    const isExchange = product.type === ProductType.EXCHANGE;
 
-    const [purchased, reviewed] = await Promise.all([
-      this.hasCompletedPurchase(product.id, userId),
-      this.reviewRepository.existsBy({
-        productId: product.id,
-        authorId: userId,
+    const [purchased, review] = await Promise.all([
+      isOwner || isExchange
+        ? Promise.resolve(false)
+        : this.hasCompletedPurchase(product.id, userId),
+      this.reviewRepository.findOne({
+        where: { productId: product.id, authorId: userId },
+        select: { id: true },
       }),
     ]);
-    if (!purchased) return ReviewIneligibility.NOT_PURCHASED;
-    if (reviewed) return ReviewIneligibility.ALREADY_REVIEWED;
-    return null;
+
+    const ineligibility = resolveReviewIneligibility({
+      isOwner,
+      isExchange,
+      purchased,
+      hasReviewed: review !== null,
+    });
+    return {
+      ineligibility,
+      canReview: ineligibility === null,
+      hasReviewed: review !== null,
+      reviewId: review?.id ?? null,
+    };
   }
 
-  // canComment de GET /products/:id. Sin sesión siempre false.
-  async canUserReview(
+  // canReview / hasReviewed / reviewId de GET /products/:id. Sin sesión:
+  // false, false y null, sin consultar nada.
+  async getReviewStatus(
     product: ReviewTarget,
     viewerId: string | undefined,
-  ): Promise<boolean> {
-    if (!viewerId) return false;
-    return (await this.getReviewIneligibility(product, viewerId)) === null;
+  ): Promise<ReviewStatus> {
+    if (!viewerId) return NO_SESSION_REVIEW_STATUS;
+    const { canReview, hasReviewed, reviewId } = await this.getReviewState(
+      product,
+      viewerId,
+    );
+    return { canReview, hasReviewed, reviewId };
   }
 
   // Solo cuentan pagos completados: pending, failed y refunded no habilitan

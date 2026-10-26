@@ -57,13 +57,22 @@ describe('PaymentHistoryService', () => {
         .fn()
         .mockResolvedValue({ rate: 500, rateDate: '2026-10-19' }),
     };
+    const reviewRepository = { find: jest.fn().mockResolvedValue([]) };
     const service = new PaymentHistoryService(
       transactionRepository as never,
       sellerRepository as never,
       usersService as never,
       exchangeRateService as never,
+      reviewRepository as never,
     );
-    return { service, qb, sellerRepository, usersService, exchangeRateService };
+    return {
+      service,
+      qb,
+      sellerRepository,
+      usersService,
+      exchangeRateService,
+      reviewRepository,
+    };
   };
 
   it('returns purchases with pagination and excludes commission fields', async () => {

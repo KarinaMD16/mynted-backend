@@ -20,7 +20,7 @@ describe('ReviewsService', () => {
     create: jest.Mock;
     save: jest.Mock;
     findOneOrFail: jest.Mock;
-    existsBy: jest.Mock;
+    findOne: jest.Mock;
   };
   let productRepository: { findOne: jest.Mock };
   let transactionRepository: { existsBy: jest.Mock };
@@ -40,7 +40,9 @@ describe('ReviewsService', () => {
   }) => {
     productRepository.findOne.mockResolvedValue(product(state.type));
     transactionRepository.existsBy.mockResolvedValue(state.purchased ?? true);
-    reviewRepository.existsBy.mockResolvedValue(state.reviewed ?? false);
+    reviewRepository.findOne.mockResolvedValue(
+      state.reviewed ? { id: 55 } : null,
+    );
   };
 
   beforeEach(() => {
@@ -59,7 +61,7 @@ describe('ReviewsService', () => {
         updatedAt: new Date('2026-10-20T10:00:00Z'),
         author: { id: buyerId, username: 'comprador', photoUrl: null },
       }),
-      existsBy: jest.fn(),
+      findOne: jest.fn(),
     };
     productRepository = { findOne: jest.fn() };
     transactionRepository = { existsBy: jest.fn() };
@@ -177,56 +179,64 @@ describe('ReviewsService', () => {
     });
   });
 
-  describe('canUserReview (canComment de GET /products/:id)', () => {
-    it('sin sesión siempre es false y no consulta nada', async () => {
-      await expect(service.canUserReview(product(), undefined)).resolves.toBe(
-        false,
-      );
+  describe('getReviewStatus (canReview, hasReviewed y reviewId de GET /products/:id)', () => {
+    it('sin sesión: false, false y null, sin consultar nada', async () => {
+      await expect(
+        service.getReviewStatus(product(), undefined),
+      ).resolves.toEqual({
+        canReview: false,
+        hasReviewed: false,
+        reviewId: null,
+      });
       expect(transactionRepository.existsBy).not.toHaveBeenCalled();
-      expect(reviewRepository.existsBy).not.toHaveBeenCalled();
+      expect(reviewRepository.findOne).not.toHaveBeenCalled();
     });
 
-    it('el dueño no puede comentar', async () => {
-      await expect(service.canUserReview(product(), ownerId)).resolves.toBe(
-        false,
-      );
+    it('el dueño no puede reseñar', async () => {
+      await expect(
+        service.getReviewStatus(product(), ownerId),
+      ).resolves.toMatchObject({ canReview: false });
     });
 
-    it('sin compra completada no puede comentar', async () => {
+    it('sin compra completada no puede reseñar', async () => {
       givenState({ purchased: false });
-      await expect(service.canUserReview(product(), buyerId)).resolves.toBe(
-        false,
-      );
+      await expect(
+        service.getReviewStatus(product(), buyerId),
+      ).resolves.toMatchObject({ canReview: false, hasReviewed: false });
     });
 
-    it('con compra completada y sin reseña puede comentar', async () => {
-      await expect(service.canUserReview(product(), buyerId)).resolves.toBe(
-        true,
-      );
-      expect(reviewRepository.existsBy).toHaveBeenCalledWith({
-        productId,
-        authorId: buyerId,
+    it('con compra completada y sin reseña puede reseñar', async () => {
+      await expect(
+        service.getReviewStatus(product(), buyerId),
+      ).resolves.toEqual({
+        canReview: true,
+        hasReviewed: false,
+        reviewId: null,
+      });
+      expect(reviewRepository.findOne).toHaveBeenCalledWith({
+        where: { productId, authorId: buyerId },
+        select: { id: true },
       });
     });
 
-    it('con compra y reseña previa ya no puede comentar', async () => {
+    it('con compra y reseña previa: no puede, hasReviewed y reviewId', async () => {
       givenState({ reviewed: true });
-      await expect(service.canUserReview(product(), buyerId)).resolves.toBe(
-        false,
-      );
+      await expect(
+        service.getReviewStatus(product(), buyerId),
+      ).resolves.toEqual({ canReview: false, hasReviewed: true, reviewId: 55 });
     });
 
-    it('un producto de intercambio nunca se puede comentar', async () => {
+    it('un producto de intercambio nunca se puede reseñar', async () => {
       givenState({ type: ProductType.EXCHANGE });
       await expect(
-        service.canUserReview(product(ProductType.EXCHANGE), buyerId),
-      ).resolves.toBe(false);
+        service.getReviewStatus(product(ProductType.EXCHANGE), buyerId),
+      ).resolves.toMatchObject({ canReview: false });
     });
   });
 
   // Misma tabla para los dos: POST crea la reseña exactamente cuando
-  // canComment es true, y en los demás casos responde el error del motivo.
-  describe('POST y canComment coinciden', () => {
+  // canReview es true, y en los demás casos responde el error del motivo.
+  describe('POST y canReview coinciden', () => {
     const cases: {
       name: string;
       userId: string;
@@ -270,15 +280,14 @@ describe('ReviewsService', () => {
       givenState(testCase);
       const target = product(testCase.type);
 
-      await expect(
-        service.getReviewIneligibility(target, testCase.userId),
-      ).resolves.toBe(testCase.expected);
+      const state = await service.getReviewState(target, testCase.userId);
+      expect(state.ineligibility).toBe(testCase.expected);
 
-      const canComment = await service.canUserReview(target, testCase.userId);
+      const status = await service.getReviewStatus(target, testCase.userId);
       const post = service.create(productId, testCase.userId, { rating: 5 });
 
-      expect(canComment).toBe(testCase.expected === null);
-      if (canComment) {
+      expect(status.canReview).toBe(testCase.expected === null);
+      if (status.canReview) {
         await expect(post).resolves.toMatchObject({ id: 1 });
       } else {
         await expect(post).rejects.toThrow(testCase.error);

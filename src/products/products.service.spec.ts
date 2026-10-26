@@ -15,7 +15,7 @@ describe('ProductsService.findDetail', () => {
   let favoriteRepository: { find: jest.Mock };
   let reviewsService: {
     getProductRating: jest.Mock;
-    canUserReview: jest.Mock;
+    getReviewStatus: jest.Mock;
   };
 
   const product = {
@@ -42,7 +42,11 @@ describe('ProductsService.findDetail', () => {
       getProductRating: jest
         .fn()
         .mockResolvedValue({ ratingAverage: 4.5, reviewsCount: 2 }),
-      canUserReview: jest.fn().mockResolvedValue(true),
+      getReviewStatus: jest.fn().mockResolvedValue({
+        canReview: true,
+        hasReviewed: false,
+        reviewId: null,
+      }),
     };
     const usersService = {
       getSellerRatings: jest
@@ -73,11 +77,17 @@ describe('ProductsService.findDetail', () => {
   it('agrega seller.userId y canComment (a nivel de producto) con la regla de reseñas', async () => {
     const detail = await service.findDetail(22, viewerId);
 
-    expect(reviewsService.canUserReview).toHaveBeenCalledWith(
+    expect(reviewsService.getReviewStatus).toHaveBeenCalledWith(
       product,
       viewerId,
     );
     expect(detail.canComment).toBe(true);
+    expect(detail).toMatchObject({
+      canReview: true,
+      canComment: true,
+      hasReviewed: false,
+      reviewId: null,
+    });
     expect(detail.seller).toEqual({
       sellerId: 7,
       userId: ownerId,
@@ -91,15 +101,24 @@ describe('ProductsService.findDetail', () => {
   });
 
   it('pasa la sesión tal cual: sin sesión la regla recibe undefined', async () => {
-    reviewsService.canUserReview.mockResolvedValue(false);
+    reviewsService.getReviewStatus.mockResolvedValue({
+      canReview: false,
+      hasReviewed: false,
+      reviewId: null,
+    });
 
     const detail = await service.findDetail(22);
 
-    expect(reviewsService.canUserReview).toHaveBeenCalledWith(
+    expect(reviewsService.getReviewStatus).toHaveBeenCalledWith(
       product,
       undefined,
     );
     expect(detail.canComment).toBe(false);
+    expect(detail).toMatchObject({
+      canReview: false,
+      hasReviewed: false,
+      reviewId: null,
+    });
   });
 
   it('un borrador ajeno sigue respondiendo 404 sin evaluar canComment', async () => {
@@ -111,6 +130,6 @@ describe('ProductsService.findDetail', () => {
     await expect(service.findDetail(22, viewerId)).rejects.toThrow(
       NotFoundException,
     );
-    expect(reviewsService.canUserReview).not.toHaveBeenCalled();
+    expect(reviewsService.getReviewStatus).not.toHaveBeenCalled();
   });
 });

@@ -1000,11 +1000,11 @@ export class ProductsService {
       throw new NotFoundException('Producto no encontrado');
     }
 
-    const [rating, sellerRatings, saved, canComment] = await Promise.all([
+    const [rating, sellerRatings, saved, reviewStatus] = await Promise.all([
       this.reviewsService.getProductRating(id),
       this.usersService.getSellerRatings([product.seller.sellerId]),
       this.getSavedProductIds(viewerId, [id]),
-      this.reviewsService.canUserReview(product, viewerId),
+      this.reviewsService.getReviewStatus(product, viewerId),
     ]);
     const sellerRating = sellerRatings.get(product.seller.sellerId);
     // El user completo se descarta: del vendedor solo sale lo público.
@@ -1026,7 +1026,12 @@ export class ProductsService {
       },
       ratingAverage: rating.ratingAverage,
       reviewsCount: rating.reviewsCount,
-      canComment,
+      // Reseñas: una sola regla (la misma de POST /products/:id/reviews).
+      // canComment es el nombre anterior de canReview (deprecado).
+      canReview: reviewStatus.canReview,
+      canComment: reviewStatus.canReview,
+      hasReviewed: reviewStatus.hasReviewed,
+      reviewId: reviewStatus.reviewId,
     };
     if (displayCurrency === undefined) return detail;
     const [withDisplay] = await this.priceDisplay.withDisplayPrices(

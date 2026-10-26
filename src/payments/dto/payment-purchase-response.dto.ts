@@ -28,6 +28,24 @@ export class PaymentPurchaseItemDto {
   cardLast4!: string | null;
   cardHolderName!: string | null;
   gatewayReference!: string | null;
+
+  @ApiProperty({
+    example: true,
+    description:
+      'true si el usuario puede reseñar este producto ahora (compra completada, sin reseña propia, no es el vendedor ni un producto de intercambio)',
+  })
+  canReview!: boolean;
+
+  @ApiProperty({ example: false, description: 'Ya reseñó este producto' })
+  hasReviewed!: boolean;
+
+  @ApiProperty({
+    type: Number,
+    nullable: true,
+    example: null,
+    description: 'Id de su reseña del producto (para "editar tu reseña")',
+  })
+  reviewId!: number | null;
 }
 
 export class PaymentPurchaseListResponseDto {
