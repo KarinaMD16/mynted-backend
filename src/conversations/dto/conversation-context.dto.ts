@@ -23,6 +23,12 @@ export class ParticipantSummaryDto {
     description: 'Vendedor verificado (false si no es vendedor)',
   })
   isVerified!: boolean;
+
+  @ApiProperty({
+    example: false,
+    description: 'Tiene Pro vigente (suscripción con endsAt futuro)',
+  })
+  isPro!: boolean;
 }
 
 export class ProductSummaryDto {

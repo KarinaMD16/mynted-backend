@@ -13,6 +13,7 @@ describe('ProductsService.findDetail', () => {
   let service: ProductsService;
   let productRepository: { findOne: jest.Mock };
   let favoriteRepository: { find: jest.Mock };
+  let proStatusService: { isPro: jest.Mock };
   let reviewsService: {
     getProductRating: jest.Mock;
     getReviewStatus: jest.Mock;
@@ -55,6 +56,7 @@ describe('ProductsService.findDetail', () => {
           new Map([[7, { ratingAverage: 4.7, reviewsCount: 12 }]]),
         ),
     };
+    proStatusService = { isPro: jest.fn().mockResolvedValue(false) };
     const repo = {} as Repository<never>;
 
     service = new ProductsService(
@@ -71,6 +73,7 @@ describe('ProductsService.findDetail', () => {
       {} as never,
       {} as never,
       {} as PriceDisplayService,
+      proStatusService as never,
     );
   });
 
@@ -94,10 +97,20 @@ describe('ProductsService.findDetail', () => {
       displayName: 'Funko Corner',
       isVerified: true,
       photoUrl: 'https://cdn/a.png',
+      isPro: false,
       ratingAverage: 4.7,
       reviewsCount: 12,
     });
     expect(detail.seller).not.toHaveProperty('canComment');
+  });
+
+  it('seller.isPro refleja el Pro vigente del dueño del producto', async () => {
+    proStatusService.isPro.mockResolvedValue(true);
+
+    const detail = await service.findDetail(22, viewerId);
+
+    expect(proStatusService.isPro).toHaveBeenCalledWith(ownerId);
+    expect(detail.seller.isPro).toBe(true);
   });
 
   it('pasa la sesión tal cual: sin sesión la regla recibe undefined', async () => {

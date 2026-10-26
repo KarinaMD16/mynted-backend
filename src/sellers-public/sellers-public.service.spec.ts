@@ -4,6 +4,7 @@ import { UserBadge } from '../badges/entities/user-badge.entity';
 import { ProductSort } from '../products/dto/product-price-query.dto';
 import { ProductStatus } from '../products/entities/product.entity';
 import { ProductsService } from '../products/products.service';
+import { ProStatusService } from '../pro-status/pro-status.service';
 import { ResponseTimeService } from '../response-time/response-time.service';
 import { Seller } from '../sellers/entities/seller.entity';
 import { UsersService } from '../users/users.service';
@@ -37,6 +38,7 @@ describe('SellersPublicService', () => {
   let responseTimeService: { getForUser: jest.Mock };
   let userBadgeRepository: { findOne: jest.Mock };
   let usersService: { getSellerRatings: jest.Mock };
+  let proStatusService: { isPro: jest.Mock; proUserIds: jest.Mock };
   let productsService: {
     countPublicBySeller: jest.Mock;
     findSellerTags: jest.Mock;
@@ -51,6 +53,10 @@ describe('SellersPublicService', () => {
         .mockResolvedValue({ medianMinutes: 20, sampleSize: 3 }),
     };
     userBadgeRepository = { findOne: jest.fn().mockResolvedValue(null) };
+    proStatusService = {
+      isPro: jest.fn().mockResolvedValue(false),
+      proUserIds: jest.fn().mockResolvedValue(new Set<string>()),
+    };
     usersService = {
       getSellerRatings: jest
         .fn()
@@ -71,6 +77,7 @@ describe('SellersPublicService', () => {
       usersService as unknown as UsersService,
       productsService as unknown as ProductsService,
       responseTimeService as unknown as ResponseTimeService,
+      proStatusService as unknown as ProStatusService,
     );
   });
 
@@ -85,6 +92,7 @@ describe('SellersPublicService', () => {
         photoUrl: 'https://cdn/a.png',
         bannerUrl: null,
         isVerified: true,
+        isPro: false,
         ratingAverage: 4.7,
         reviewsCount: 12,
         completedSalesCount: 15,
@@ -96,6 +104,13 @@ describe('SellersPublicService', () => {
       expect(usersService.getSellerRatings).toHaveBeenCalledWith([4]);
       expect(productsService.countPublicBySeller).toHaveBeenCalledWith([4]);
       expect(userBadgeRepository.findOne).not.toHaveBeenCalled();
+    });
+
+    it('isPro es true si el dueño de la tienda tiene Pro vigente', async () => {
+      proStatusService.isPro.mockResolvedValue(true);
+
+      await expect(service.getStore(4)).resolves.toMatchObject({ isPro: true });
+      expect(proStatusService.isPro).toHaveBeenCalledWith('user-4');
     });
 
     it('solo busca vendedores aprobados con cuenta activa', async () => {

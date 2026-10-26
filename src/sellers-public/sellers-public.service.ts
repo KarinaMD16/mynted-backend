@@ -11,6 +11,7 @@ import {
   ProductListItem,
   ProductsService,
 } from '../products/products.service';
+import { ProStatusService } from '../pro-status/pro-status.service';
 import { ResponseTimeService } from '../response-time/response-time.service';
 import { Seller } from '../sellers/entities/seller.entity';
 import { UsersService } from '../users/users.service';
@@ -36,16 +37,18 @@ export class SellersPublicService {
     private readonly usersService: UsersService,
     private readonly productsService: ProductsService,
     private readonly responseTimeService: ResponseTimeService,
+    private readonly proStatusService: ProStatusService,
   ) {}
 
   async getStore(sellerId: number): Promise<SellerStoreDto> {
     const seller = await this.findPublicSeller(sellerId);
-    const [ratings, productCounts, sellerSince, responseTime] =
+    const [ratings, productCounts, sellerSince, responseTime, isPro] =
       await Promise.all([
         this.usersService.getSellerRatings([seller.sellerId]),
         this.productsService.countPublicBySeller([seller.sellerId]),
         this.getSellerSince(seller),
         this.responseTimeService.getForUser(seller.userId),
+        this.proStatusService.isPro(seller.userId),
       ]);
     const rating = ratings.get(seller.sellerId);
 
@@ -58,6 +61,7 @@ export class SellersPublicService {
       photoUrl: seller.user.photoUrl ?? null,
       bannerUrl: null,
       isVerified: seller.isVerified,
+      isPro,
       ratingAverage: rating?.ratingAverage ?? null,
       reviewsCount: rating?.reviewsCount ?? 0,
       completedSalesCount: seller.completedSalesCount,
@@ -125,9 +129,10 @@ export class SellersPublicService {
       .getManyAndCount();
 
     const sellerIds = sellers.map((seller) => seller.sellerId);
-    const [ratings, productCounts] = await Promise.all([
+    const [ratings, productCounts, proUserIds] = await Promise.all([
       this.usersService.getSellerRatings(sellerIds),
       this.productsService.countPublicBySeller(sellerIds),
+      this.proStatusService.proUserIds(sellers.map((seller) => seller.userId)),
     ]);
 
     return {
@@ -140,6 +145,7 @@ export class SellersPublicService {
           photoUrl: seller.user.photoUrl ?? null,
           location: this.storeLocation(seller),
           isVerified: seller.isVerified,
+          isPro: proUserIds.has(seller.userId),
           ratingAverage: rating?.ratingAverage ?? null,
           reviewsCount: rating?.reviewsCount ?? 0,
           activeProductsCount: productCounts.get(seller.sellerId) ?? 0,

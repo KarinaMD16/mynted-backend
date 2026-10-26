@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { UsersModule } from '../users/users.module';
 import { CloudinaryModule } from '../cloudinary/cloudinary.module';
 import { PricingModule } from '../pricing/pricing.module';
+import { ProStatusModule } from '../pro-status/pro-status.module';
 import { SellerGuard } from '../auth/guards/seller.guard';
 import { Community } from '../community/entities/community.entity';
 import { CommunityProfile } from '../community/entities/community-profile.entity';
@@ -42,6 +43,7 @@ import { ProductsService } from './products.service';
     UsersModule,
     CloudinaryModule,
     PricingModule,
+    ProStatusModule,
   ],
   controllers: [ProductsController, ReviewsController],
   providers: [ProductsService, ReviewsService, SellerGuard],

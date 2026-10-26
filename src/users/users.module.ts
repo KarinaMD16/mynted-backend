@@ -8,6 +8,7 @@ import { UsersController } from './users.controller';
 import { CloudinaryModule } from '../cloudinary/cloudinary.module';
 import { SuperAdminGuard } from '../auth/guards/super-admin.guard';
 import { AuthModule } from '../auth/auth.module';
+import { ProStatusModule } from '../pro-status/pro-status.module';
 import { ResponseTimeModule } from '../response-time/response-time.module';
 
 @Module({
@@ -16,6 +17,7 @@ import { ResponseTimeModule } from '../response-time/response-time.module';
     CloudinaryModule,
     forwardRef(() => AuthModule),
     ResponseTimeModule,
+    ProStatusModule,
   ],
   providers: [UsersService, SuperAdminGuard],
   controllers: [UsersController],

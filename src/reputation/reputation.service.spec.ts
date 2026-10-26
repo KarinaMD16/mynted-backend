@@ -1,6 +1,7 @@
 import { NotFoundException } from '@nestjs/common';
 import { Repository } from 'typeorm';
 import { BadgesService } from '../badges/badges.service';
+import { ProStatusService } from '../pro-status/pro-status.service';
 import { BadgeRarity, BadgeScope } from '../badges/entities/badge.entity';
 import { Seller } from '../sellers/entities/seller.entity';
 import { User } from '../users/entities/user.entity';
@@ -27,6 +28,7 @@ describe('ReputationService', () => {
     getSellerRatingDistribution: jest.Mock;
   };
   let badgesService: { findUserBadges: jest.Mock };
+  let proStatusService: { isPro: jest.Mock };
 
   beforeEach(() => {
     usersRepository = { existsBy: jest.fn().mockResolvedValue(true) };
@@ -40,12 +42,14 @@ describe('ReputationService', () => {
       getSellerRatingDistribution: jest.fn().mockResolvedValue(new Map()),
     };
     badgesService = { findUserBadges: jest.fn().mockResolvedValue([badge]) };
+    proStatusService = { isPro: jest.fn().mockResolvedValue(false) };
 
     service = new ReputationService(
       usersRepository as unknown as Repository<User>,
       sellersRepository as unknown as Repository<Seller>,
       usersService as unknown as UsersService,
       badgesService as unknown as BadgesService,
+      proStatusService as unknown as ProStatusService,
     );
   });
 
@@ -64,6 +68,7 @@ describe('ReputationService', () => {
     await expect(service.getUserReputation(userId)).resolves.toEqual({
       userId,
       isSeller: true,
+      isPro: false,
       ratingAverage: 4.6,
       reviewsCount: 12,
       completedSalesCount: 15,
@@ -83,12 +88,29 @@ describe('ReputationService', () => {
     await expect(service.getUserReputation(userId)).resolves.toEqual({
       userId,
       isSeller: true,
+      isPro: false,
       ratingAverage: null,
       reviewsCount: 0,
       completedSalesCount: 2,
       ratingDistribution: { '1': 0, '2': 0, '3': 0, '4': 0, '5': 0 },
       badges: [badge],
     });
+  });
+
+  it('isPro refleja el Pro vigente, también en quien no es vendedor', async () => {
+    proStatusService.isPro.mockResolvedValue(true);
+
+    await expect(service.getUserReputation(userId)).resolves.toMatchObject({
+      isSeller: true,
+      isPro: true,
+    });
+
+    sellersRepository.findOne.mockResolvedValue(null);
+    await expect(service.getUserReputation(userId)).resolves.toMatchObject({
+      isSeller: false,
+      isPro: true,
+    });
+    expect(proStatusService.isPro).toHaveBeenCalledWith(userId);
   });
 
   it('busca la tienda solo entre vendedores aprobados', async () => {
@@ -108,6 +130,7 @@ describe('ReputationService', () => {
     await expect(service.getUserReputation(userId)).resolves.toEqual({
       userId,
       isSeller: false,
+      isPro: false,
       ratingAverage: null,
       reviewsCount: 0,
       completedSalesCount: 0,

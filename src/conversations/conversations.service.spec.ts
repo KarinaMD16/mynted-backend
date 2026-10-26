@@ -4,6 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { DataSource, QueryFailedError, Repository } from 'typeorm';
+import { ProStatusService } from '../pro-status/pro-status.service';
 import { Product, ProductStatus } from '../products/entities/product.entity';
 import {
   ConversationsService,
@@ -24,10 +25,14 @@ describe('ConversationsService', () => {
   };
   const productRepository = { findOne: jest.fn() };
   const dataSource = { query: jest.fn() };
+  const proStatusService = {
+    proUserIds: jest.fn().mockResolvedValue(new Set<string>()),
+  };
   const service = new ConversationsService(
     conversationRepository as unknown as Repository<Conversation>,
     productRepository as unknown as Repository<Product>,
     dataSource as unknown as DataSource,
+    proStatusService as unknown as ProStatusService,
   );
 
   const product = (status = ProductStatus.ACTIVE, isVisible = true) => ({
@@ -308,6 +313,7 @@ describe('ConversationsService', () => {
             displayName: 'Funko Corner CR',
             photoUrl: 'https://cdn/avatar.png',
             isVerified: true,
+            isPro: false,
           },
           product: {
             id: 42,
@@ -381,6 +387,32 @@ describe('ConversationsService', () => {
 
       expect(data[0].lastMessage.type).toBe(MessageType.IMAGE);
       expect(data[0].lastMessage.content).toBeNull();
+    });
+
+    it('marks isPro per participant with a single query for the whole page', async () => {
+      proStatusService.proUserIds.mockResolvedValueOnce(new Set(['pro-user']));
+      dataSource.query
+        .mockResolvedValueOnce([
+          inboxRow({ id: 15, other_id: sellerUserId }),
+          inboxRow({ id: 16, other_id: 'pro-user' }),
+          inboxRow({ id: 17, other_id: 'pro-user' }),
+        ])
+        .mockResolvedValueOnce([{ total: 3 }]);
+      proStatusService.proUserIds.mockClear();
+
+      const { data } = await service.getInbox(buyerId, { page: 1, limit: 20 });
+
+      expect(data.map((item) => item.otherParticipant.isPro)).toEqual([
+        false,
+        true,
+        true,
+      ]);
+      expect(proStatusService.proUserIds).toHaveBeenCalledTimes(1);
+      expect(proStatusService.proUserIds).toHaveBeenCalledWith([
+        sellerUserId,
+        'pro-user',
+        'pro-user',
+      ]);
     });
 
     it('falls back to username and unverified for a participant without a store', async () => {

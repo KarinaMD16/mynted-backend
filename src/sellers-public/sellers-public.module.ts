@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { UserBadge } from '../badges/entities/user-badge.entity';
 import { PricingModule } from '../pricing/pricing.module';
+import { ProStatusModule } from '../pro-status/pro-status.module';
 import { ProductsModule } from '../products/products.module';
 import { ResponseTimeModule } from '../response-time/response-time.module';
 import { Seller } from '../sellers/entities/seller.entity';
@@ -18,6 +19,7 @@ import { SellersPublicService } from './sellers-public.service';
     ProductsModule,
     PricingModule,
     ResponseTimeModule,
+    ProStatusModule,
   ],
   controllers: [SellersPublicController],
   providers: [SellersPublicService],

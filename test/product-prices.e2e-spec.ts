@@ -140,11 +140,20 @@ describe('Precios en la moneda de visualización (e2e)', () => {
               {
                 getProductRating: () =>
                   Promise.resolve({ ratingAverage: null, reviewsCount: 0 }),
-                canUserReview: () => Promise.resolve(false),
+                getReviewStatus: () =>
+                  Promise.resolve({
+                    canReview: false,
+                    hasReviewed: false,
+                    reviewId: null,
+                  }),
               } as never,
               {} as never,
               dataSource,
               priceDisplay,
+              {
+                proUserIds: () => Promise.resolve(new Set<string>()),
+                isPro: () => Promise.resolve(false),
+              } as never,
             ),
         },
       ],

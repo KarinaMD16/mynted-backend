@@ -19,6 +19,7 @@ import {
 } from 'typeorm';
 import { escapeLike } from '../common/escape-like';
 import { UsdRates } from '../pricing/currency';
+import { ProStatusService } from '../pro-status/pro-status.service';
 import {
   PriceDisplayService,
   WithDisplayPrice,
@@ -104,6 +105,8 @@ export interface TagProductCard {
     displayName: string;
     photoUrl: string | null;
     isVerified: boolean;
+    // Pro vigente del dueño; findShop lo completa por lotes.
+    isPro: boolean;
   };
 }
 
@@ -297,6 +300,7 @@ export class ProductsService {
     private readonly cloudinaryService: CloudinaryService,
     private readonly dataSource: DataSource,
     private readonly priceDisplay: PriceDisplayService,
+    private readonly proStatusService: ProStatusService,
     @Optional()
     private readonly eventEmitter?: EventEmitter2,
   ) {}
@@ -713,9 +717,10 @@ export class ProductsService {
       (product) => this.toTagProductCard(product),
     );
 
-    // isSaved y tasas: una sola consulta de cada uno para toda la página.
+    // isSaved, tasas e isPro: una sola consulta de cada uno para toda la
+    // página.
     const cards = sections.flatMap((section) => section.products);
-    const [saved, usdRates] = await Promise.all([
+    const [saved, usdRates, proUserIds] = await Promise.all([
       this.getSavedProductIds(
         userId,
         cards.map((card) => card.id),
@@ -725,6 +730,7 @@ export class ProductsService {
           displayCurrency,
           cards.map((card) => card.currency),
         ),
+      this.proStatusService.proUserIds(cards.map((card) => card.seller.userId)),
     ]);
 
     return {
@@ -735,6 +741,10 @@ export class ProductsService {
           : ('popular' as const),
         products: section.products.map((card) => ({
           ...card,
+          seller: {
+            ...card.seller,
+            isPro: proUserIds.has(card.seller.userId),
+          },
           isSaved: saved.has(card.id),
           ...this.priceDisplay.toDisplay(card, displayCurrency, usdRates),
         })),
@@ -868,6 +878,7 @@ export class ProductsService {
         displayName: product.seller.displayName,
         photoUrl: product.seller.user.photoUrl ?? null,
         isVerified: product.seller.isVerified,
+        isPro: false,
       },
     };
   }
@@ -1000,12 +1011,14 @@ export class ProductsService {
       throw new NotFoundException('Producto no encontrado');
     }
 
-    const [rating, sellerRatings, saved, reviewStatus] = await Promise.all([
-      this.reviewsService.getProductRating(id),
-      this.usersService.getSellerRatings([product.seller.sellerId]),
-      this.getSavedProductIds(viewerId, [id]),
-      this.reviewsService.getReviewStatus(product, viewerId),
-    ]);
+    const [rating, sellerRatings, saved, reviewStatus, sellerIsPro] =
+      await Promise.all([
+        this.reviewsService.getProductRating(id),
+        this.usersService.getSellerRatings([product.seller.sellerId]),
+        this.getSavedProductIds(viewerId, [id]),
+        this.reviewsService.getReviewStatus(product, viewerId),
+        this.proStatusService.isPro(product.seller.userId),
+      ]);
     const sellerRating = sellerRatings.get(product.seller.sellerId);
     // El user completo se descarta: del vendedor solo sale lo público.
     const { user, ...seller } = product.seller;
@@ -1021,6 +1034,7 @@ export class ProductsService {
       seller: {
         ...seller,
         photoUrl: user?.photoUrl ?? null,
+        isPro: sellerIsPro,
         ratingAverage: sellerRating?.ratingAverage ?? null,
         reviewsCount: sellerRating?.reviewsCount ?? 0,
       },

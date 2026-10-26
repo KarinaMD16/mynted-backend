@@ -14,6 +14,7 @@ import {
 import { Review } from '../src/products/entities/review.entity';
 import { ReviewsService } from '../src/products/reviews.service';
 import { ReputationService } from '../src/reputation/reputation.service';
+import { ProStatusService } from '../src/pro-status/pro-status.service';
 import { ResponseTimeService } from '../src/response-time/response-time.service';
 import {
   PaymentInfo,
@@ -85,12 +86,14 @@ describe('Rating del vendedor (e2e)', () => {
       {} as CloudinaryService,
       repo(Seller),
       {} as ResponseTimeService,
+      {} as ProStatusService,
     );
     reputationService = new ReputationService(
       repo(User),
       repo(Seller),
       usersService,
       { findUserBadges: () => Promise.resolve([]) } as unknown as BadgesService,
+      { isPro: () => Promise.resolve(false) } as unknown as ProStatusService,
     );
     reviewsService = new ReviewsService(
       repo(Review),

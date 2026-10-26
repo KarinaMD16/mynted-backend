@@ -151,6 +151,7 @@ describe('Product quantity (stock)', () => {
         {} as never,
         dataSource as never,
         {} as PriceDisplayService,
+        {} as never,
         eventEmitter as never,
       );
       jest.spyOn(service, 'findDetail').mockResolvedValue({} as never);

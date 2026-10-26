@@ -9,6 +9,7 @@ import 'multer';
 import { DataSource, IsNull, Not, Repository } from 'typeorm';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
 import { PriceDisplayService } from '../pricing/price-display.service';
+import { ProStatusService } from '../pro-status/pro-status.service';
 import { Seller } from '../sellers/entities/seller.entity';
 import {
   otherParticipantId,
@@ -72,6 +73,7 @@ export class MessagesService {
     private readonly dataSource: DataSource,
     private readonly cloudinaryService: CloudinaryService,
     private readonly priceDisplay: PriceDisplayService,
+    private readonly proStatusService: ProStatusService,
   ) {}
 
   // Más recientes primero, paginado por cursor (id del último mensaje
@@ -250,7 +252,7 @@ export class MessagesService {
       conversation.buyerId === viewerId
         ? conversation.seller
         : conversation.buyer;
-    const [otherSeller, rates] = await Promise.all([
+    const [otherSeller, rates, otherIsPro] = await Promise.all([
       this.sellerRepository.findOne({
         where: { userId: other.id },
         select: { sellerId: true, displayName: true, isVerified: true },
@@ -258,6 +260,7 @@ export class MessagesService {
       this.priceDisplay.getDisplayRates(displayCurrency, [
         conversation.product.currency,
       ]),
+      this.proStatusService.isPro(other.id),
     ]);
 
     return {
@@ -270,7 +273,7 @@ export class MessagesService {
           rates,
         ),
       },
-      otherParticipant: toParticipantSummary(other, otherSeller),
+      otherParticipant: toParticipantSummary(other, otherSeller, otherIsPro),
     };
   }
 }

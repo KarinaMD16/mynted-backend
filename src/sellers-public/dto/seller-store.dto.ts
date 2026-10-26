@@ -42,6 +42,12 @@ export class SellerStoreDto {
   isVerified!: boolean;
 
   @ApiProperty({
+    example: false,
+    description: 'El dueño de la tienda tiene Pro vigente',
+  })
+  isPro!: boolean;
+
+  @ApiProperty({
     type: Number,
     nullable: true,
     example: 4.7,
@@ -98,6 +104,12 @@ export class StoreSearchItemDto {
 
   @ApiProperty({ example: true })
   isVerified!: boolean;
+
+  @ApiProperty({
+    example: false,
+    description: 'El dueño de la tienda tiene Pro vigente',
+  })
+  isPro!: boolean;
 
   @ApiProperty({ type: Number, nullable: true, example: 4.7 })
   ratingAverage!: number | null;

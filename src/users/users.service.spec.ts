@@ -1,6 +1,7 @@
 import { ForbiddenException } from '@nestjs/common';
 import { Repository } from 'typeorm';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
+import { ProStatusService } from '../pro-status/pro-status.service';
 import { ResponseTimeService } from '../response-time/response-time.service';
 import { Seller } from '../sellers/entities/seller.entity';
 import { UserOAuthAccount } from './entities/user-oauth-account.entity';
@@ -15,6 +16,7 @@ describe('UsersService', () => {
   };
   let cloudinaryService: { uploadImage: jest.Mock };
   let responseTimeService: { getForUsers: jest.Mock };
+  let proStatusService: { proUserIds: jest.Mock; isPro: jest.Mock };
 
   beforeEach(() => {
     usersRepository = {
@@ -22,6 +24,10 @@ describe('UsersService', () => {
       save: jest.fn((user: User) => Promise.resolve(user)),
     };
     cloudinaryService = { uploadImage: jest.fn() };
+    proStatusService = {
+      proUserIds: jest.fn().mockResolvedValue(new Set<string>()),
+      isPro: jest.fn().mockResolvedValue(false),
+    };
     responseTimeService = {
       getForUsers: jest
         .fn()
@@ -36,6 +42,7 @@ describe('UsersService', () => {
       cloudinaryService as unknown as CloudinaryService,
       {} as Repository<Seller>,
       responseTimeService as unknown as ResponseTimeService,
+      proStatusService as unknown as ProStatusService,
     );
   });
 
@@ -58,6 +65,7 @@ describe('UsersService', () => {
         cloudinaryService as unknown as CloudinaryService,
         sellersRepository as unknown as Repository<Seller>,
         responseTimeService as unknown as ResponseTimeService,
+        proStatusService as unknown as ProStatusService,
       );
       jest
         .spyOn(publicService, 'getSellerRatings')
@@ -98,6 +106,29 @@ describe('UsersService', () => {
       expect(responseTimeService.getForUsers).toHaveBeenCalledTimes(1);
       expect(responseTimeService.getForUsers).toHaveBeenCalledWith([
         'seller-id',
+      ]);
+    });
+
+    it('marca isPro por usuario con una sola consulta para toda la lista', async () => {
+      const { publicService } = build([approvedSeller]);
+      proStatusService.proUserIds.mockResolvedValue(new Set(['otro-id']));
+
+      const result = await publicService.toPublicUsers([
+        { id: 'seller-id', username: 'karina' } as User,
+        { id: 'otro-id', username: 'otro' } as User,
+        { id: 'tercero-id', username: 'tercero' } as User,
+      ]);
+
+      expect(result.map((user) => [user.username, user.isPro])).toEqual([
+        ['karina', false],
+        ['otro', true],
+        ['tercero', false],
+      ]);
+      expect(proStatusService.proUserIds).toHaveBeenCalledTimes(1);
+      expect(proStatusService.proUserIds).toHaveBeenCalledWith([
+        'seller-id',
+        'otro-id',
+        'tercero-id',
       ]);
     });
 
@@ -184,6 +215,7 @@ describe('UsersService', () => {
         cloudinaryService as unknown as CloudinaryService,
         sellersRepository as unknown as Repository<Seller>,
         responseTimeService as unknown as ResponseTimeService,
+        proStatusService as unknown as ProStatusService,
       );
       jest.spyOn(meService, 'getSellerRatings').mockResolvedValue(new Map());
 
@@ -206,6 +238,28 @@ describe('UsersService', () => {
       });
     });
 
+    it('agrega isPro a la entidad, también sin tienda', async () => {
+      const user = Object.assign(new User(), { id: 'pro-id' });
+      usersRepository.findOne.mockResolvedValue(user);
+      proStatusService.isPro.mockResolvedValue(true);
+      const meService = new UsersService(
+        usersRepository as unknown as Repository<User>,
+        {} as Repository<UserOAuthAccount>,
+        cloudinaryService as unknown as CloudinaryService,
+        {
+          findOne: jest.fn().mockResolvedValue(null),
+        } as unknown as Repository<Seller>,
+        responseTimeService as unknown as ResponseTimeService,
+        proStatusService as unknown as ProStatusService,
+      );
+
+      const me = await meService.findMe('pro-id');
+
+      expect(me).toBeInstanceOf(User);
+      expect(me.isPro).toBe(true);
+      expect(proStatusService.isPro).toHaveBeenCalledWith('pro-id');
+    });
+
     it('sin tienda aprobada devuelve la entidad sin objeto seller', async () => {
       const user = Object.assign(new User(), { id: 'buyer-id' });
       usersRepository.findOne.mockResolvedValue(user);
@@ -217,11 +271,13 @@ describe('UsersService', () => {
           findOne: jest.fn().mockResolvedValue(null),
         } as unknown as Repository<Seller>,
         responseTimeService as unknown as ResponseTimeService,
+        proStatusService as unknown as ProStatusService,
       );
 
       const me = await meService.findMe('buyer-id');
 
       expect(me).toBe(user);
+      expect(me.isPro).toBe(false);
       expect(me).not.toHaveProperty('seller');
       expect(responseTimeService.getForUsers).not.toHaveBeenCalled();
     });
@@ -253,6 +309,7 @@ describe('UsersService', () => {
         cloudinaryService as unknown as CloudinaryService,
         sellersRepository as unknown as Repository<Seller>,
         responseTimeService as unknown as ResponseTimeService,
+        proStatusService as unknown as ProStatusService,
       );
       return { ratingsService, qb };
     };

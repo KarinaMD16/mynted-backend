@@ -34,6 +34,12 @@ export class UserReputationDto {
   isSeller!: boolean;
 
   @ApiProperty({
+    example: false,
+    description: 'Tiene Pro vigente (suscripción con endsAt futuro)',
+  })
+  isPro!: boolean;
+
+  @ApiProperty({
     type: Number,
     nullable: true,
     example: 4.6,

@@ -61,6 +61,12 @@ export class PublicUserDto {
   @ApiProperty()
   createdAt!: Date;
 
+  @ApiProperty({
+    example: false,
+    description: 'Tiene Pro vigente (suscripción con endsAt futuro)',
+  })
+  isPro!: boolean;
+
   @ApiPropertyOptional({
     type: PublicSellerDto,
     description: 'Solo si el usuario es vendedor aprobado',
