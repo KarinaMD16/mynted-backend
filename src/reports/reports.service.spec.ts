@@ -15,6 +15,10 @@ import { ReportItemType } from './enums/report-item-type.enum';
 import { ReportReason } from './enums/report-reason.enum';
 import { ReportStatus } from './enums/report-status.enum';
 import { ReportsService } from './reports.service';
+import { Message } from '../conversations/entities/message.entity';
+import { Community } from '../community/entities/community.entity';
+import { CommunityProfile } from '../community/entities/community-profile.entity';
+import { User } from '../users/entities/user.entity';
 
 describe('ReportsService', () => {
   const reporterId = 'reporter-id';
@@ -23,6 +27,8 @@ describe('ReportsService', () => {
     findOne: jest.fn(),
     create: jest.fn((value: Partial<Report>) => value),
     save: jest.fn(),
+    count: jest.fn(),
+    createQueryBuilder: jest.fn(),
   };
   const postRepository = { findOne: jest.fn() };
   const replyRepository = { findOne: jest.fn() };
@@ -35,13 +41,23 @@ describe('ReportsService', () => {
   };
   const conversationRepository = {
     createQueryBuilder: jest.fn(() => conversationQueryBuilder),
+    find: jest.fn(),
+    findOne: jest.fn(),
   };
+  const messageRepository = { find: jest.fn() };
+  const communityRepository = { findOne: jest.fn() };
+  const communityProfileRepository = { createQueryBuilder: jest.fn() };
+  const userRepository = { find: jest.fn() };
   const service = new ReportsService(
     reportRepository as unknown as Repository<Report>,
     postRepository as unknown as Repository<Post>,
     replyRepository as unknown as Repository<Reply>,
     productRepository as unknown as Repository<Product>,
     conversationRepository as unknown as Repository<Conversation>,
+    messageRepository as unknown as Repository<Message>,
+    communityRepository as unknown as Repository<Community>,
+    communityProfileRepository as unknown as Repository<CommunityProfile>,
+    userRepository as unknown as Repository<User>,
   );
 
   const dto = (itemType: ReportItemType, itemId = 7): CreateReportDto => ({
@@ -64,6 +80,7 @@ describe('ReportsService', () => {
     reportRepository.save.mockImplementation((report: Report) =>
       Promise.resolve(report),
     );
+    communityRepository.findOne.mockResolvedValue({ id: 12 });
   });
 
   it('creates a pending post report with reporter and community derived from the post', async () => {
