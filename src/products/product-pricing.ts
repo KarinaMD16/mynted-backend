@@ -5,13 +5,15 @@ import { UnavailableReason } from './product-events';
 type AvailabilityFields = Pick<
   Product,
   'status' | 'isVisible' | 'deletedAt' | 'quantity'
->;
+> &
+  Partial<Pick<Product, 'isHidden'>>;
 
 // Disponible para comprar: activo, visible, no borrado y con stock.
 export function isProductAvailable(product: AvailabilityFields): boolean {
   return (
     product.status === ProductStatus.ACTIVE &&
     product.isVisible &&
+    !product.isHidden &&
     !product.deletedAt &&
     product.quantity > 0
   );
@@ -25,6 +27,7 @@ export function unavailableReason(
   if (product.status === ProductStatus.SOLD) return 'sold';
   if (product.status !== ProductStatus.ACTIVE) return 'inactive';
   if (product.quantity <= 0) return 'sold';
+  if (product.isHidden) return 'hidden';
   if (!product.isVisible) return 'hidden';
   return null;
 }
@@ -44,6 +47,7 @@ export function computeFinalPrice(
 export const PUBLIC_PRODUCT_WHERE: FindOptionsWhere<Product> = {
   status: ProductStatus.ACTIVE,
   isVisible: true,
+  isHidden: false,
   // Un producto agotado no se lista aunque su status no se haya sincronizado.
   quantity: MoreThan(0),
 };

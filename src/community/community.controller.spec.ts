@@ -2,6 +2,9 @@ import { GUARDS_METADATA } from '@nestjs/common/constants';
 import { CommunityController } from './community.controller';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { SuperAdminGuard } from '../auth/guards/super-admin.guard';
+import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
+import { CommunityRoleGuard } from './guards/community-role.guard';
+import { ModerationItemType } from '../moderation/enums/moderation-item-type.enum';
 
 describe('CommunityController', () => {
   it('protects POST /communities with JwtAuthGuard', () => {
@@ -21,7 +24,10 @@ describe('CommunityController', () => {
     const communityService = {
       findCommunityDetail: jest.fn().mockResolvedValue({}),
     };
-    const controller = new CommunityController(communityService as never);
+    const controller = new CommunityController(
+      communityService as never,
+      {} as never,
+    );
     const request = { user: { userId: 'user-id' } };
 
     await controller.findCommunityDetail(7, request as never);
@@ -36,7 +42,10 @@ describe('CommunityController', () => {
     const communityService = {
       findCommunityDetailBySlug: jest.fn().mockResolvedValue({}),
     };
-    const controller = new CommunityController(communityService as never);
+    const controller = new CommunityController(
+      communityService as never,
+      {} as never,
+    );
     const request = { user: { userId: 'user-id' } };
     const method = Object.getOwnPropertyDescriptor(
       CommunityController.prototype,
@@ -46,7 +55,7 @@ describe('CommunityController', () => {
 
     await controller.findCommunityDetailBySlug('pokemon', request as never);
 
-    expect(guards).toEqual(expect.arrayContaining([JwtAuthGuard]));
+    expect(guards).toEqual(expect.arrayContaining([OptionalJwtAuthGuard]));
     expect(communityService.findCommunityDetailBySlug).toHaveBeenCalledWith(
       'pokemon',
       'user-id',
@@ -57,7 +66,10 @@ describe('CommunityController', () => {
     const communityService = {
       getStats: jest.fn().mockResolvedValue({}),
     };
-    const controller = new CommunityController(communityService as never);
+    const controller = new CommunityController(
+      communityService as never,
+      {} as never,
+    );
     const method = Object.getOwnPropertyDescriptor(
       CommunityController.prototype,
       'getCommunityStats',
@@ -107,7 +119,10 @@ describe('CommunityController', () => {
     const communityService = {
       findInactiveCategories: jest.fn().mockResolvedValue([]),
     };
-    const controller = new CommunityController(communityService as never);
+    const controller = new CommunityController(
+      communityService as never,
+      {} as never,
+    );
     const method = Object.getOwnPropertyDescriptor(
       CommunityController.prototype,
       'findInactiveCategories',
@@ -120,5 +135,35 @@ describe('CommunityController', () => {
       expect.arrayContaining([JwtAuthGuard, SuperAdminGuard]),
     );
     expect(communityService.findInactiveCategories).toHaveBeenCalled();
+  });
+
+  it('protects content restoration with JWT and community roles', async () => {
+    const communityService = {};
+    const moderationService = {
+      restoreContent: jest.fn().mockResolvedValue({ isHidden: false }),
+    };
+    const controller = new CommunityController(
+      communityService as never,
+      moderationService as never,
+    );
+    const method = Object.getOwnPropertyDescriptor(
+      CommunityController.prototype,
+      'restoreModeratedContent',
+    )?.value as (...args: never[]) => unknown;
+    const guards = Reflect.getMetadata(GUARDS_METADATA, method) as unknown[];
+
+    await controller.restoreModeratedContent(8, ModerationItemType.POST, 4, {
+      user: { userId: 'owner-id' },
+    } as never);
+
+    expect(guards).toEqual(
+      expect.arrayContaining([JwtAuthGuard, CommunityRoleGuard]),
+    );
+    expect(moderationService.restoreContent).toHaveBeenCalledWith(
+      ModerationItemType.POST,
+      4,
+      8,
+      'owner-id',
+    );
   });
 });

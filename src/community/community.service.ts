@@ -472,7 +472,7 @@ export class CommunityService {
     const forumPosts =
       community.isPrivate && !membership
         ? []
-        : await this.findRecentForumPosts(communityId);
+        : await this.findRecentForumPosts(communityId, userId);
 
     const forumPostMetrics = await this.getForumPostMetrics(
       forumPosts,
@@ -521,6 +521,9 @@ export class CommunityService {
               role: post.communityProfile.role,
             }
           : null,
+        isHidden: post.isHidden,
+        hiddenAt: post.hiddenAt,
+        hiddenReason: post.hiddenReason,
       })),
     };
   }
@@ -561,7 +564,7 @@ export class CommunityService {
     const forumPosts =
       community.isPrivate && !membership
         ? []
-        : await this.findRecentForumPosts(community.id);
+        : await this.findRecentForumPosts(community.id, userId);
 
     const forumPostMetrics = await this.getForumPostMetrics(
       forumPosts,
@@ -611,6 +614,9 @@ export class CommunityService {
               role: post.communityProfile.role,
             }
           : null,
+        isHidden: post.isHidden,
+        hiddenAt: post.hiddenAt,
+        hiddenReason: post.hiddenReason,
       })),
     };
   }
@@ -824,10 +830,12 @@ export class CommunityService {
         'recent_post_profile',
         'recent_post_profile.community_profile_id = post.community_profile_id',
       )
-      .where('recent_post_profile.community_id = :communityId', {
-        communityId,
-      })
-      .andWhere(`post.posted_at >= NOW() - INTERVAL '${RECENT_POST_DAYS} days'`)
+      .where(
+        `recent_post_profile.community_id = :communityId
+         AND post.is_hidden = false
+         AND post.posted_at >= NOW() - INTERVAL '${RECENT_POST_DAYS} days'`,
+        { communityId },
+      )
       .getCount();
   }
 
@@ -839,22 +847,39 @@ export class CommunityService {
         'post_profile',
         'post_profile.community_profile_id = post.community_profile_id',
       )
-      .where('post_profile.community_id = :communityId', {
-        communityId,
-      })
+      .where(
+        'post_profile.community_id = :communityId AND post.is_hidden = false',
+        { communityId },
+      )
       .getCount();
   }
 
-  private findRecentForumPosts(communityId: number): Promise<Post[]> {
-    return this.postRepository
+  private findRecentForumPosts(
+    communityId: number,
+    userId?: string,
+  ): Promise<Post[]> {
+    const query = this.postRepository
       .createQueryBuilder('post')
-      .innerJoinAndSelect('post.communityProfile', 'communityProfile')
-      .where('communityProfile.community_id = :communityId', {
-        communityId,
-      })
-      .orderBy('post.posted_at', 'DESC')
-      .take(10)
-      .getMany();
+      .innerJoinAndSelect('post.communityProfile', 'communityProfile');
+    if (!userId) {
+      query.where(
+        'communityProfile.community_id = :communityId AND post.is_hidden = false',
+        { communityId },
+      );
+    } else {
+      query.where(
+        `communityProfile.community_id = :communityId
+         AND (post.is_hidden = false OR communityProfile.user_id = :userId OR EXISTS (
+          SELECT 1 FROM community_profile viewer_profile
+          WHERE viewer_profile.user_id = :userId
+            AND viewer_profile.community_id = :communityId
+            AND viewer_profile.role IN ('moderator', 'owner')
+        ))`,
+        { userId, communityId },
+      );
+    }
+    query.orderBy('post.posted_at', 'DESC').take(10);
+    return query.getMany();
   }
 
   private buildCommunityListQuery(
@@ -880,6 +905,7 @@ export class CommunityService {
         'recent_post_profile.community_profile_id = recent_post.community_profile_id',
       )
       .where('recent_post_profile.community_id = community.id')
+      .andWhere('recent_post.is_hidden = false')
       .andWhere(
         `recent_post.posted_at >= NOW() - INTERVAL '${RECENT_POST_DAYS} days'`,
       )

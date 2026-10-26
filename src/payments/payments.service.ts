@@ -227,6 +227,9 @@ export class PaymentsService {
       );
     }
 
+    if (product.isHidden) {
+      throw new ConflictException('El producto no está disponible');
+    }
     if (product.status !== ProductStatus.ACTIVE) {
       throw new ConflictException('El producto no está disponible');
     }
@@ -521,6 +524,9 @@ export class PaymentsService {
   }
 
   private validateQuoteProduct(product: Product): void {
+    if (product.isHidden) {
+      throw new ConflictException('El producto no está disponible');
+    }
     if (product.status !== ProductStatus.ACTIVE) {
       throw new ConflictException('El producto no está disponible');
     }

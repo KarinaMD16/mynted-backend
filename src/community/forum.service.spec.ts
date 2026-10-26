@@ -17,7 +17,7 @@ import { VoteType } from './entities/vote-type.enum';
 import { UserTag } from '../user-tags/entities/user-tag.entity';
 import { PostSort } from './post-ranking';
 
-/* eslint-disable @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return */
+/* eslint-disable @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-member-access */
 
 describe('ForumService', () => {
   const repository = () => ({
@@ -35,6 +35,7 @@ describe('ForumService', () => {
       andWhere: jest.fn().mockReturnThis(),
       groupBy: jest.fn().mockReturnThis(),
       getRawMany: jest.fn().mockResolvedValue([]),
+      getMany: jest.fn().mockResolvedValue([]),
       innerJoinAndSelect: jest.fn().mockReturnThis(),
       leftJoinAndSelect: jest.fn().mockReturnThis(),
       distinct: jest.fn().mockReturnThis(),
@@ -155,7 +156,7 @@ describe('ForumService', () => {
       ctx.service.createPost(
         7,
         'user-id',
-        { title: 'Title', body: 'Body' },
+        { title: 'Title', body: 'Body', tagIds: [1] },
         {},
       ),
     ).rejects.toThrow('Comunidad no encontrada');
@@ -322,13 +323,18 @@ describe('ForumService', () => {
         community: { isActive: true },
       },
     });
-    ctx.replyRepository.find.mockResolvedValue([
+    const replyBuilder = ctx.replyRepository.createQueryBuilder();
+    ctx.replyRepository.createQueryBuilder.mockReturnValue(replyBuilder);
+    replyBuilder.getMany.mockResolvedValue([
       {
         id: 20,
         body: 'Reply',
         postId: 10,
         communityProfileId: 4,
         parentReplyId: null,
+        isHidden: false,
+        hiddenAt: null,
+        hiddenReason: null,
         communityProfile: {
           communityProfileId: 4,
           displayName: 'Reply author',
@@ -346,6 +352,11 @@ describe('ForumService', () => {
       displayName: 'Reply author',
       role: 'member',
       photoUrl: null,
+    });
+    expect(replies[0]).toMatchObject({
+      isHidden: false,
+      hiddenAt: null,
+      hiddenReason: null,
     });
   });
 
@@ -387,13 +398,18 @@ describe('ForumService', () => {
     } as unknown as Post;
     ctx.postRepository.findOne.mockResolvedValue(post);
     ctx.profileRepository.findOne.mockResolvedValue(null);
-    ctx.replyRepository.find.mockResolvedValue([
+    const replyBuilder = ctx.replyRepository.createQueryBuilder();
+    ctx.replyRepository.createQueryBuilder.mockReturnValue(replyBuilder);
+    replyBuilder.getMany.mockResolvedValue([
       {
         id: 21,
         body: 'Nested reply',
         postId: 10,
         communityProfileId: 5,
         parentReplyId: null,
+        isHidden: true,
+        hiddenAt: new Date('2026-10-26T12:00:00.000Z'),
+        hiddenReason: 'Prueba manual TASK 1138',
         communityProfile: {
           communityProfileId: 5,
           displayName: 'Reply author',
@@ -413,6 +429,11 @@ describe('ForumService', () => {
       displayName: 'Reply author',
       photoUrl: 'https://img.test/reply-author.png',
     });
+    expect(result.replies[0]).toMatchObject({
+      isHidden: true,
+      hiddenAt: new Date('2026-10-26T12:00:00.000Z'),
+      hiddenReason: 'Prueba manual TASK 1138',
+    });
   });
 
   it('rejects a non-member from a private post before loading its replies', async () => {
@@ -430,6 +451,117 @@ describe('ForumService', () => {
       'Debes pertenecer a la comunidad',
     );
     expect(ctx.replyRepository.find).not.toHaveBeenCalled();
+  });
+
+  it('derives reply visibility from the post community profile', async () => {
+    const ctx = setup();
+    const builder = ctx.replyRepository.createQueryBuilder();
+    ctx.replyRepository.createQueryBuilder.mockReturnValue(builder);
+    builder.getRawMany.mockResolvedValue([{ post_id: '10', count: '1' }]);
+
+    const counts = await (
+      ctx.service as unknown as {
+        getReplyCounts: (
+          postIds: number[],
+          viewerId?: string,
+        ) => Promise<Map<number, number>>;
+      }
+    ).getReplyCounts([10], 'user-id');
+
+    const visibility = builder.andWhere.mock.calls[0][0] as {
+      whereFactory: (queryBuilder: {
+        where: (condition: string) => void;
+        orWhere: (condition: string | { whereFactory: unknown }) => void;
+      }) => void;
+    };
+    const conditions: string[] = [];
+    const collectConditions = (brackets: typeof visibility) => {
+      brackets.whereFactory({
+        where: (condition) => conditions.push(condition),
+        orWhere: (condition) => {
+          if (typeof condition === 'string') conditions.push(condition);
+          else collectConditions(condition as typeof visibility);
+        },
+      });
+    };
+    collectConditions(visibility);
+    expect(conditions.join(' ')).toContain('reply_post_profile.community_id');
+    expect(conditions.join(' ')).not.toContain('reply_post.community_id');
+    expect(conditions.join(' ')).not.toContain(':viewerId IS NOT NULL');
+    expect(counts.get(10)).toBe(1);
+  });
+
+  it('excludes hidden replies without a viewer parameter', async () => {
+    const ctx = setup();
+    const builder = ctx.replyRepository.createQueryBuilder();
+    ctx.replyRepository.createQueryBuilder.mockReturnValue(builder);
+    builder.getRawMany.mockResolvedValue([]);
+
+    await (
+      ctx.service as unknown as {
+        getReplyCounts: (
+          postIds: number[],
+          viewerId?: string,
+        ) => Promise<Map<number, number>>;
+      }
+    ).getReplyCounts([10]);
+
+    const visibility = builder.andWhere.mock.calls[0][0] as {
+      whereFactory: (queryBuilder: {
+        where: (condition: string) => void;
+      }) => void;
+    };
+    const conditions: string[] = [];
+    visibility.whereFactory({
+      where: (condition) => conditions.push(condition),
+    });
+    expect(conditions).toEqual(['reply.is_hidden = false']);
+    expect(builder.setParameter).not.toHaveBeenCalled();
+  });
+
+  it('includes hidden metadata in an individual reply response', async () => {
+    const ctx = setup();
+    const hiddenAt = new Date('2026-10-26T12:00:00.000Z');
+    ctx.replyRepository.findOne.mockResolvedValue({
+      id: 1,
+      body: 'Hidden reply',
+      postedAt: hiddenAt,
+      postId: 2,
+      communityProfileId: 4,
+      parentReplyId: null,
+      isHidden: true,
+      hiddenAt,
+      hiddenReason: 'Prueba manual TASK 1138',
+      communityProfile: {
+        communityProfileId: 4,
+        userId: 'moderator-id',
+        displayName: 'Moderator',
+        role: 'moderator',
+        user: { photoUrl: null },
+      },
+      post: {
+        communityProfile: {
+          communityId: 7,
+          community: { id: 7, isActive: true },
+        },
+      },
+    });
+    ctx.communityRepository.findOne.mockResolvedValue({
+      id: 7,
+      isActive: true,
+    });
+    ctx.profileRepository.findOne.mockResolvedValue({
+      communityProfileId: 9,
+      role: 'moderator',
+    });
+
+    const result = await ctx.service.findReplyResponse(1, 'moderator-id');
+
+    expect(result).toMatchObject({
+      isHidden: true,
+      hiddenAt,
+      hiddenReason: 'Prueba manual TASK 1138',
+    });
   });
 
   it('ranks explore by interests, votes and discovery for an authenticated user', async () => {
@@ -495,7 +627,7 @@ describe('ForumService', () => {
       limit: 10,
     });
 
-    expect(builder.andWhere).toHaveBeenCalledTimes(1);
+    expect(builder.andWhere).toHaveBeenCalledTimes(2);
     expect(builder.andWhere).toHaveBeenCalledWith(
       'community.is_private = :isPrivate',
       { isPrivate: false },
@@ -606,7 +738,7 @@ describe('ForumService', () => {
       search: '   ',
     });
 
-    expect(builder.andWhere).toHaveBeenCalledTimes(1);
+    expect(builder.andWhere).toHaveBeenCalledTimes(2);
     expect(builder.andWhere).toHaveBeenCalledWith(
       'community.is_private = :isPrivate',
       { isPrivate: false },

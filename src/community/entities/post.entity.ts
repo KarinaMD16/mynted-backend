@@ -8,6 +8,7 @@ import {
   PrimaryGeneratedColumn,
 } from 'typeorm';
 import { CommunityProfile } from './community-profile.entity';
+import { User } from '../../users/entities/user.entity';
 import { PostImage } from './post-image.entity';
 import { PostTag } from './post-tag.entity';
 import { PostVote } from './post-vote.entity';
@@ -29,6 +30,26 @@ export class Post {
 
   @Column({ name: 'community_profile_id' })
   communityProfileId!: number;
+
+  @Column({ name: 'is_hidden', type: 'boolean', default: false })
+  isHidden!: boolean;
+
+  @Column({
+    name: 'hidden_at',
+    type: 'timestamp with time zone',
+    nullable: true,
+  })
+  hiddenAt!: Date | null;
+
+  @Column({ name: 'hidden_by_user_id', type: 'uuid', nullable: true })
+  hiddenByUserId!: string | null;
+
+  @ManyToOne(() => User, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'hidden_by_user_id', referencedColumnName: 'id' })
+  hiddenByUser!: User | null;
+
+  @Column({ name: 'hidden_reason', type: 'text', nullable: true })
+  hiddenReason!: string | null;
 
   @ManyToOne(() => CommunityProfile, (profile) => profile.posts, {
     nullable: false,

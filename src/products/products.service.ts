@@ -23,7 +23,10 @@ import {
   PriceDisplayService,
   WithDisplayPrice,
 } from '../pricing/price-display.service';
-import { CommunityProfile } from '../community/entities/community-profile.entity';
+import {
+  CommunityProfile,
+  CommunityProfileRole,
+} from '../community/entities/community-profile.entity';
 import { Community } from '../community/entities/community.entity';
 import {
   Favorite,
@@ -163,6 +166,7 @@ export interface PublicProductFilters {
   // Excluye los productos de comunidades privadas o inactivas (mismo
   // criterio que GET /users/:id/products).
   publicCommunitiesOnly?: boolean;
+  viewerId?: string;
 }
 
 // Lo que recibe findAll: filtros públicos + rango/orden por precio +
@@ -209,6 +213,9 @@ export interface MyProductCard {
   quantity: number;
   isAvailable: boolean;
   isVisible: boolean;
+  isHidden: boolean;
+  hiddenAt: Date | null;
+  hiddenReason: string | null;
   publishedAt: Date | null;
   type: ProductType | null;
   condition: ProductCondition | null;
@@ -469,7 +476,7 @@ export class ProductsService {
     // El QueryBuilder solo resuelve ids (filtros y orden por precio en SQL).
     // Luego se hidratan con la API de repository: con la relación "to-many"
     // productTags, un join paginado rompería el skip/take.
-    const qb = this.publicProductsQuery(query);
+    const qb = this.publicProductsQuery({ ...query, viewerId });
     const rates = await this.applyPriceQuery(qb, query, displayCurrency, query);
 
     const total = await qb.getCount();
@@ -500,6 +507,17 @@ export class ProductsService {
         status: filters.status ?? ProductStatus.ACTIVE,
       })
       .andWhere('product.isVisible = :isVisible', { isVisible: true });
+    if (!filters.viewerId) {
+      qb.andWhere('product.isHidden = false');
+    } else {
+      qb.andWhere(
+        `(product.isHidden = false OR (
+        EXISTS (SELECT 1 FROM seller hidden_product_seller WHERE hidden_product_seller.seller_id = product.sellerId AND hidden_product_seller.user_id = :viewerId)
+        OR EXISTS (SELECT 1 FROM community_profile hidden_product_profile WHERE hidden_product_profile.user_id = :viewerId AND hidden_product_profile.community_id = product.communityId AND hidden_product_profile.role IN ('moderator', 'owner'))
+      ))`,
+        { viewerId: filters.viewerId },
+      );
+    }
 
     if (filters.sellerId !== undefined) {
       qb.andWhere('product.sellerId = :sellerId', {
@@ -665,7 +683,10 @@ export class ProductsService {
     query: GetShopQueryDto,
     displayCurrency: string,
   ): Promise<ShopResult> {
-    const filters: PublicProductFilters = { shipTo: query.shipTo };
+    const filters: PublicProductFilters = {
+      shipTo: query.shipTo,
+      viewerId: userId,
+    };
     const qb = this.publicProductsQuery(filters);
     const rates = await this.applyPriceQuery(
       qb,
@@ -956,6 +977,9 @@ export class ProductsService {
       quantity: product.quantity,
       isAvailable: isProductAvailable(product),
       isVisible: product.isVisible,
+      isHidden: product.isHidden,
+      hiddenAt: product.hiddenAt,
+      hiddenReason: product.hiddenReason,
       publishedAt: product.publishedAt,
       type: product.type ?? null,
       condition: product.condition ?? null,
@@ -999,6 +1023,12 @@ export class ProductsService {
     ) {
       throw new NotFoundException('Producto no encontrado');
     }
+    if (
+      product.isHidden &&
+      !(await this.canViewHiddenProduct(product, viewerId))
+    ) {
+      throw new NotFoundException('Producto no encontrado');
+    }
 
     const [rating, sellerRatings, saved, reviewStatus] = await Promise.all([
       this.reviewsService.getProductRating(id),
@@ -1039,6 +1069,23 @@ export class ProductsService {
       displayCurrency,
     );
     return withDisplay;
+  }
+
+  private async canViewHiddenProduct(
+    product: Product,
+    viewerId: string | undefined,
+  ): Promise<boolean> {
+    if (!product.isHidden) return true;
+    if (!viewerId || product.seller.userId === viewerId) return !!viewerId;
+    if (product.communityId === null) return false;
+    const profile = await this.communityProfileRepository.findOne({
+      where: { userId: viewerId, communityId: product.communityId },
+      select: { role: true },
+    });
+    return (
+      profile?.role === CommunityProfileRole.MODERATOR ||
+      profile?.role === CommunityProfileRole.OWNER
+    );
   }
 
   // Relacionados: primero los elegidos por el vendedor (solo si siguen
@@ -1099,6 +1146,7 @@ export class ProductsService {
         .where('product.id NOT IN (:...excludedIds)', { excludedIds })
         .andWhere('product.status = :status', { status: ProductStatus.ACTIVE })
         .andWhere('product.isVisible = :isVisible', { isVisible: true })
+        .andWhere('product.isHidden = false')
         .andWhere(
           [
             tagIds.size > 0 ? 'productTag.tagId IN (:...tagIds)' : null,
@@ -1519,7 +1567,8 @@ export class ProductsService {
       .leftJoinAndSelect('product.productTags', 'allProductTags')
       .leftJoinAndSelect('allProductTags.tag', 'tag')
       .where('product.status = :status', { status: ProductStatus.ACTIVE })
-      .andWhere('product.isVisible = :isVisible', { isVisible: true });
+      .andWhere('product.isVisible = :isVisible', { isVisible: true })
+      .andWhere('product.isHidden = false');
 
     if (excludeId !== undefined) {
       queryBuilder.andWhere('product.id != :excludeId', { excludeId });

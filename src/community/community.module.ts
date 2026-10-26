@@ -28,6 +28,7 @@ import { ForumService } from './forum.service';
 import { CategorySeed } from './seeds/category.seed';
 import { TagSeed } from './seeds/tag.seed';
 import { UserTag } from '../user-tags/entities/user-tag.entity';
+import { ModerationModule } from '../moderation/moderation.module';
 
 @Module({
   imports: [
@@ -52,6 +53,7 @@ import { UserTag } from '../user-tags/entities/user-tag.entity';
     CloudinaryModule,
     UsersModule,
     PricingModule,
+    ModerationModule,
   ],
   controllers: [CommunityController, ForumController, PublicProfileController],
   providers: [

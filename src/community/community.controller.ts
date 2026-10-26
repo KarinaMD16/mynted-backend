@@ -7,6 +7,7 @@ import {
   HttpStatus,
   Param,
   ParseIntPipe,
+  ParseEnumPipe,
   Patch,
   Post,
   Query,
@@ -46,6 +47,8 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { SuperAdminGuard } from '../auth/guards/super-admin.guard';
 import { AuthenticatedRequest } from '../auth/types/authenticated-request';
 import { CommunityRoleGuard } from './guards/community-role.guard';
+import { ModerationService } from '../moderation/moderation.service';
+import { ModerationItemType } from '../moderation/enums/moderation-item-type.enum';
 import { RequireCommunityRole } from './decorators/require-community-role.decorator';
 import { CommunityProfileRole } from './entities/community-profile.entity';
 
@@ -57,7 +60,10 @@ interface CommunityFiles {
 @ApiTags('community')
 @Controller()
 export class CommunityController {
-  constructor(private readonly communityService: CommunityService) {}
+  constructor(
+    private readonly communityService: CommunityService,
+    private readonly moderationService: ModerationService,
+  ) {}
 
   @Post('communities')
   @UseGuards(JwtAuthGuard)
@@ -584,6 +590,35 @@ export class CommunityController {
   })
   makePrivate(@Param('communityId', ParseIntPipe) communityId: number) {
     return this.communityService.makePrivate(communityId);
+  }
+
+  @Patch('communities/:communityId/moderation/:itemType/:itemId/restore')
+  @UseGuards(JwtAuthGuard, CommunityRoleGuard)
+  @RequireCommunityRole(
+    CommunityProfileRole.MODERATOR,
+    CommunityProfileRole.OWNER,
+  )
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Restaurar contenido oculto de una comunidad' })
+  @ApiParam({ name: 'communityId', type: Number, example: 5 })
+  @ApiParam({ name: 'itemType', enum: ModerationItemType, example: 'post' })
+  @ApiParam({ name: 'itemId', type: Number, example: 42 })
+  @ApiOkResponse({ description: 'Contenido restaurado' })
+  @ApiBadRequestResponse({ description: 'Tipo o identificador inválido' })
+  @ApiNotFoundResponse({ description: 'Contenido no encontrado' })
+  restoreModeratedContent(
+    @Param('communityId', ParseIntPipe) communityId: number,
+    @Param('itemType', new ParseEnumPipe(ModerationItemType))
+    itemType: ModerationItemType,
+    @Param('itemId', ParseIntPipe) itemId: number,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.moderationService.restoreContent(
+      itemType,
+      itemId,
+      communityId,
+      request.user.userId,
+    );
   }
 
   @Post('communities/:communityId/moderators/:profileId')
