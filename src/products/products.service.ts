@@ -56,6 +56,7 @@ import { ProductTag } from './entities/product-tag.entity';
 import { ProductImage } from './entities/product-image.entity';
 import { ProductRelated } from './entities/product-related.entity';
 import { ProductView } from './entities/product-view.entity';
+import { computeFeaturedPage } from './featured-pagination';
 import {
   MAX_FEATURED_PER_SELLER,
   cappedFeaturedCondition,
@@ -272,6 +273,9 @@ export type ProductListItem = WithDisplayPrice<
     finalPrice: number;
     isAvailable: boolean;
     isSaved: boolean;
+    // Destacado efectivo (Pro): solo lo traen GET /products y la lista de
+    // productos de una tienda.
+    isFeatured?: boolean;
   }
 >;
 
@@ -487,18 +491,69 @@ export class ProductsService {
     const rates = await this.applyPriceQuery(qb, query, displayCurrency, query);
 
     const total = await qb.getCount();
-    const rows = await qb
-      .select('product.id', 'id')
-      .offset((query.page - 1) * query.limit)
-      .limit(query.limit)
-      .getRawMany<{ id: number }>();
-    const data = await this.findInOrder(
-      rows.map((row) => row.id),
-      { productTags: { tag: true } },
-    );
+
+    // Destacados efectivos (Pro) que cumplen los mismos filtros. Un listado de
+    // vendidos no tiene ninguno: solo los activos se elevan.
+    const featuredQb = qb.clone().andWhere(cappedFeaturedCondition('product'));
+    const featuredTotal =
+      total > 0 && query.status !== ProductStatus.SOLD
+        ? await featuredQb.getCount()
+        : 0;
+
+    let ids: number[];
+    let featuredIds = new Set<number>();
+    if (featuredTotal === 0) {
+      // Sin destacados el listado es exactamente el de siempre.
+      const rows = await qb
+        .select('product.id', 'id')
+        .offset((query.page - 1) * query.limit)
+        .limit(query.limit)
+        .getRawMany<{ id: number }>();
+      ids = rows.map((row) => row.id);
+    } else {
+      // Dos consultas de ids sobre el mismo QueryBuilder ya filtrado: los
+      // destacados (más recientes primero) y los que no lo son (con el sort
+      // del usuario). La cuota por página decide cuántos de cada uno.
+      const slots = computeFeaturedPage({
+        page: query.page,
+        limit: query.limit,
+        featuredTotal,
+        regularTotal: total - featuredTotal,
+      });
+      const [featuredRows, regularRows] = await Promise.all([
+        slots.featuredCount > 0
+          ? featuredQb
+              .orderBy('product.featuredAt', 'DESC')
+              .addOrderBy('product.id', 'DESC')
+              .select('product.id', 'id')
+              .offset(slots.featuredOffset)
+              .limit(slots.featuredCount)
+              .getRawMany<{ id: number }>()
+          : Promise.resolve([]),
+        slots.regularCount > 0
+          ? qb
+              .clone()
+              .andWhere(`NOT ${cappedFeaturedCondition('product')}`)
+              .select('product.id', 'id')
+              .offset(slots.regularOffset)
+              .limit(slots.regularCount)
+              .getRawMany<{ id: number }>()
+          : Promise.resolve([]),
+      ]);
+      featuredIds = new Set(featuredRows.map((row) => row.id));
+      ids = [...featuredRows, ...regularRows].map((row) => row.id);
+    }
+
+    const data = await this.findInOrder(ids, { productTags: { tag: true } });
 
     return {
-      data: await this.withSaved(data, viewerId, displayCurrency, rates),
+      data: await this.withSaved(
+        data,
+        viewerId,
+        displayCurrency,
+        rates,
+        featuredIds,
+      ),
       pagination: this.buildPagination(query.page, query.limit, total),
     };
   }
@@ -1732,6 +1787,7 @@ export class ProductsService {
     viewerId: string | undefined,
     displayCurrency: string,
     rates?: UsdRates,
+    featuredIds?: Set<number>,
   ): Promise<ProductListItem[]> {
     const saved = await this.getSavedProductIds(
       viewerId,
@@ -1743,6 +1799,7 @@ export class ProductsService {
         finalPrice: computeFinalPrice(product.price, product.discountPercent),
         isAvailable: isProductAvailable(product),
         isSaved: saved.has(product.id),
+        ...(featuredIds ? { isFeatured: featuredIds.has(product.id) } : {}),
       })),
       displayCurrency,
       rates,
