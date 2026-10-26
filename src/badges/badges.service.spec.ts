@@ -54,6 +54,7 @@ describe('BadgesService', () => {
     };
     const communityProfileRepository = { findOne: jest.fn() };
     const dataSource = { query: jest.fn() };
+    const proStatusService = { isPro: jest.fn().mockResolvedValue(false) };
     const userInsert = insertBuilder();
     const profileInsert = insertBuilder();
     userBadgeRepository.createQueryBuilder.mockReturnValue(userInsert);
@@ -65,6 +66,7 @@ describe('BadgesService', () => {
       profileBadgeRepository as unknown as Repository<CommunityProfileBadge>,
       communityProfileRepository as unknown as Repository<CommunityProfile>,
       dataSource as never,
+      proStatusService as never,
     );
     return {
       service,
@@ -73,6 +75,7 @@ describe('BadgesService', () => {
       profileBadgeRepository,
       communityProfileRepository,
       dataSource,
+      proStatusService,
       userInsert,
       profileInsert,
     };
@@ -191,6 +194,7 @@ describe('BadgesService', () => {
         ctx.profileBadgeRepository as unknown as Repository<CommunityProfileBadge>,
         ctx.communityProfileRepository as unknown as Repository<CommunityProfile>,
         ctx.dataSource as never,
+        ctx.proStatusService as never,
         { emit } as never,
       );
       return { ...ctx, service, emit };
@@ -481,6 +485,99 @@ describe('BadgesService', () => {
       await expect(
         ctx.service.findCommunityProfileBadges(5, 'viewer'),
       ).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  describe('Pro (badge derivado de la suscripción)', () => {
+    const proBadge = (overrides: Partial<Badge> = {}) =>
+      badge({
+        id: 9,
+        code: BADGE_CODES.PRO,
+        name: 'Pro',
+        scope: BadgeScope.USER,
+        rarity: BadgeRarity.EPIC,
+        threshold: null,
+        ...overrides,
+      });
+
+    it('se agrega a los badges del usuario con derived: true y sin fecha mientras sea Pro', async () => {
+      const ctx = setup();
+      ctx.proStatusService.isPro.mockResolvedValue(true);
+      ctx.badgeRepository.findOne.mockResolvedValue(proBadge());
+      ctx.userBadgeRepository.find.mockResolvedValue([
+        {
+          awardedAt: new Date('2026-01-01'),
+          badge: badge({
+            id: 1,
+            code: BADGE_CODES.VERIFIED_SELLER,
+            scope: BadgeScope.USER,
+            rarity: BadgeRarity.UNCOMMON,
+          }),
+        },
+      ]);
+
+      const items = await ctx.service.findUserBadges('user-id');
+
+      expect(ctx.proStatusService.isPro).toHaveBeenCalledWith('user-id');
+      expect(ctx.badgeRepository.findOne).toHaveBeenCalledWith({
+        where: { code: BADGE_CODES.PRO, isActive: true },
+      });
+      // Ordena por rareza junto a los ganados: epic antes que uncommon.
+      expect(items.map((item) => item.code)).toEqual([
+        BADGE_CODES.PRO,
+        BADGE_CODES.VERIFIED_SELLER,
+      ]);
+      expect(items[0]).toMatchObject({
+        scope: 'user',
+        derived: true,
+        awardedAt: null,
+      });
+      expect(items[1]).toMatchObject({ derived: false });
+    });
+
+    it('sin Pro vigente no aparece ni se consulta el catálogo', async () => {
+      const ctx = setup();
+
+      await expect(ctx.service.findUserBadges('user-id')).resolves.toEqual([]);
+
+      expect(ctx.badgeRepository.findOne).not.toHaveBeenCalled();
+    });
+
+    it('si el badge está desactivado en el catálogo no se muestra', async () => {
+      const ctx = setup();
+      ctx.proStatusService.isPro.mockResolvedValue(true);
+      ctx.badgeRepository.findOne.mockResolvedValue(null);
+
+      await expect(ctx.service.findUserBadges('user-id')).resolves.toEqual([]);
+    });
+
+    it('nunca se guarda: otorgarlo lanza error y no inserta', async () => {
+      const ctx = setup();
+      ctx.badgeRepository.findOne.mockResolvedValue(proBadge());
+
+      await expect(
+        ctx.service.awardToUser('user-id', BADGE_CODES.PRO),
+      ).rejects.toBeInstanceOf(BadgeAwardError);
+      expect(ctx.userBadgeRepository.createQueryBuilder).not.toHaveBeenCalled();
+    });
+
+    it('el catálogo lo marca como derivado', async () => {
+      const ctx = setup();
+      ctx.badgeRepository.find.mockResolvedValue([proBadge()]);
+
+      const [item] = await ctx.service.findCatalog();
+
+      expect(item).toMatchObject({ code: BADGE_CODES.PRO, derived: true });
+    });
+
+    it('backfill no lo toca', async () => {
+      const ctx = setup();
+      ctx.badgeRepository.find.mockResolvedValue([proBadge()]);
+
+      const result = await ctx.service.backfill();
+
+      expect(result).not.toHaveProperty(BADGE_CODES.PRO);
+      expect(ctx.dataSource.query).not.toHaveBeenCalled();
     });
   });
 

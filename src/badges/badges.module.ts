@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { SuperAdminGuard } from '../auth/guards/super-admin.guard';
 import { CommunityProfile } from '../community/entities/community-profile.entity';
+import { ProStatusModule } from '../pro-status/pro-status.module';
 import { UsersModule } from '../users/users.module';
 import { AdminBadgesController, BadgesController } from './badges.controller';
 import { BadgesListener } from './badges.listener';
@@ -20,6 +21,7 @@ import { UserBadge } from './entities/user-badge.entity';
       CommunityProfile,
     ]),
     UsersModule,
+    ProStatusModule,
   ],
   controllers: [BadgesController, AdminBadgesController],
   providers: [BadgesService, BadgesListener, BadgesSeed, SuperAdminGuard],

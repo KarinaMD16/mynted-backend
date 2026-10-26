@@ -9,6 +9,7 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { DataSource, QueryFailedError, Repository } from 'typeorm';
+import { ProStatusService } from '../pro-status/pro-status.service';
 import { CommunityProfile } from '../community/entities/community-profile.entity';
 import { CommunityProfileRole } from '../community/entities/community-profile.entity';
 import { BadgeAwardedEvent, BadgeAwardEvents } from './badge-events';
@@ -62,6 +63,7 @@ export class BadgesService {
     @InjectRepository(CommunityProfile)
     private readonly communityProfileRepository: Repository<CommunityProfile>,
     private readonly dataSource: DataSource,
+    private readonly proStatusService: ProStatusService,
     @Optional() private readonly eventEmitter?: EventEmitter2,
   ) {}
 
@@ -549,16 +551,27 @@ export class BadgesService {
     );
   }
 
+  // Badges ganados + el derivado pro (derived: true y awardedAt: null) mientras
+  // la suscripción Pro esté vigente.
   async findUserBadges(userId: string): Promise<BadgeItem[]> {
-    const rows = await this.userBadgeRepository.find({
-      where: { userId },
-      relations: { badge: true },
-    });
-    return this.sort(
-      rows
-        .filter((row) => row.badge.isActive)
-        .map((row) => this.toItem(row.badge, row.awardedAt, false)),
-    );
+    const [rows, isPro] = await Promise.all([
+      this.userBadgeRepository.find({
+        where: { userId },
+        relations: { badge: true },
+      }),
+      this.proStatusService.isPro(userId),
+    ]);
+    const items = rows
+      .filter((row) => row.badge.isActive)
+      .map((row) => this.toItem(row.badge, row.awardedAt, false));
+
+    if (isPro) {
+      const proBadge = await this.badgeRepository.findOne({
+        where: { code: BADGE_CODES.PRO, isActive: true },
+      });
+      if (proBadge) items.push(this.toItem(proBadge, null, true));
+    }
+    return this.sort(items);
   }
 
   // Badges ganados + derivados del rol (community_founder / moderator, con

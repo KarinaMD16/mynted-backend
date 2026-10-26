@@ -9,6 +9,8 @@ export const BADGE_CODES = {
   SUCCESSFUL_EXCHANGE: 'successful_exchange',
   FOUNDING_MEMBER: 'founding_member',
   ANNIVERSARY: 'anniversary',
+  // Derivado de la suscripción Pro vigente (nunca se otorga ni se guarda).
+  PRO: 'pro',
   // scope community
   FIRST_POST: 'first_post',
   TALKATIVE: 'talkative',
@@ -19,12 +21,14 @@ export const BADGE_CODES = {
   MODERATOR: 'moderator',
 } as const;
 
-// Badges derivados del rol del communityProfile: existen en el catálogo pero
-// NO se guardan en tablas intermedias (se calcularían desincronizados al
-// cambiar el rol). owner -> community_founder, moderator -> moderator.
+// Badges derivados: existen en el catálogo pero NO se guardan en tablas
+// intermedias (se calcularían desincronizados al cambiar su origen).
+// owner -> community_founder y moderator -> moderator (rol del communityProfile);
+// pro -> suscripción Pro vigente (aparece y desaparece con ends_at).
 export const DERIVED_BADGE_CODES: ReadonlySet<string> = new Set([
   BADGE_CODES.COMMUNITY_FOUNDER,
   BADGE_CODES.MODERATOR,
+  BADGE_CODES.PRO,
 ]);
 
 export interface BadgeDefinition {
@@ -89,6 +93,16 @@ export const BASE_BADGES: BadgeDefinition[] = [
     rarity: BadgeRarity.RARE,
     metric: BadgeMetric.ACCOUNT_AGE_DAYS,
     threshold: 365,
+  },
+  {
+    // Derivado de la suscripción: visible mientras ends_at > now().
+    code: BADGE_CODES.PRO,
+    name: 'Pro',
+    description: 'Tiene Mynted Pro activo.',
+    scope: BadgeScope.USER,
+    rarity: BadgeRarity.EPIC,
+    metric: null,
+    threshold: null,
   },
   // ---- scope community
   {
