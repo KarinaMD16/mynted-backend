@@ -16,7 +16,7 @@ import {
 } from './dto/review.dto';
 import { PaymentTransaction } from '../payments/entities/payment-transaction.entity';
 import { TransactionStatus } from '../payments/enums/transaction-status.enum';
-import { Product, ProductType } from './entities/product.entity';
+import { Product, ProductStatus, ProductType } from './entities/product.entity';
 import { Review } from './entities/review.entity';
 import { ReviewCreatedEvent, ReviewEvents } from './review-events';
 
@@ -72,7 +72,7 @@ export class ReviewsService {
   // Orden: 404 producto, 403 dueño, 403 intercambio, 403 sin compra, 409
   // duplicado.
   async create(productId: number, userId: string, dto: CreateReviewDto) {
-    const product = await this.getReviewableProduct(productId);
+    const product = await this.getReviewableProduct(productId, userId);
 
     const ineligibility = await this.getReviewIneligibility(product, userId);
     if (ineligibility) throw INELIGIBILITY_ERRORS[ineligibility]();
@@ -142,6 +142,8 @@ export class ReviewsService {
     return (await this.getReviewIneligibility(product, viewerId)) === null;
   }
 
+  // Solo cuentan pagos completados: pending, failed y refunded no habilitan
+  // una reseña nueva (una reseña ya hecha sí se conserva tras un reembolso).
   hasCompletedPurchase(productId: number, userId: string): Promise<boolean> {
     return this.transactionRepository.existsBy({
       productId,
@@ -155,7 +157,7 @@ export class ReviewsService {
     query: GetReviewsQueryDto,
     viewerId: string | undefined,
   ) {
-    await this.getReviewableProduct(productId);
+    await this.getReviewableProduct(productId, viewerId);
 
     const [reviews, total] = await this.reviewRepository.findAndCount({
       where: { productId },
@@ -173,7 +175,7 @@ export class ReviewsService {
         page: query.page,
         limit: query.limit,
         total,
-        totalPages: Math.ceil(total / query.limit),
+        totalPages: Math.max(1, Math.ceil(total / query.limit)),
       },
     };
   }
@@ -213,18 +215,42 @@ export class ReviewsService {
     };
   }
 
-  private async getReviewableProduct(productId: number): Promise<Product> {
+  // Producto sobre el que se reseña o se listan reseñas.
+  // - Un borrador solo existe para su dueño (404 para los demás).
+  // - Un producto borrado (soft delete) sigue disponible, para reseñar y ver
+  //   sus reseñas, solo para quien tiene una compra completada de él; sin
+  //   compra o sin sesión es 404.
+  // - Agotado (sold) no se restringe: justamente lo compraron.
+  private async getReviewableProduct(
+    productId: number,
+    viewerId?: string,
+  ): Promise<Product> {
     const product = await this.productRepository.findOne({
       where: { id: productId },
+      withDeleted: true,
       relations: { seller: true },
       select: {
         id: true,
         status: true,
         type: true,
+        deletedAt: true,
         seller: { sellerId: true, userId: true },
       },
     });
     if (!product) throw new NotFoundException('Producto no encontrado');
+
+    if (
+      product.status === ProductStatus.DRAFT &&
+      product.seller.userId !== viewerId
+    ) {
+      throw new NotFoundException('Producto no encontrado');
+    }
+    if (
+      product.deletedAt &&
+      !(viewerId && (await this.hasCompletedPurchase(product.id, viewerId)))
+    ) {
+      throw new NotFoundException('Producto no encontrado');
+    }
     return product;
   }
 

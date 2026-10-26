@@ -9,8 +9,13 @@ import {
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
-const trimOrUndefined = ({ value }: TransformFnParams): unknown =>
-  typeof value === 'string' ? value.trim() : (value as unknown);
+// Un comentario vacío o de solo espacios se guarda como null; null (o
+// undefined) se respeta tal cual.
+const trimToNull = ({ value }: TransformFnParams): unknown => {
+  if (typeof value !== 'string') return value as unknown;
+  const trimmed = value.trim();
+  return trimmed === '' ? null : trimmed;
+};
 
 export class CreateReviewDto {
   @ApiProperty({ type: Number, minimum: 1, maximum: 5, example: 5 })
@@ -23,12 +28,14 @@ export class CreateReviewDto {
   @ApiPropertyOptional({
     example: 'Llegó en perfecto estado, muy buen vendedor',
     maxLength: 1000,
+    nullable: true,
+    description: 'Opcional. Vacío o solo espacios se guarda como null',
   })
-  @Transform(trimOrUndefined)
+  @Transform(trimToNull)
   @IsOptional()
   @IsString()
   @MaxLength(1000)
-  comment?: string;
+  comment?: string | null;
 }
 
 export class UpdateReviewDto {
@@ -40,12 +47,18 @@ export class UpdateReviewDto {
   @Max(5, { message: 'rating debe ser un entero entre 1 y 5' })
   rating?: number;
 
-  @ApiPropertyOptional({ example: 'Actualicé mi opinión', maxLength: 1000 })
-  @Transform(trimOrUndefined)
+  @ApiPropertyOptional({
+    example: 'Actualicé mi opinión',
+    maxLength: 1000,
+    nullable: true,
+    description:
+      'null (o vacío / solo espacios) borra el comentario; si se omite no cambia',
+  })
+  @Transform(trimToNull)
   @IsOptional()
   @IsString()
   @MaxLength(1000)
-  comment?: string;
+  comment?: string | null;
 }
 
 export class GetReviewsQueryDto {
