@@ -24,6 +24,8 @@ import { Product } from '../products/entities/product.entity';
 import { Review } from '../products/entities/review.entity';
 import { escapeLike } from '../common/escape-like';
 import { PublicSellerDto, PublicUserDto } from './dto/public-user.dto';
+import { CosmeticsService } from '../cosmetics/cosmetics.service';
+import { EffectiveCosmetics } from '../cosmetics/cosmetic-resolve';
 import { ProStatusService } from '../pro-status/pro-status.service';
 import { ResponseTimeService } from '../response-time/response-time.service';
 import { SearchUsersQueryDto } from './dto/search-users-query.dto';
@@ -44,6 +46,7 @@ export class UsersService {
     private readonly sellersRepository: Repository<Seller>,
     private readonly responseTimeService: ResponseTimeService,
     private readonly proStatusService: ProStatusService,
+    private readonly cosmeticsService: CosmeticsService,
     @Optional() private readonly eventEmitter?: EventEmitter2,
   ) {}
 
@@ -82,9 +85,13 @@ export class UsersService {
   // GET /users/me: la entidad completa (mismos campos de siempre) más isPro y
   // el objeto seller si es vendedor aprobado. Se agrega sobre la instancia
   // para que el serializador siga ocultando los campos @Exclude.
-  async findMe(
-    id: string,
-  ): Promise<User & { isPro: boolean; seller?: PublicSellerDto }> {
+  async findMe(id: string): Promise<
+    User & {
+      isPro: boolean;
+      cosmetics: EffectiveCosmetics;
+      seller?: PublicSellerDto;
+    }
+  > {
     const user = await this.findById(id);
     const [seller, isPro] = await Promise.all([
       this.sellersRepository.findOne({
@@ -92,9 +99,15 @@ export class UsersService {
       }),
       this.proStatusService.isPro(id),
     ]);
-    if (!seller) return Object.assign(user, { isPro });
+    const cosmetics = (
+      await this.cosmeticsService.getEffectiveForUsers(
+        [id],
+        new Set(isPro ? [id] : []),
+      )
+    ).get(id)!;
+    if (!seller) return Object.assign(user, { isPro, cosmetics });
     const [publicSeller] = await this.toPublicSellers([seller]);
-    return Object.assign(user, { isPro, seller: publicSeller });
+    return Object.assign(user, { isPro, cosmetics, seller: publicSeller });
   }
 
   // Perfil público por id. Las cuentas desactivadas se tratan como inexistentes.
@@ -148,9 +161,11 @@ export class UsersService {
         })
       : [];
     // Una consulta para todos los usuarios de la lista, no una por usuario.
-    const [publicSellers, proUserIds] = await Promise.all([
+    const userIds = users.map((user) => user.id);
+    const proUserIds = await this.proStatusService.proUserIds(userIds);
+    const [publicSellers, cosmeticsByUser] = await Promise.all([
       this.toPublicSellers(sellers),
-      this.proStatusService.proUserIds(users.map((user) => user.id)),
+      this.cosmeticsService.getEffectiveForUsers(userIds, proUserIds),
     ]);
     const sellerByUserId = new Map(
       sellers.map((seller, index) => [seller.userId, publicSellers[index]]),
@@ -167,6 +182,7 @@ export class UsersService {
         role: user.role,
         createdAt: user.createdAt,
         isPro: proUserIds.has(user.id),
+        cosmetics: cosmeticsByUser.get(user.id)!,
         ...(seller ? { seller } : {}),
       };
     });

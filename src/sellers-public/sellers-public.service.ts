@@ -11,6 +11,7 @@ import {
   ProductListItem,
   ProductsService,
 } from '../products/products.service';
+import { CosmeticsService } from '../cosmetics/cosmetics.service';
 import { ProStatusService } from '../pro-status/pro-status.service';
 import { ResponseTimeService } from '../response-time/response-time.service';
 import { Seller } from '../sellers/entities/seller.entity';
@@ -38,18 +39,25 @@ export class SellersPublicService {
     private readonly productsService: ProductsService,
     private readonly responseTimeService: ResponseTimeService,
     private readonly proStatusService: ProStatusService,
+    private readonly cosmeticsService: CosmeticsService,
   ) {}
 
   async getStore(sellerId: number): Promise<SellerStoreDto> {
     const seller = await this.findPublicSeller(sellerId);
-    const [ratings, productCounts, sellerSince, responseTime, isPro] =
+    const [ratings, productCounts, sellerSince, responseTime, proUserIds] =
       await Promise.all([
         this.usersService.getSellerRatings([seller.sellerId]),
         this.productsService.countPublicBySeller([seller.sellerId]),
         this.getSellerSince(seller),
         this.responseTimeService.getForUser(seller.userId),
-        this.proStatusService.isPro(seller.userId),
+        this.proStatusService.proUserIds([seller.userId]),
       ]);
+    const cosmetics = (
+      await this.cosmeticsService.getEffectiveForUsers(
+        [seller.userId],
+        proUserIds,
+      )
+    ).get(seller.userId)!;
     const rating = ratings.get(seller.sellerId);
 
     return {
@@ -59,9 +67,10 @@ export class SellersPublicService {
       description: seller.description,
       location: this.storeLocation(seller),
       photoUrl: seller.user.photoUrl ?? null,
-      bannerUrl: null,
+      bannerUrl: cosmetics.banner.url,
+      cosmetics,
       isVerified: seller.isVerified,
-      isPro,
+      isPro: proUserIds.has(seller.userId),
       ratingAverage: rating?.ratingAverage ?? null,
       reviewsCount: rating?.reviewsCount ?? 0,
       completedSalesCount: seller.completedSalesCount,

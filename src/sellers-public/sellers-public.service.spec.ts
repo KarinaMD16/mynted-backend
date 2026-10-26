@@ -4,12 +4,25 @@ import { UserBadge } from '../badges/entities/user-badge.entity';
 import { ProductSort } from '../products/dto/product-price-query.dto';
 import { ProductStatus } from '../products/entities/product.entity';
 import { ProductsService } from '../products/products.service';
+import { CosmeticsService } from '../cosmetics/cosmetics.service';
 import { ProStatusService } from '../pro-status/pro-status.service';
 import { ResponseTimeService } from '../response-time/response-time.service';
 import { Seller } from '../sellers/entities/seller.entity';
 import { UsersService } from '../users/users.service';
 import { GetSellerProductsQueryDto } from './dto/get-seller-products-query.dto';
 import { SellersPublicService } from './sellers-public.service';
+
+const DEFAULT_COSMETICS = {
+  banner: {
+    source: 'default',
+    code: 'banner_default',
+    url: null,
+    staticUrl: null,
+    isAnimated: false,
+  },
+  gooseSkin: { code: 'goose_default', assetUrl: null },
+  frame: { code: 'frame_default', assetUrl: null },
+};
 
 describe('SellersPublicService', () => {
   const approvedAt = new Date('2026-09-01T12:00:00Z');
@@ -39,6 +52,7 @@ describe('SellersPublicService', () => {
   let userBadgeRepository: { findOne: jest.Mock };
   let usersService: { getSellerRatings: jest.Mock };
   let proStatusService: { isPro: jest.Mock; proUserIds: jest.Mock };
+  let cosmeticsService: { getEffectiveForUsers: jest.Mock };
   let productsService: {
     countPublicBySeller: jest.Mock;
     findSellerTags: jest.Mock;
@@ -53,6 +67,11 @@ describe('SellersPublicService', () => {
         .mockResolvedValue({ medianMinutes: 20, sampleSize: 3 }),
     };
     userBadgeRepository = { findOne: jest.fn().mockResolvedValue(null) };
+    cosmeticsService = {
+      getEffectiveForUsers: jest
+        .fn()
+        .mockResolvedValue(new Map([['user-4', DEFAULT_COSMETICS]])),
+    };
     proStatusService = {
       isPro: jest.fn().mockResolvedValue(false),
       proUserIds: jest.fn().mockResolvedValue(new Set<string>()),
@@ -78,6 +97,7 @@ describe('SellersPublicService', () => {
       productsService as unknown as ProductsService,
       responseTimeService as unknown as ResponseTimeService,
       proStatusService as unknown as ProStatusService,
+      cosmeticsService as unknown as CosmeticsService,
     );
   });
 
@@ -91,6 +111,7 @@ describe('SellersPublicService', () => {
         location: 'San José',
         photoUrl: 'https://cdn/a.png',
         bannerUrl: null,
+        cosmetics: DEFAULT_COSMETICS,
         isVerified: true,
         isPro: false,
         ratingAverage: 4.7,
@@ -107,10 +128,38 @@ describe('SellersPublicService', () => {
     });
 
     it('isPro es true si el dueño de la tienda tiene Pro vigente', async () => {
-      proStatusService.isPro.mockResolvedValue(true);
+      proStatusService.proUserIds.mockResolvedValue(new Set(['user-4']));
 
       await expect(service.getStore(4)).resolves.toMatchObject({ isPro: true });
-      expect(proStatusService.isPro).toHaveBeenCalledWith('user-4');
+      expect(proStatusService.proUserIds).toHaveBeenCalledWith(['user-4']);
+    });
+
+    it('bannerUrl es el banner efectivo del dueño y cosmetics trae el resto', async () => {
+      const custom = {
+        banner: {
+          source: 'custom',
+          code: null,
+          url: 'https://res.cloudinary.com/x/image/upload/v1/banner.gif',
+          staticUrl: 'https://res.cloudinary.com/x/image/upload/v1/banner.jpg',
+          isAnimated: true,
+        },
+        gooseSkin: { code: 'goose_ninja', assetUrl: null },
+        frame: { code: 'frame_default', assetUrl: null },
+      };
+      const pro = new Set(['user-4']);
+      proStatusService.proUserIds.mockResolvedValue(pro);
+      cosmeticsService.getEffectiveForUsers.mockResolvedValue(
+        new Map([['user-4', custom]]),
+      );
+
+      await expect(service.getStore(4)).resolves.toMatchObject({
+        bannerUrl: custom.banner.url,
+        cosmetics: custom,
+      });
+      expect(cosmeticsService.getEffectiveForUsers).toHaveBeenCalledWith(
+        ['user-4'],
+        pro,
+      );
     });
 
     it('solo busca vendedores aprobados con cuenta activa', async () => {

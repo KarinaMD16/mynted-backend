@@ -87,6 +87,7 @@ describe('Rating del vendedor (e2e)', () => {
       repo(Seller),
       {} as ResponseTimeService,
       {} as ProStatusService,
+      {} as never,
     );
     reputationService = new ReputationService(
       repo(User),

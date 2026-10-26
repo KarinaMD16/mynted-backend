@@ -1,12 +1,25 @@
 import { ForbiddenException } from '@nestjs/common';
 import { Repository } from 'typeorm';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
+import { CosmeticsService } from '../cosmetics/cosmetics.service';
 import { ProStatusService } from '../pro-status/pro-status.service';
 import { ResponseTimeService } from '../response-time/response-time.service';
 import { Seller } from '../sellers/entities/seller.entity';
 import { UserOAuthAccount } from './entities/user-oauth-account.entity';
 import { User } from './entities/user.entity';
 import { UsersService } from './users.service';
+
+const DEFAULT_COSMETICS = {
+  banner: {
+    source: 'default',
+    code: 'banner_default',
+    url: null,
+    staticUrl: null,
+    isAnimated: false,
+  },
+  gooseSkin: { code: 'goose_default', assetUrl: null },
+  frame: { code: 'frame_default', assetUrl: null },
+};
 
 describe('UsersService', () => {
   let service: UsersService;
@@ -17,6 +30,7 @@ describe('UsersService', () => {
   let cloudinaryService: { uploadImage: jest.Mock };
   let responseTimeService: { getForUsers: jest.Mock };
   let proStatusService: { proUserIds: jest.Mock; isPro: jest.Mock };
+  let cosmeticsService: { getEffectiveForUsers: jest.Mock };
 
   beforeEach(() => {
     usersRepository = {
@@ -24,6 +38,11 @@ describe('UsersService', () => {
       save: jest.fn((user: User) => Promise.resolve(user)),
     };
     cloudinaryService = { uploadImage: jest.fn() };
+    cosmeticsService = {
+      getEffectiveForUsers: jest.fn((ids: string[]) =>
+        Promise.resolve(new Map(ids.map((id) => [id, DEFAULT_COSMETICS]))),
+      ),
+    };
     proStatusService = {
       proUserIds: jest.fn().mockResolvedValue(new Set<string>()),
       isPro: jest.fn().mockResolvedValue(false),
@@ -43,6 +62,7 @@ describe('UsersService', () => {
       {} as Repository<Seller>,
       responseTimeService as unknown as ResponseTimeService,
       proStatusService as unknown as ProStatusService,
+      cosmeticsService as unknown as CosmeticsService,
     );
   });
 
@@ -66,6 +86,7 @@ describe('UsersService', () => {
         sellersRepository as unknown as Repository<Seller>,
         responseTimeService as unknown as ResponseTimeService,
         proStatusService as unknown as ProStatusService,
+        cosmeticsService as unknown as CosmeticsService,
       );
       jest
         .spyOn(publicService, 'getSellerRatings')
@@ -130,6 +151,38 @@ describe('UsersService', () => {
         'otro-id',
         'tercero-id',
       ]);
+    });
+
+    it('agrega los cosméticos efectivos con una consulta para toda la lista, reutilizando el lote Pro', async () => {
+      const { publicService } = build([approvedSeller]);
+      const pro = new Set(['otro-id']);
+      proStatusService.proUserIds.mockResolvedValue(pro);
+      const custom = {
+        ...DEFAULT_COSMETICS,
+        banner: { ...DEFAULT_COSMETICS.banner, source: 'custom' },
+      };
+      cosmeticsService.getEffectiveForUsers.mockResolvedValue(
+        new Map([
+          ['seller-id', DEFAULT_COSMETICS],
+          ['otro-id', custom],
+        ]),
+      );
+
+      const result = await publicService.toPublicUsers([
+        { id: 'seller-id', username: 'karina' } as User,
+        { id: 'otro-id', username: 'otro' } as User,
+      ]);
+
+      expect(result.map((user) => user.cosmetics)).toEqual([
+        DEFAULT_COSMETICS,
+        custom,
+      ]);
+      expect(cosmeticsService.getEffectiveForUsers).toHaveBeenCalledTimes(1);
+      expect(cosmeticsService.getEffectiveForUsers).toHaveBeenCalledWith(
+        ['seller-id', 'otro-id'],
+        pro,
+      );
+      expect(proStatusService.proUserIds).toHaveBeenCalledTimes(1);
     });
 
     it('un solicitante pendiente o rechazado sale sin objeto seller', async () => {
@@ -216,6 +269,7 @@ describe('UsersService', () => {
         sellersRepository as unknown as Repository<Seller>,
         responseTimeService as unknown as ResponseTimeService,
         proStatusService as unknown as ProStatusService,
+        cosmeticsService as unknown as CosmeticsService,
       );
       jest.spyOn(meService, 'getSellerRatings').mockResolvedValue(new Map());
 
@@ -251,6 +305,7 @@ describe('UsersService', () => {
         } as unknown as Repository<Seller>,
         responseTimeService as unknown as ResponseTimeService,
         proStatusService as unknown as ProStatusService,
+        cosmeticsService as unknown as CosmeticsService,
       );
 
       const me = await meService.findMe('pro-id');
@@ -258,6 +313,32 @@ describe('UsersService', () => {
       expect(me).toBeInstanceOf(User);
       expect(me.isPro).toBe(true);
       expect(proStatusService.isPro).toHaveBeenCalledWith('pro-id');
+    });
+
+    it('agrega los cosméticos efectivos a la entidad', async () => {
+      const user = Object.assign(new User(), { id: 'pro-id' });
+      usersRepository.findOne.mockResolvedValue(user);
+      proStatusService.isPro.mockResolvedValue(true);
+      const meService = new UsersService(
+        usersRepository as unknown as Repository<User>,
+        {} as Repository<UserOAuthAccount>,
+        cloudinaryService as unknown as CloudinaryService,
+        {
+          findOne: jest.fn().mockResolvedValue(null),
+        } as unknown as Repository<Seller>,
+        responseTimeService as unknown as ResponseTimeService,
+        proStatusService as unknown as ProStatusService,
+        cosmeticsService as unknown as CosmeticsService,
+      );
+
+      const me = await meService.findMe('pro-id');
+
+      expect(me.cosmetics).toEqual(DEFAULT_COSMETICS);
+      // El usuario Pro se pasa ya resuelto: no se vuelve a consultar.
+      expect(cosmeticsService.getEffectiveForUsers).toHaveBeenCalledWith(
+        ['pro-id'],
+        new Set(['pro-id']),
+      );
     });
 
     it('sin tienda aprobada devuelve la entidad sin objeto seller', async () => {
@@ -272,6 +353,7 @@ describe('UsersService', () => {
         } as unknown as Repository<Seller>,
         responseTimeService as unknown as ResponseTimeService,
         proStatusService as unknown as ProStatusService,
+        cosmeticsService as unknown as CosmeticsService,
       );
 
       const me = await meService.findMe('buyer-id');
@@ -310,6 +392,7 @@ describe('UsersService', () => {
         sellersRepository as unknown as Repository<Seller>,
         responseTimeService as unknown as ResponseTimeService,
         proStatusService as unknown as ProStatusService,
+        cosmeticsService as unknown as CosmeticsService,
       );
       return { ratingsService, qb };
     };

@@ -354,6 +354,17 @@ describe('Tienda pública del vendedor (e2e)', () => {
         location: 'San José',
         photoUrl: 'https://cdn/karina.png',
         bannerUrl: null,
+        cosmetics: {
+          banner: {
+            source: 'default',
+            code: 'banner_default',
+            url: null,
+            staticUrl: null,
+            isAnimated: false,
+          },
+          gooseSkin: { code: 'goose_default', assetUrl: null },
+          frame: { code: 'frame_default', assetUrl: null },
+        },
         isVerified: true,
         isPro: false,
         ratingAverage: 5,

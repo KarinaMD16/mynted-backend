@@ -1,4 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { EffectiveCosmeticsDto } from '../../cosmetics/dto/cosmetics-response.dto';
 import { ResponseTimeDto } from '../../response-time/response-time.dto';
 
 // Perfil público de la tienda. Nunca incluye payment_info ni el correo.
@@ -34,9 +35,17 @@ export class SellerStoreDto {
     type: String,
     nullable: true,
     example: null,
-    description: 'Siempre null por ahora (pendiente)',
+    description:
+      'Banner efectivo del dueño de la tienda (el propio si es Pro, o el del catálogo). null si el recurso se mapea por cosmetics.banner.code',
   })
   bannerUrl!: string | null;
+
+  @ApiProperty({
+    type: EffectiveCosmeticsDto,
+    description:
+      'Cosméticos que se aplican ahora al dueño. Sin Pro vigente son los valores por defecto',
+  })
+  cosmetics!: EffectiveCosmeticsDto;
 
   @ApiProperty({ example: true })
   isVerified!: boolean;
