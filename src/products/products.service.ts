@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -55,6 +56,15 @@ import { ProductTag } from './entities/product-tag.entity';
 import { ProductImage } from './entities/product-image.entity';
 import { ProductRelated } from './entities/product-related.entity';
 import { ProductView } from './entities/product-view.entity';
+import {
+  MAX_FEATURED_PER_SELLER,
+  cappedFeaturedCondition,
+  effectiveFeaturedCondition,
+} from './featured-products';
+import {
+  FeaturedProductResponseDto,
+  FeaturedSummaryDto,
+} from './dto/featured-product.dto';
 import {
   PUBLIC_COMMUNITY_ALTERNATIVES,
   PUBLIC_PRODUCT_WHERE,
@@ -1369,6 +1379,139 @@ export class ProductsService {
     await this.productRepository.softDelete(id);
     product.deletedAt = new Date();
     this.emitFavoriteChanges(product, before, userId);
+  }
+
+  // ---------------------------------------------------------------------
+  // Destacados (Pro)
+  // ---------------------------------------------------------------------
+
+  // Marca el producto como destacado. Solo el dueño (404 si no existe o no es
+  // suyo), vendedor aprobado con Pro vigente (403), producto activo (409) y
+  // con menos de MAX_FEATURED_PER_SELLER destacados efectivos (409). Es
+  // idempotente: si ya estaba marcado responde igual sin tocar featured_at.
+  async setFeatured(
+    id: number,
+    userId: string,
+  ): Promise<FeaturedProductResponseDto> {
+    const product = await this.findOwnProductForFeatured(id, userId);
+
+    if (!product.seller.isVerified) {
+      throw new ForbiddenException('Requiere ser un vendedor aprobado');
+    }
+    if (!(await this.proStatusService.isPro(userId))) {
+      throw new ForbiddenException(
+        'Destacar productos es exclusivo de Mynted Pro',
+      );
+    }
+    if (product.featuredAt)
+      return this.toFeaturedResponse(id, product.featuredAt);
+    if (product.status !== ProductStatus.ACTIVE) {
+      throw new ConflictException('Solo se pueden destacar productos activos');
+    }
+
+    const featuredAt = await this.dataSource.transaction(async (manager) => {
+      // Serializa los cambios de destacados del mismo vendedor: dos PUT
+      // simultáneos no pueden pasarse del tope.
+      await manager.query(
+        'SELECT pg_advisory_xact_lock(hashtext($1), $2::int)',
+        ['featured', product.sellerId],
+      );
+      const [{ count }] = await manager.query<{ count: number }[]>(
+        `SELECT COUNT(*)::int AS count FROM product
+          WHERE seller_id = $1 AND ${effectiveFeaturedCondition('product')}`,
+        [product.sellerId],
+      );
+      if (count >= MAX_FEATURED_PER_SELLER) {
+        throw new ConflictException(
+          `Ya tienes ${MAX_FEATURED_PER_SELLER} productos destacados. Quita uno para destacar otro`,
+        );
+      }
+      const rows = await manager.query<{ featured_at: Date }[]>(
+        `UPDATE product SET featured_at = now()
+          WHERE id = $1 AND featured_at IS NULL
+      RETURNING featured_at`,
+        [id],
+      );
+      // Otra petición lo marcó entre medias: se conserva su fecha.
+      if (rows.length > 0) return rows[0].featured_at;
+      const [current] = await manager.query<{ featured_at: Date }[]>(
+        'SELECT featured_at FROM product WHERE id = $1',
+        [id],
+      );
+      return current.featured_at;
+    });
+
+    return this.toFeaturedResponse(id, featuredAt);
+  }
+
+  // Quita la preferencia. Solo el dueño; idempotente y sin exigir Pro (se
+  // puede limpiar aunque haya vencido).
+  async unsetFeatured(id: number, userId: string): Promise<void> {
+    await this.findOwnProductForFeatured(id, userId);
+    await this.dataSource.query(
+      'UPDATE product SET featured_at = NULL WHERE id = $1',
+      [id],
+    );
+  }
+
+  // Cuántos destacados efectivos tiene el vendedor (con el recorte al tope).
+  async getFeaturedSummary(userId: string): Promise<FeaturedSummaryDto> {
+    const seller = await this.getSellerOrFail(userId);
+    const [{ count }] = await this.dataSource.query<{ count: number }[]>(
+      `SELECT COUNT(*)::int AS count FROM product
+        WHERE seller_id = $1 AND ${cappedFeaturedCondition('product')}`,
+      [seller.sellerId],
+    );
+    const used = Math.min(count, MAX_FEATURED_PER_SELLER);
+    return {
+      limit: MAX_FEATURED_PER_SELLER,
+      used,
+      remaining: MAX_FEATURED_PER_SELLER - used,
+    };
+  }
+
+  // De entre estos ids, los que se elevan de verdad ahora (con el recorte al
+  // tope por vendedor). Una consulta para toda la lista.
+  async findEffectiveFeaturedIds(ids: number[]): Promise<Set<number>> {
+    if (ids.length === 0) return new Set();
+    const rows = await this.dataSource.query<{ id: number }[]>(
+      `SELECT product.id FROM product
+        WHERE product.id = ANY($1::int[]) AND ${cappedFeaturedCondition('product')}`,
+      [ids],
+    );
+    return new Set(rows.map((row) => row.id));
+  }
+
+  // 404 tanto si no existe como si es de otro vendedor: no se revela cuál.
+  private async findOwnProductForFeatured(id: number, userId: string) {
+    const product = await this.productRepository.findOne({
+      where: { id },
+      relations: { seller: true },
+      select: {
+        id: true,
+        status: true,
+        sellerId: true,
+        featuredAt: true,
+        seller: { sellerId: true, userId: true, isVerified: true },
+      },
+    });
+    if (!product || product.seller.userId !== userId) {
+      throw new NotFoundException('Producto no encontrado');
+    }
+    return product;
+  }
+
+  private async toFeaturedResponse(
+    id: number,
+    featuredAt: Date,
+  ): Promise<FeaturedProductResponseDto> {
+    const effective = await this.findEffectiveFeaturedIds([id]);
+    return {
+      productId: id,
+      featuredEnabled: true,
+      isFeatured: effective.has(id),
+      featuredAt,
+    };
   }
 
   // quantity 0 deja agotado (active -> sold); reponer stock lo reactiva
