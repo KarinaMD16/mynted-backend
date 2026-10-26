@@ -226,4 +226,91 @@ describe('UsersService', () => {
       expect(responseTimeService.getForUsers).not.toHaveBeenCalled();
     });
   });
+  // El alcance de las reseñas del vendedor (productos borrados incluidos,
+  // solo vendedores aprobados) se prueba con datos reales en
+  // test/seller-rating.e2e-spec.ts; aquí se fija cómo se arma la consulta.
+  describe('reseñas del vendedor (rating y distribución)', () => {
+    const build = (rows: unknown[]) => {
+      const qb: Record<string, jest.Mock> = {};
+      for (const method of [
+        'select',
+        'addSelect',
+        'from',
+        'withDeleted',
+        'innerJoin',
+        'where',
+        'groupBy',
+      ]) {
+        qb[method] = jest.fn().mockReturnValue(qb);
+      }
+      qb.getRawMany = jest.fn().mockResolvedValue(rows);
+      const sellersRepository = {
+        manager: { createQueryBuilder: jest.fn().mockReturnValue(qb) },
+      };
+      const ratingsService = new UsersService(
+        usersRepository as unknown as Repository<User>,
+        {} as Repository<UserOAuthAccount>,
+        cloudinaryService as unknown as CloudinaryService,
+        sellersRepository as unknown as Repository<Seller>,
+        responseTimeService as unknown as ResponseTimeService,
+      );
+      return { ratingsService, qb };
+    };
+
+    it('getSellerRatings incluye productos borrados y mantiene el filtro de vendedor aprobado', async () => {
+      const { ratingsService, qb } = build([
+        { sellerId: 7, average: '4.3', count: '3' },
+      ]);
+
+      await expect(ratingsService.getSellerRatings([7, 8])).resolves.toEqual(
+        new Map([[7, { ratingAverage: 4.3, reviewsCount: 3 }]]),
+      );
+
+      expect(qb.withDeleted).toHaveBeenCalledTimes(1);
+      expect(qb.innerJoin).toHaveBeenCalledWith(
+        Seller,
+        'seller',
+        'seller.seller_id = product.seller_id AND seller.is_verified = true',
+      );
+      expect(qb.where).toHaveBeenCalledWith(
+        'product.seller_id IN (:...sellerIds)',
+        { sellerIds: [7, 8] },
+      );
+    });
+
+    it('getSellerRatings no consulta si no hay vendedores', async () => {
+      const { ratingsService, qb } = build([]);
+
+      await expect(ratingsService.getSellerRatings([])).resolves.toEqual(
+        new Map(),
+      );
+      expect(qb.getRawMany).not.toHaveBeenCalled();
+    });
+
+    it('la distribución usa la misma consulta (borrados incluidos, solo aprobados)', async () => {
+      const { ratingsService, qb } = build([
+        { rating: 4, count: '2' },
+        { rating: 5, count: '1' },
+      ]);
+
+      await expect(
+        ratingsService.getSellerRatingDistribution(7),
+      ).resolves.toEqual(
+        new Map([
+          [4, 2],
+          [5, 1],
+        ]),
+      );
+
+      expect(qb.withDeleted).toHaveBeenCalledTimes(1);
+      expect(qb.innerJoin).toHaveBeenCalledWith(
+        Seller,
+        'seller',
+        'seller.seller_id = product.seller_id AND seller.is_verified = true',
+      );
+      expect(qb.where).toHaveBeenCalledWith('product.seller_id = :sellerId', {
+        sellerId: 7,
+      });
+    });
+  });
 });

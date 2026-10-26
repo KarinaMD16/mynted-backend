@@ -395,6 +395,8 @@ Reactivar un pausado: `PATCH /products/:id/status` `{ "status": "active" }`.
 
 Reputación de un usuario: `GET /profiles/:perfilId/reputation` (sin sesión) → `{ userId, isSeller, ratingAverage, reviewsCount, completedSalesCount, ratingDistribution{1..5}, badges[] }`. Si el usuario no es vendedor (o su solicitud está pendiente o fue rechazada): `isSeller: false`, `ratingAverage: null` y conteos en 0.
 
+**Rating del vendedor** (`ratingAverage` / `reviewsCount` en la tienda, el perfil, `seller` del detalle de producto, `GET /users/:id` y esta reputación, junto con `ratingDistribution`): es el promedio (1 decimal) y el total de las reseñas de **todos sus productos, también los que borró** (soft delete). Borrar un producto no cambia el rating del vendedor. Solo cuenta si el vendedor está aprobado; si no, `ratingAverage: null` y conteos en 0. El rating **de un producto** (`GET /products/:id` y `GET /products/:id/reviews`) sigue siendo solo el de sus propias reseñas, y un producto borrado ya no se puede abrir (404).
+
 ---
 
 ## 7. `isSaved` (favoritos)
