@@ -19,6 +19,7 @@ import { ConversationsModule } from './conversations/conversations.module';
 import { ReputationModule } from './reputation/reputation.module';
 import { SellersPublicModule } from './sellers-public/sellers-public.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { ReportsModule } from './reports/reports.module';
 
 @Module({
   imports: [
@@ -62,6 +63,7 @@ import { NotificationsModule } from './notifications/notifications.module';
     ReputationModule,
     SellersPublicModule,
     NotificationsModule,
+    ReportsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
