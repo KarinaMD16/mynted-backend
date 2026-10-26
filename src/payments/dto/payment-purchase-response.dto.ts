@@ -30,6 +30,13 @@ export class PaymentPurchaseItemDto {
   gatewayReference!: string | null;
 
   @ApiProperty({
+    example: false,
+    description:
+      'true si el vendedor borró el producto (soft delete). El detalle del producto da 404: no lo enlaces. La compra, el comprobante y la reseña siguen disponibles',
+  })
+  productDeleted!: boolean;
+
+  @ApiProperty({
     example: true,
     description:
       'true si el usuario puede reseñar este producto ahora (compra completada, sin reseña propia, no es el vendedor ni un producto de intercambio)',

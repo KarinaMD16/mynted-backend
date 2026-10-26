@@ -51,8 +51,12 @@ export class PaymentHistoryService {
     userId: string,
     query: PaymentHistoryQueryDto,
   ): Promise<PaymentPurchaseListResponseDto> {
+    // withDeleted: una compra de un producto que el vendedor borró (soft
+    // delete) sigue en el historial; solo el producto tiene deleted_at en
+    // estas uniones. productDeleted avisa al frontend.
     const qb = this.transactionRepository
       .createQueryBuilder('transaction')
+      .withDeleted()
       .innerJoin('transaction.product', 'product')
       .innerJoin('transaction.seller', 'seller')
       .select(this.baseTransactionSelect())
@@ -61,6 +65,7 @@ export class PaymentHistoryService {
         'product.title',
         'product.imageUrl',
         'product.type',
+        'product.deletedAt',
         'seller.sellerId',
         'seller.userId',
         'seller.displayName',
@@ -201,8 +206,11 @@ export class PaymentHistoryService {
     userId: string,
     transactionId: string,
   ): Promise<PaymentReceiptResponseDto> {
+    // withDeleted: el comprobante de una compra del historial sigue abriendo
+    // aunque el vendedor haya borrado el producto.
     const transaction = await this.transactionRepository
       .createQueryBuilder('transaction')
+      .withDeleted()
       .innerJoin('transaction.product', 'product')
       .innerJoin('transaction.seller', 'seller')
       .innerJoin('seller.user', 'sellerUser')
@@ -342,6 +350,8 @@ export class PaymentHistoryService {
       cardLast4: transaction.cardLast4,
       cardHolderName: transaction.cardHolderName ?? null,
       gatewayReference: transaction.gatewayReference,
+      // El detalle de un producto borrado da 404: el frontend no debe enlazarlo.
+      productDeleted: transaction.product.deletedAt != null,
       canReview,
       hasReviewed: reviewId !== null,
       reviewId,

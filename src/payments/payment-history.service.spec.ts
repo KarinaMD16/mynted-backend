@@ -34,6 +34,7 @@ describe('PaymentHistoryService', () => {
 
   const createHarness = () => {
     const qb = {
+      withDeleted: jest.fn().mockReturnThis(),
       innerJoin: jest.fn().mockReturnThis(),
       select: jest.fn().mockReturnThis(),
       addSelect: jest.fn().mockReturnThis(),
@@ -410,6 +411,111 @@ describe('PaymentHistoryService', () => {
       expect(h.qb.addSelect).toHaveBeenCalledWith(
         expect.arrayContaining(['product.type', 'seller.userId']),
       );
+    });
+  });
+  describe('purchases: productos borrados (soft delete)', () => {
+    const buyer = 'buyer-1';
+    const product = (overrides = {}) => ({
+      id: 10,
+      title: 'Producto',
+      imageUrl: null,
+      type: 'sale',
+      deletedAt: null,
+      ...overrides,
+    });
+
+    it('no excluye los productos borrados al consultar el historial', async () => {
+      const h = createHarness();
+
+      await h.service.purchases(buyer, { page: 1, limit: 10 });
+
+      expect(h.qb.withDeleted).toHaveBeenCalledTimes(1);
+      expect(h.qb.addSelect).toHaveBeenCalledWith(
+        expect.arrayContaining(['product.deletedAt']),
+      );
+      // Solo se piden los campos mínimos del producto.
+      const selected = h.qb.addSelect.mock.calls
+        .flatMap(([fields]: [string[]]) => fields)
+        .filter((field: string) => field.startsWith('product.'));
+      expect(selected).toEqual([
+        'product.id',
+        'product.title',
+        'product.imageUrl',
+        'product.type',
+        'product.deletedAt',
+      ]);
+    });
+
+    it('la compra de un producto borrado aparece con productDeleted true y canReview true', async () => {
+      const h = createHarness();
+      h.qb.getManyAndCount.mockResolvedValue([
+        [completed({ id: 'a', product: product({ deletedAt: new Date() }) })],
+        1,
+      ]);
+
+      const { data } = await h.service.purchases(buyer, { page: 1, limit: 10 });
+
+      expect(data).toHaveLength(1);
+      expect(data[0]).toMatchObject({
+        productDeleted: true,
+        canReview: true,
+        hasReviewed: false,
+        reviewId: null,
+      });
+    });
+
+    it('la compra de un producto activo tiene productDeleted false', async () => {
+      const h = createHarness();
+      h.qb.getManyAndCount.mockResolvedValue([[completed({ id: 'a' })], 1]);
+
+      const { data } = await h.service.purchases(buyer, { page: 1, limit: 10 });
+
+      expect(data[0]).toMatchObject({ productDeleted: false });
+    });
+
+    it('un producto borrado ya reseñado mantiene hasReviewed y reviewId y canReview false', async () => {
+      const h = createHarness();
+      h.reviewRepository.find.mockResolvedValue([{ id: 8, productId: 10 }]);
+      h.qb.getManyAndCount.mockResolvedValue([
+        [completed({ id: 'a', product: product({ deletedAt: new Date() }) })],
+        1,
+      ]);
+
+      const { data } = await h.service.purchases(buyer, { page: 1, limit: 10 });
+
+      expect(data[0]).toMatchObject({
+        productDeleted: true,
+        canReview: false,
+        hasReviewed: true,
+        reviewId: 8,
+      });
+    });
+
+    it('mezcla productos borrados y activos en la misma página', async () => {
+      const h = createHarness();
+      h.qb.getManyAndCount.mockResolvedValue([
+        [
+          completed({
+            id: 'a',
+            product: product({ id: 10, deletedAt: new Date() }),
+          }),
+          completed({ id: 'b', product: product({ id: 11 }) }),
+        ],
+        2,
+      ]);
+
+      const { data } = await h.service.purchases(buyer, { page: 1, limit: 10 });
+
+      expect(data.map((item) => item.productDeleted)).toEqual([true, false]);
+      expect(h.reviewRepository.find).toHaveBeenCalledTimes(1);
+    });
+
+    it('el comprobante también se puede abrir si el producto fue borrado', async () => {
+      const h = createHarness();
+
+      await h.service.receipt(buyer, 'tx-1');
+
+      expect(h.qb.withDeleted).toHaveBeenCalledTimes(1);
     });
   });
 });

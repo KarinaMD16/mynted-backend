@@ -633,8 +633,11 @@ Las compras en el historial son siempre `completed`; si compró el mismo product
 ```json
 // GET /payments/purchases → data[i]
 { "id": "…", "product": { "id": 22, "title": "…" }, "amount": 25000,
+  "productDeleted": false,
   "canReview": true, "hasReviewed": false, "reviewId": null }
 ```
+
+**`productDeleted`** (boolean, solo en `GET /payments/purchases`): `true` si el vendedor borró el producto. El historial **sí incluye** esas compras (y su comprobante sigue abriendo), pero `GET /products/:id` responde 404 para ese producto: **no enlaces al detalle** cuando `productDeleted` es `true`; muestra el título/imagen de la compra como texto. Aun así `canReview` sigue la misma regla (si compró, no ha reseñado, etc. puede reseñar con `POST /products/:id/reviews`, y ver las reseñas con `GET /products/:id/reviews`).
 
 ### `canComment` (deprecado)
 Sigue en `GET /products/:id` con **el mismo valor que `canReview`**, solo por compatibilidad. Deja de usarlo: se eliminará más adelante.
