@@ -99,8 +99,12 @@ export class PaymentHistoryService {
     query: PaymentHistoryQueryDto,
   ): Promise<PaymentSaleListResponseDto> {
     const seller = await this.findSellerOrForbidden(userId);
+    // withDeleted: las ventas de un producto que el vendedor borró (soft
+    // delete) siguen en su historial. Solo product tiene deleted_at en estas
+    // uniones (buyer es User, sin soft delete).
     const qb = this.transactionRepository
       .createQueryBuilder('transaction')
+      .withDeleted()
       .innerJoin('transaction.product', 'product')
       .innerJoin('transaction.buyer', 'buyer')
       .select(this.baseTransactionSelect())
@@ -108,6 +112,7 @@ export class PaymentHistoryService {
         'product.id',
         'product.title',
         'product.imageUrl',
+        'product.deletedAt',
         'buyer.id',
         'buyer.username',
         'buyer.photoUrl',
@@ -367,6 +372,8 @@ export class PaymentHistoryService {
         title: transaction.product.title,
         imageUrl: transaction.product.imageUrl ?? null,
       },
+      // Mismo cálculo que en purchases: el detalle de un producto borrado da 404.
+      productDeleted: transaction.product.deletedAt != null,
       buyer: {
         id: transaction.buyer.id,
         username: transaction.buyer.username,

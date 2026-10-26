@@ -518,4 +518,106 @@ describe('PaymentHistoryService', () => {
       expect(h.qb.withDeleted).toHaveBeenCalledTimes(1);
     });
   });
+  describe('sales: productos borrados (soft delete)', () => {
+    const product = (overrides = {}) => ({
+      id: 10,
+      title: 'Producto',
+      imageUrl: null,
+      deletedAt: null,
+      ...overrides,
+    });
+
+    it('no excluye los productos borrados y pide solo los campos mínimos', async () => {
+      const h = createHarness();
+
+      await h.service.sales('seller-1', { page: 1, limit: 10 });
+
+      expect(h.qb.withDeleted).toHaveBeenCalledTimes(1);
+      const selected = h.qb.addSelect.mock.calls
+        .flatMap(([fields]: [string[]]) => fields)
+        .filter((field: string) => field.startsWith('product.'));
+      expect(selected).toEqual([
+        'product.id',
+        'product.title',
+        'product.imageUrl',
+        'product.deletedAt',
+      ]);
+    });
+
+    it('la venta de un producto borrado aparece con productDeleted true', async () => {
+      const h = createHarness();
+      h.qb.getManyAndCount.mockResolvedValue([
+        [completed({ id: 'a', product: product({ deletedAt: new Date() }) })],
+        1,
+      ]);
+
+      const { data } = await h.service.sales('seller-1', {
+        page: 1,
+        limit: 10,
+      });
+
+      expect(data).toHaveLength(1);
+      expect(data[0]).toMatchObject({
+        productDeleted: true,
+        product: { id: 10, title: 'Producto' },
+      });
+    });
+
+    it('la venta de un producto activo tiene productDeleted false', async () => {
+      const h = createHarness();
+      h.qb.getManyAndCount.mockResolvedValue([[completed({ id: 'a' })], 1]);
+
+      const { data } = await h.service.sales('seller-1', {
+        page: 1,
+        limit: 10,
+      });
+
+      expect(data[0]).toMatchObject({ productDeleted: false });
+    });
+
+    it('mezcla productos borrados y activos en la misma página', async () => {
+      const h = createHarness();
+      h.qb.getManyAndCount.mockResolvedValue([
+        [
+          completed({
+            id: 'a',
+            product: product({ id: 10, deletedAt: new Date() }),
+          }),
+          completed({ id: 'b', product: product({ id: 11 }) }),
+          completed({
+            id: 'c',
+            product: product({ id: 12, deletedAt: new Date() }),
+          }),
+        ],
+        3,
+      ]);
+
+      const { data } = await h.service.sales('seller-1', {
+        page: 1,
+        limit: 10,
+      });
+
+      expect(data.map((item) => item.productDeleted)).toEqual([
+        true,
+        false,
+        true,
+      ]);
+    });
+
+    it('sigue sin exponer datos de la tarjeta ni del titular al vendedor', async () => {
+      const h = createHarness();
+      h.qb.getManyAndCount.mockResolvedValue([
+        [completed({ id: 'a', product: product({ deletedAt: new Date() }) })],
+        1,
+      ]);
+
+      const { data } = await h.service.sales('seller-1', {
+        page: 1,
+        limit: 10,
+      });
+
+      expect(data[0]).not.toHaveProperty('cardHolderName');
+      expect(data[0]).not.toHaveProperty('cardLast4');
+    });
+  });
 });

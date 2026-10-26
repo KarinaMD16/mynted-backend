@@ -1,6 +1,6 @@
 // Regla única de "¿puede este usuario reseñar este producto?". La usan tanto
 // POST /products/:id/reviews (como 403/409) como canReview del detalle y de
-// GET /payments/purchases, así nunca se contradicen.
+// GET /payments/me/purchases, así nunca se contradicen.
 
 // Por qué un usuario no puede reseñar un producto, en el orden en que se
 // evalúa.

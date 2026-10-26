@@ -626,18 +626,28 @@ Imprime los intereses y comunidades de cada usuario. Ej.: `seed_ana` (intereses 
 
 **Dónde vienen:**
 - `GET /products/:id` (a nivel de producto, junto a `isSaved`).
-- Cada ítem de `GET /payments/purchases` (historial de compras): así puedes pintar "Reseñar" / "Editar reseña" en la lista sin pedir el detalle de cada producto. Se calculan en lote (una sola consulta por página).
+- Cada ítem de `GET /payments/me/purchases` (historial de compras): así puedes pintar "Reseñar" / "Editar reseña" en la lista sin pedir el detalle de cada producto. Se calculan en lote (una sola consulta por página).
 
 Las compras en el historial son siempre `completed`; si compró el mismo producto dos veces aparecen dos ítems con los mismos tres valores.
 
 ```json
-// GET /payments/purchases → data[i]
+// GET /payments/me/purchases → data[i]
 { "id": "…", "product": { "id": 22, "title": "…" }, "amount": 25000,
   "productDeleted": false,
   "canReview": true, "hasReviewed": false, "reviewId": null }
 ```
 
-**`productDeleted`** (boolean, solo en `GET /payments/purchases`): `true` si el vendedor borró el producto. El historial **sí incluye** esas compras (y su comprobante sigue abriendo), pero `GET /products/:id` responde 404 para ese producto: **no enlaces al detalle** cuando `productDeleted` es `true`; muestra el título/imagen de la compra como texto. Aun así `canReview` sigue la misma regla (si compró, no ha reseñado, etc. puede reseñar con `POST /products/:id/reviews`, y ver las reseñas con `GET /products/:id/reviews`).
+**`productDeleted`** (boolean, solo en `GET /payments/me/purchases`): `true` si el vendedor borró el producto. El historial **sí incluye** esas compras (y su comprobante sigue abriendo), pero `GET /products/:id` responde 404 para ese producto: **no enlaces al detalle** cuando `productDeleted` es `true`; muestra el título/imagen de la compra como texto. Aun así `canReview` sigue la misma regla (si compró, no ha reseñado, etc. puede reseñar con `POST /products/:id/reviews`, y ver las reseñas con `GET /products/:id/reviews`).
+
+### Historial de ventas (vendedor): `GET /payments/me/sales`
+También conserva las ventas de productos que el vendedor **borró** (soft delete). Cada ítem trae `productDeleted` (boolean) con el mismo significado que en las compras: si es `true`, **no enlaces al detalle del producto** (da 404) y muestra solo título e imagen de la venta. El comprobante de la venta (`GET /payments/:id`) también sigue abriendo para el vendedor.
+
+```json
+// GET /payments/me/sales → data[i]
+{ "id": "…", "product": { "id": 22, "title": "…", "imageUrl": "…" },
+  "productDeleted": false, "buyer": { "id": "…", "username": "…" },
+  "amount": 25000, "sellerNet": 24250 }
+```
 
 ### `canComment` (deprecado)
 Sigue en `GET /products/:id` con **el mismo valor que `canReview`**, solo por compatibilidad. Deja de usarlo: se eliminará más adelante.
