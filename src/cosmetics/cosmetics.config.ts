@@ -1,5 +1,9 @@
 import { CosmeticType } from './entities/cosmetic.entity';
 
+// Tope del banner propio (la foto de perfil se queda en 5 MB). Un GIF animado
+// suele pasar de 5 MB.
+export const BANNER_MAX_FILE_SIZE = 8 * 1024 * 1024;
+
 export interface CosmeticDefinition {
   code: string;
   type: CosmeticType;

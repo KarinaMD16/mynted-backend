@@ -3,14 +3,32 @@ import {
   Inject,
   Injectable,
   InternalServerErrorException,
+  Logger,
 } from '@nestjs/common';
 import { UploadApiResponse, v2 as cloudinary } from 'cloudinary';
 import { Readable } from 'node:stream';
 import 'multer';
 import { CLOUDINARY } from './cloudinary.provider';
 
+// Lo que se guarda de una imagen subida: la URL para mostrarla y el publicId
+// para poder borrarla después.
+export interface UploadedImage {
+  url: string;
+  publicId: string;
+  format: string;
+  // GIF o imagen con más de un fotograma.
+  isAnimated: boolean;
+}
+
+export interface UploadImageOptions {
+  // Tope de tamaño de esta subida; por defecto 5 MB (foto de perfil, productos).
+  maxFileSize?: number;
+}
+
 @Injectable()
 export class CloudinaryService {
+  private readonly logger = new Logger(CloudinaryService.name);
+
   private readonly allowedMimeTypes = [
     'image/jpeg',
     'image/png',
@@ -25,14 +43,40 @@ export class CloudinaryService {
     private readonly cloudinaryClient: typeof cloudinary,
   ) {}
 
-  async uploadImage(file: Express.Multer.File): Promise<{ url: string }> {
-    this.validateImage(file);
+  async uploadImage(
+    file: Express.Multer.File,
+    options: UploadImageOptions = {},
+  ): Promise<UploadedImage> {
+    this.validateImage(file, options.maxFileSize ?? this.maxFileSize);
 
     const result = await this.uploadToCloudinary(file);
 
     return {
       url: result.secure_url,
+      publicId: result.public_id,
+      format: result.format,
+      isAnimated: result.format === 'gif' || (result.pages ?? 1) > 1,
     };
+  }
+
+  // Borra una imagen por su publicId. Es de mejor esfuerzo: un fallo se registra
+  // y devuelve false, nunca rompe la acción del usuario (a lo sumo queda un
+  // archivo huérfano).
+  async deleteImage(publicId: string): Promise<boolean> {
+    try {
+      const result = (await this.cloudinaryClient.uploader.destroy(publicId, {
+        resource_type: 'image',
+        invalidate: true,
+      })) as { result?: string };
+      return result.result === 'ok' || result.result === 'not found';
+    } catch (error: unknown) {
+      this.logger.warn(
+        `No se pudo borrar la imagen ${publicId} de Cloudinary: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return false;
+    }
   }
 
   async uploadImages(files: Express.Multer.File[]): Promise<{ url: string }[]> {
@@ -43,7 +87,7 @@ export class CloudinaryService {
     return Promise.all(files.map((file) => this.uploadImage(file)));
   }
 
-  private validateImage(file: Express.Multer.File): void {
+  private validateImage(file: Express.Multer.File, maxFileSize: number): void {
     if (!file) {
       throw new BadRequestException('Debe proporcionar una imagen');
     }
@@ -54,9 +98,9 @@ export class CloudinaryService {
       );
     }
 
-    if (file.size > this.maxFileSize) {
+    if (file.size > maxFileSize) {
       throw new BadRequestException(
-        'La imagen supera el tamaño máximo permitido de 5 MB',
+        `La imagen supera el tamaño máximo permitido de ${maxFileSize / (1024 * 1024)} MB`,
       );
     }
   }

@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { CloudinaryModule } from '../cloudinary/cloudinary.module';
 import { ProStatusModule } from '../pro-status/pro-status.module';
 import { CosmeticsController } from './cosmetics.controller';
 import { CosmeticsSeed } from './cosmetics.seed';
@@ -13,6 +14,7 @@ import { UserCosmetics } from './entities/user-cosmetics.entity';
   imports: [
     TypeOrmModule.forFeature([Cosmetic, UserCosmetics]),
     ProStatusModule,
+    CloudinaryModule,
   ],
   controllers: [CosmeticsController],
   providers: [CosmeticsService, CosmeticsSeed],

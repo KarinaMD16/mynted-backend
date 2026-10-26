@@ -5,7 +5,9 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import 'multer';
 import { In, Repository } from 'typeorm';
+import { CloudinaryService } from '../cloudinary/cloudinary.service';
 import { ProStatusService } from '../pro-status/pro-status.service';
 import { toStaticImageUrl } from './banner-urls';
 import {
@@ -14,6 +16,7 @@ import {
   resolveCosmetics,
 } from './cosmetic-resolve';
 import { CosmeticDto, MyCosmeticsDto } from './dto/cosmetics-response.dto';
+import { BANNER_MAX_FILE_SIZE } from './cosmetics.config';
 import { EquipCosmeticsDto } from './dto/equip-cosmetics.dto';
 import { Cosmetic, CosmeticType } from './entities/cosmetic.entity';
 import { UserCosmetics } from './entities/user-cosmetics.entity';
@@ -31,6 +34,7 @@ export class CosmeticsService {
     @InjectRepository(UserCosmetics)
     private readonly userCosmeticsRepository: Repository<UserCosmetics>,
     private readonly proStatusService: ProStatusService,
+    private readonly cloudinaryService: CloudinaryService,
   ) {}
 
   // ---------------------------------------------------------------------
@@ -131,6 +135,64 @@ export class CosmeticsService {
     await this.userCosmeticsRepository.save(row);
 
     return this.getMine(userId);
+  }
+
+  // ---------------------------------------------------------------------
+  // Banner propio (solo Pro)
+  // ---------------------------------------------------------------------
+
+  // Sube el banner (JPEG, PNG, WEBP o GIF, hasta 8 MB), lo deja preferido y
+  // borra de Cloudinary el anterior. Pro se comprueba antes de subir nada.
+  async setCustomBanner(
+    userId: string,
+    file: Express.Multer.File | undefined,
+  ): Promise<MyCosmeticsDto> {
+    if (!(await this.proStatusService.isPro(userId))) {
+      throw new ForbiddenException(
+        'El banner propio es exclusivo de Mynted Pro',
+      );
+    }
+    if (!file) {
+      throw new BadRequestException(
+        'Debe proporcionar un banner (campo banner)',
+      );
+    }
+
+    const uploaded = await this.cloudinaryService.uploadImage(file, {
+      maxFileSize: BANNER_MAX_FILE_SIZE,
+    });
+    const row = await this.getOrCreateRow(userId);
+    const previousPublicId = row.customBannerPublicId;
+    row.customBannerUrl = uploaded.url;
+    row.customBannerPublicId = uploaded.publicId;
+    row.customBannerIsAnimated = uploaded.isAnimated;
+    row.useCustomBanner = true;
+    try {
+      await this.userCosmeticsRepository.save(row);
+    } catch (error: unknown) {
+      // No quedó referenciado: se borra para no dejar el archivo huérfano.
+      await this.cloudinaryService.deleteImage(uploaded.publicId);
+      throw error;
+    }
+    if (previousPublicId && previousPublicId !== uploaded.publicId) {
+      await this.cloudinaryService.deleteImage(previousPublicId);
+    }
+    return this.getMine(userId);
+  }
+
+  // Quita el banner propio (no exige Pro: se puede quitar aunque haya
+  // vencido) y lo borra de Cloudinary. Es idempotente.
+  async removeCustomBanner(userId: string): Promise<void> {
+    const row = await this.userCosmeticsRepository.findOneBy({ userId });
+    if (!row?.customBannerUrl) return;
+
+    const publicId = row.customBannerPublicId;
+    row.customBannerUrl = null;
+    row.customBannerPublicId = null;
+    row.customBannerIsAnimated = false;
+    row.useCustomBanner = false;
+    await this.userCosmeticsRepository.save(row);
+    if (publicId) await this.cloudinaryService.deleteImage(publicId);
   }
 
   // ---------------------------------------------------------------------
