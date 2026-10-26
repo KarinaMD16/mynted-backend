@@ -16,6 +16,7 @@ import { CommissionService } from './commission/commission.service';
 import { PAYMENT_GATEWAY } from './gateway/payment-gateway.constants';
 import { SimulatedPaymentGateway } from './gateway/simulated-payment.gateway';
 import { Product } from '../products/entities/product.entity';
+import { Review } from '../products/entities/review.entity';
 import { Seller } from '../sellers/entities/seller.entity';
 import { User } from '../users/entities/user.entity';
 import { UsersModule } from '../users/users.module';
@@ -38,6 +39,7 @@ import { SuperAdminGuard } from '../auth/guards/super-admin.guard';
       PaymentTransaction,
       ExchangeRateSnapshot,
       Product,
+      Review,
       Seller,
       User,
     ]),

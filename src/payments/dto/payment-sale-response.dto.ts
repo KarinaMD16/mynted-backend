@@ -17,6 +17,14 @@ export class PaymentSaleItemDto {
   id!: string;
   completedAt!: Date | null;
   product!: PaymentSaleProductDto;
+
+  @ApiProperty({
+    example: false,
+    description:
+      'true si el vendedor borró el producto (soft delete). La venta sigue en el historial, pero el detalle del producto da 404: no lo enlaces',
+  })
+  productDeleted!: boolean;
+
   buyer!: PaymentSaleBuyerDto;
   amount!: number;
   currency!: string;

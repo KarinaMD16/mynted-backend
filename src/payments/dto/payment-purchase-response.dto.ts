@@ -28,6 +28,31 @@ export class PaymentPurchaseItemDto {
   cardLast4!: string | null;
   cardHolderName!: string | null;
   gatewayReference!: string | null;
+
+  @ApiProperty({
+    example: false,
+    description:
+      'true si el vendedor borró el producto (soft delete). El detalle del producto da 404: no lo enlaces. La compra, el comprobante y la reseña siguen disponibles',
+  })
+  productDeleted!: boolean;
+
+  @ApiProperty({
+    example: true,
+    description:
+      'true si el usuario puede reseñar este producto ahora (compra completada, sin reseña propia, no es el vendedor ni un producto de intercambio)',
+  })
+  canReview!: boolean;
+
+  @ApiProperty({ example: false, description: 'Ya reseñó este producto' })
+  hasReviewed!: boolean;
+
+  @ApiProperty({
+    type: Number,
+    nullable: true,
+    example: null,
+    description: 'Id de su reseña del producto (para "editar tu reseña")',
+  })
+  reviewId!: number | null;
 }
 
 export class PaymentPurchaseListResponseDto {

@@ -22,6 +22,7 @@ import {
   ApiBearerAuth,
   ApiBody,
   ApiConsumes,
+  ApiOkResponse,
   ApiOperation,
   ApiParam,
   ApiTags,
@@ -314,8 +315,33 @@ export class ProductsController {
   @ApiBearerAuth()
   @ApiOperation({
     summary:
-      'Detalle de un producto: precio, descuento y precio final, rating, datos públicos del vendedor (userId, foto y rating), isSaved y canComment ' +
-      '(true si quien mira puede reseñarlo: con sesión, no es el dueño, no es exchange, tiene compra completada y aún no lo reseñó). Funciona sin sesión; un borrador solo lo ve su dueño',
+      'Detalle de un producto: precio, descuento y precio final, rating, datos públicos del vendedor (userId, foto y rating), isSaved, ' +
+      'canReview (true si quien mira puede reseñarlo: con sesión, no es el dueño, no es exchange, tiene una compra completed y aún no lo reseñó), ' +
+      'hasReviewed y reviewId (su reseña propia, para "editar tu reseña"). Sin sesión: canReview false, hasReviewed false y reviewId null. ' +
+      'canComment es el nombre anterior de canReview (deprecado, mismo valor). Funciona sin sesión; un borrador solo lo ve su dueño',
+  })
+  @ApiOkResponse({
+    description: 'Detalle del producto (se listan solo los campos de reseñas)',
+    schema: {
+      type: 'object',
+      additionalProperties: true,
+      properties: {
+        canReview: {
+          type: 'boolean',
+          example: true,
+          description:
+            'true solo si: hay sesión, compró el producto (pago completed), no lo ha reseñado, no es el vendedor y no es de tipo exchange',
+        },
+        canComment: {
+          type: 'boolean',
+          example: true,
+          deprecated: true,
+          description: 'Deprecado: alias de canReview (mismo valor)',
+        },
+        hasReviewed: { type: 'boolean', example: false },
+        reviewId: { type: 'integer', nullable: true, example: null },
+      },
+    },
   })
   @ApiDisplayCurrencyHeader()
   findOne(

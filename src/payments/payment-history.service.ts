@@ -5,7 +5,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
+import { ProductType } from '../products/entities/product.entity';
+import { Review } from '../products/entities/review.entity';
+import { resolveReviewIneligibility } from '../products/review-eligibility';
 import { UsersService } from '../users/users.service';
 import { Seller } from '../sellers/entities/seller.entity';
 import { PaymentTransaction } from './entities/payment-transaction.entity';
@@ -40,14 +43,20 @@ export class PaymentHistoryService {
     private readonly sellerRepository: Repository<Seller>,
     private readonly usersService: UsersService,
     private readonly exchangeRateService: ExchangeRateService,
+    @InjectRepository(Review)
+    private readonly reviewRepository: Repository<Review>,
   ) {}
 
   async purchases(
     userId: string,
     query: PaymentHistoryQueryDto,
   ): Promise<PaymentPurchaseListResponseDto> {
+    // withDeleted: una compra de un producto que el vendedor borró (soft
+    // delete) sigue en el historial; solo el producto tiene deleted_at en
+    // estas uniones. productDeleted avisa al frontend.
     const qb = this.transactionRepository
       .createQueryBuilder('transaction')
+      .withDeleted()
       .innerJoin('transaction.product', 'product')
       .innerJoin('transaction.seller', 'seller')
       .select(this.baseTransactionSelect())
@@ -55,7 +64,10 @@ export class PaymentHistoryService {
         'product.id',
         'product.title',
         'product.imageUrl',
+        'product.type',
+        'product.deletedAt',
         'seller.sellerId',
+        'seller.userId',
         'seller.displayName',
         'transaction.cardHolderName',
       ])
@@ -69,8 +81,15 @@ export class PaymentHistoryService {
       .take(query.limit);
 
     const [transactions, total] = await qb.getManyAndCount();
+    // Reseñas propias de los productos de la página, en una sola consulta.
+    const reviewIds = await this.findOwnReviewIds(
+      userId,
+      transactions.map((transaction) => transaction.product.id),
+    );
     return {
-      data: transactions.map((transaction) => this.toPurchase(transaction)),
+      data: transactions.map((transaction) =>
+        this.toPurchase(transaction, userId, reviewIds),
+      ),
       pagination: this.pagination(query, total),
     };
   }
@@ -80,8 +99,12 @@ export class PaymentHistoryService {
     query: PaymentHistoryQueryDto,
   ): Promise<PaymentSaleListResponseDto> {
     const seller = await this.findSellerOrForbidden(userId);
+    // withDeleted: las ventas de un producto que el vendedor borró (soft
+    // delete) siguen en su historial. Solo product tiene deleted_at en estas
+    // uniones (buyer es User, sin soft delete).
     const qb = this.transactionRepository
       .createQueryBuilder('transaction')
+      .withDeleted()
       .innerJoin('transaction.product', 'product')
       .innerJoin('transaction.buyer', 'buyer')
       .select(this.baseTransactionSelect())
@@ -89,6 +112,7 @@ export class PaymentHistoryService {
         'product.id',
         'product.title',
         'product.imageUrl',
+        'product.deletedAt',
         'buyer.id',
         'buyer.username',
         'buyer.photoUrl',
@@ -187,8 +211,11 @@ export class PaymentHistoryService {
     userId: string,
     transactionId: string,
   ): Promise<PaymentReceiptResponseDto> {
+    // withDeleted: el comprobante de una compra del historial sigue abriendo
+    // aunque el vendedor haya borrado el producto.
     const transaction = await this.transactionRepository
       .createQueryBuilder('transaction')
+      .withDeleted()
       .innerJoin('transaction.product', 'product')
       .innerJoin('transaction.seller', 'seller')
       .innerJoin('seller.user', 'sellerUser')
@@ -281,7 +308,36 @@ export class PaymentHistoryService {
     ];
   }
 
-  private toPurchase(transaction: PaymentTransaction): PaymentPurchaseItemDto {
+  // productId -> id de la reseña propia (una sola consulta para toda la
+  // página, sin N+1).
+  private async findOwnReviewIds(
+    userId: string,
+    productIds: number[],
+  ): Promise<Map<number, number>> {
+    const unique = [...new Set(productIds)];
+    if (unique.length === 0) return new Map();
+    const reviews = await this.reviewRepository.find({
+      where: { authorId: userId, productId: In(unique) },
+      select: { id: true, productId: true },
+    });
+    return new Map(reviews.map((review) => [review.productId, review.id]));
+  }
+
+  private toPurchase(
+    transaction: PaymentTransaction,
+    userId: string,
+    reviewIds: Map<number, number>,
+  ): PaymentPurchaseItemDto {
+    // Todo ítem de la lista es una compra completada: se aplica la misma regla
+    // que POST /products/:id/reviews y canReview del detalle.
+    const reviewId = reviewIds.get(transaction.product.id) ?? null;
+    const canReview =
+      resolveReviewIneligibility({
+        isOwner: transaction.seller.userId === userId,
+        isExchange: transaction.product.type === ProductType.EXCHANGE,
+        purchased: true,
+        hasReviewed: reviewId !== null,
+      }) === null;
     return {
       id: transaction.id,
       product: {
@@ -299,6 +355,11 @@ export class PaymentHistoryService {
       cardLast4: transaction.cardLast4,
       cardHolderName: transaction.cardHolderName ?? null,
       gatewayReference: transaction.gatewayReference,
+      // El detalle de un producto borrado da 404: el frontend no debe enlazarlo.
+      productDeleted: transaction.product.deletedAt != null,
+      canReview,
+      hasReviewed: reviewId !== null,
+      reviewId,
     };
   }
 
@@ -311,6 +372,8 @@ export class PaymentHistoryService {
         title: transaction.product.title,
         imageUrl: transaction.product.imageUrl ?? null,
       },
+      // Mismo cálculo que en purchases: el detalle de un producto borrado da 404.
+      productDeleted: transaction.product.deletedAt != null,
       buyer: {
         id: transaction.buyer.id,
         username: transaction.buyer.username,

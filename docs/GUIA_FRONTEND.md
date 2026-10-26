@@ -315,7 +315,10 @@ Un producto **sin comunidad** aparece en shop, `/products`, búsqueda, perfil de
   "isSaved": false,
   "ratingAverage": 4.5,            // null si no hay reseñas
   "reviewsCount": 8,
-  "canComment": false,             // ¿puede quien mira reseñarlo ahora? (ver abajo)
+  "canReview": false,              // ¿puede quien mira reseñarlo ahora? (ver sección 15)
+  "hasReviewed": false,            // ya tiene reseña propia
+  "reviewId": null,                // id de su reseña (para "editar tu reseña")
+  "canComment": false,             // DEPRECADO: alias de canReview
   "seller": {
     "sellerId": 4, "userId": "6f1c2a9e-1b2c-4d3e-8f90-123456789abc",
     "displayName": "...", "isVerified": true,
@@ -326,15 +329,8 @@ Un producto **sin comunidad** aparece en shop, `/products`, búsqueda, perfil de
 Un `draft` solo lo ve su dueño (404 para los demás). Borrado → 404.
 
 - **`seller.userId`** (uuid): el `User.id` del vendedor, para enlazar a su perfil o abrir un chat. Nunca se expone `paymentInfo`.
-- **`canComment`** (boolean, a nivel de producto, **no** dentro de `seller`): úsalo para mostrar u ocultar el formulario de reseña. Es `true` solo si se cumple todo:
-  1. hay sesión (sin sesión siempre `false`);
-  2. quien mira **no** es el dueño;
-  3. el producto **no** es `exchange`;
-  4. quien mira tiene una compra **completada** de ese producto;
-  5. quien mira todavía **no** lo ha reseñado.
-
-  Es exactamente la misma regla que valida `POST /products/:id/reviews`: si `canComment` es `true`, el POST va a funcionar; si es `false`, el POST responde 403 o 409. Después de reseñar, vuelve a pedir el detalle (o pon `canComment` en `false` localmente).
-- **Productos `exchange`:** todavía no se pueden reseñar (no existe el flujo de intercambio), así que `canComment` es siempre `false` y el POST responde 403.
+- **`canReview`, `hasReviewed` y `reviewId`** (a nivel de producto, **no** dentro de `seller`): ver la sección 15. `canComment` sigue existiendo como alias **deprecado** de `canReview`; migra a `canReview`.
+- **Productos `exchange`:** todavía no se pueden reseñar (no existe el flujo de intercambio), así que `canReview` es siempre `false` y el POST responde 403.
 
 **`GET /products/:id/related`** → arreglo de `ProductListItem` con `isSellerChoice: boolean`. Primero los que eligió el vendedor, luego automáticos por tags/comunidad (y por tus intereses si hay sesión). Máx. 6, sin duplicados.
 
@@ -390,14 +386,16 @@ Reactivar un pausado: `PATCH /products/:id/status` `{ "status": "active" }`.
 ### Reseñas (solo compradores con compra completada)
 | Endpoint | |
 | --- | --- |
-| `POST /products/:id/reviews` `{ rating: 1-5, comment? }` | 201. En este orden: 404 producto inexistente · 403 si es tu propio producto · 403 si es un producto `exchange` (aún no se pueden reseñar) · 403 si no lo compraste (compra `completed`) · 409 si ya reseñaste. Antes de mostrar el formulario, mira `canComment` en `GET /products/:id`. |
+| `POST /products/:id/reviews` `{ rating: 1-5, comment? }` | 201. En este orden: 404 producto inexistente · 403 si es tu propio producto · 403 si es un producto `exchange` (aún no se pueden reseñar) · 403 si no lo compraste (compra `completed`) · 409 si ya reseñaste. Antes de mostrar el formulario, mira `canReview` en `GET /products/:id`. Detalle de errores en la sección 15. |
 | `GET /products/:id/reviews?page=&limit=` (sin sesión) | `{ ratingAverage, reviewsCount, data: Review[], pagination }` |
-| `PATCH /products/:id/reviews/me` | Edita mi reseña. |
+| `PATCH /products/:id/reviews/me` | Edita mi reseña (`rating` y/o `comment`). `comment: null` (o vacío) borra el comentario; si no lo mandas, no cambia. |
 | `DELETE /products/:id/reviews/me` | Borra mi reseña (204). |
 
 `Review`: `{ id, productId, rating, comment, createdAt, updatedAt, author{id, username, photoUrl}, isMine }`. Editar y borrar la propia reseña no vuelve a exigir la compra.
 
 Reputación de un usuario: `GET /profiles/:perfilId/reputation` (sin sesión) → `{ userId, isSeller, ratingAverage, reviewsCount, completedSalesCount, ratingDistribution{1..5}, badges[] }`. Si el usuario no es vendedor (o su solicitud está pendiente o fue rechazada): `isSeller: false`, `ratingAverage: null` y conteos en 0.
+
+**Rating del vendedor** (`ratingAverage` / `reviewsCount` en la tienda, el perfil, `seller` del detalle de producto, `GET /users/:id` y esta reputación, junto con `ratingDistribution`): es el promedio (1 decimal) y el total de las reseñas de **todos sus productos, también los que borró** (soft delete). Borrar un producto no cambia el rating del vendedor. Solo cuenta si el vendedor está aprobado; si no, `ratingAverage: null` y conteos en 0. El rating **de un producto** (`GET /products/:id` y `GET /products/:id/reviews`) sigue siendo solo el de sus propias reseñas, y un producto borrado ya no se puede abrir (404).
 
 ---
 
@@ -609,3 +607,71 @@ Imprime los intereses y comunidades de cada usuario. Ej.: `seed_ana` (intereses 
 - **Compra:** `POST /payments/checkout` acepta `quantity` (por defecto 1). El total es **precio unitario × cantidad**. Respuestas: `quantity`, `unitPrice` y `amount` (total). Si pides más que el stock → **409** `Stock insuficiente: solo quedan N unidades`; si ya no hay → **409** `El producto está agotado`. El stock se descuenta atómicamente al aprobarse el pago (no se reserva en el checkout); si el pago falla, no se descuenta.
 - **Cotizar:** `GET /payments/quote/:productId?quantity=2` devuelve `quantity`, `unitPrice`, `availableQuantity` y `amount` (total).
 - **Notificaciones a favoritos:** solo cuando pasa a agotado o vuelve a estar disponible (no por cada descuento de stock).
+
+---
+
+## 15. Reseñas: `canReview`, `hasReviewed` y `reviewId`
+
+**Regla de negocio:** solo puede reseñar un producto quien lo **compró** (al menos una compra con pago `completed`). Una reseña por usuario y producto (aunque compre varias unidades o varias veces). El vendedor no puede reseñar lo suyo y los productos `exchange` todavía no se reseñan.
+
+### Los tres campos
+
+| Campo | Tipo | Significado |
+| --- | --- | --- |
+| `canReview` | boolean | Mostrar el formulario / botón "Reseñar". |
+| `hasReviewed` | boolean | El usuario ya tiene una reseña de este producto. |
+| `reviewId` | number \| null | Id de su reseña, para el botón "Editar tu reseña" (`PATCH /products/:id/reviews/me`). |
+
+`canReview` es `true` solo si **todo** esto se cumple: hay sesión · hay una compra `completed` del producto · no tiene reseña propia · no es el vendedor · el producto no es `exchange`.
+
+**Sin sesión:** `canReview: false`, `hasReviewed: false`, `reviewId: null`.
+
+**Dónde vienen:**
+- `GET /products/:id` (a nivel de producto, junto a `isSaved`).
+- Cada ítem de `GET /payments/me/purchases` (historial de compras): así puedes pintar "Reseñar" / "Editar reseña" en la lista sin pedir el detalle de cada producto. Se calculan en lote (una sola consulta por página).
+
+Las compras en el historial son siempre `completed`; si compró el mismo producto dos veces aparecen dos ítems con los mismos tres valores.
+
+```json
+// GET /payments/me/purchases → data[i]
+{ "id": "…", "product": { "id": 22, "title": "…" }, "amount": 25000,
+  "productDeleted": false,
+  "canReview": true, "hasReviewed": false, "reviewId": null }
+```
+
+**`productDeleted`** (boolean, solo en `GET /payments/me/purchases`): `true` si el vendedor borró el producto. El historial **sí incluye** esas compras (y su comprobante sigue abriendo), pero `GET /products/:id` responde 404 para ese producto: **no enlaces al detalle** cuando `productDeleted` es `true`; muestra el título/imagen de la compra como texto. Aun así `canReview` sigue la misma regla (si compró, no ha reseñado, etc. puede reseñar con `POST /products/:id/reviews`, y ver las reseñas con `GET /products/:id/reviews`).
+
+### Historial de ventas (vendedor): `GET /payments/me/sales`
+También conserva las ventas de productos que el vendedor **borró** (soft delete). Cada ítem trae `productDeleted` (boolean) con el mismo significado que en las compras: si es `true`, **no enlaces al detalle del producto** (da 404) y muestra solo título e imagen de la venta. El comprobante de la venta (`GET /payments/:id`) también sigue abriendo para el vendedor.
+
+```json
+// GET /payments/me/sales → data[i]
+{ "id": "…", "product": { "id": 22, "title": "…", "imageUrl": "…" },
+  "productDeleted": false, "buyer": { "id": "…", "username": "…" },
+  "amount": 25000, "sellerNet": 24250 }
+```
+
+### `canComment` (deprecado)
+Sigue en `GET /products/:id` con **el mismo valor que `canReview`**, solo por compatibilidad. Deja de usarlo: se eliminará más adelante.
+
+### Casos especiales
+- **Producto agotado (`sold`):** se puede reseñar si lo compró; no hace falta que siga a la venta.
+- **Producto borrado por el vendedor:** quien lo compró (`completed`) puede seguir reseñándolo y viendo sus reseñas (`GET /products/:id/reviews`), aunque `GET /products/:id` ya responda 404. Sin compra, o sin sesión, esas rutas responden 404. Las reseñas de productos borrados no cuentan en el rating del vendedor.
+- **Reembolso:** si una compra pasa a `refunded`, la reseña ya hecha **se conserva** (y sigue editable). Solo se bloquean reseñas nuevas: `canReview` pasa a `false` si no hay otra compra `completed` del mismo producto.
+- **Pagos `failed` o `pending`:** no habilitan reseñar.
+- **Si borra su reseña**, vuelve a poder reseñar (`canReview: true`, siempre que siga cumpliendo la regla).
+
+### Errores de `POST /products/:id/reviews`
+| Código | Mensaje | Cuándo |
+| --- | --- | --- |
+| 400 | `rating debe ser un entero entre 1 y 5` | rating fuera de rango o decimal. |
+| 403 | `No puedes reseñar tu propio producto` | Es el vendedor. |
+| 403 | `Los productos de intercambio todavía no se pueden reseñar` | Producto `exchange`. |
+| 403 | `Solo puedes reseñar productos que hayas comprado` | Sin compra `completed` (o solo `failed`, `pending` o `refunded`). |
+| 404 | `Producto no encontrado` | No existe, es un borrador ajeno, o está borrado y no lo compraste. |
+| 409 | `Ya reseñaste este producto` | Ya tiene reseña (también si dos peticiones llegan a la vez: solo una se guarda). |
+
+Otras notas:
+- Un comentario vacío o de solo espacios se guarda como `null`.
+- `GET /products/:id/reviews` devuelve `pagination.totalPages = 1` aunque haya 0 reseñas, y responde 404 para el borrador de otra persona.
+- Tras crear, editar o borrar una reseña, vuelve a pedir el detalle (o el historial) para refrescar `canReview`, `hasReviewed` y `reviewId`.
