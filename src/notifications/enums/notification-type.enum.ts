@@ -16,6 +16,10 @@ export enum NotificationType {
   // Solicitud de vendedor.
   SELLER_REQUEST_APPROVED = 'seller_request_approved',
   SELLER_REQUEST_REJECTED = 'seller_request_rejected',
+  // Suscripción Pro.
+  SUBSCRIPTION_PAYMENT_CONFIRMED = 'subscription_payment_confirmed',
+  SUBSCRIPTION_EXPIRING_SOON = 'subscription_expiring_soon',
+  SUBSCRIPTION_EXPIRED = 'subscription_expired',
   // Foro.
   POST_REPLIED = 'post_replied',
   REPLY_REPLIED = 'reply_replied',
