@@ -228,6 +228,11 @@ export interface MyProductCard {
   condition: ProductCondition | null;
   tags: { tagId: number; name: string }[];
   community: { id: number; name: string } | null;
+  // Destacado (Pro): featuredEnabled es la preferencia del vendedor; isFeatured,
+  // que de verdad se eleva ahora. Si featuredEnabled es true e isFeatured false,
+  // el destacado está "en pausa" (Pro vencido, producto no activo, etc.).
+  featuredEnabled: boolean;
+  isFeatured: boolean;
 }
 
 export interface MyProductsSection {
@@ -988,6 +993,20 @@ export class ProductsService {
       (product) => this.toMyProductCard(product),
     );
 
+    // Estado de destacado de toda la página con una sola consulta.
+    const featured = await this.findFeaturedState(
+      sections.flatMap((section) =>
+        section.products.map((product) => product.id),
+      ),
+    );
+    for (const section of sections) {
+      section.products = section.products.map((product) => ({
+        ...product,
+        featuredEnabled: featured.has(product.id),
+        isFeatured: featured.get(product.id) === true,
+      }));
+    }
+
     return { totalProducts: matching.length, sections, pagination };
   }
 
@@ -1042,6 +1061,9 @@ export class ProductsService {
       community: product.community
         ? { id: product.community.id, name: product.community.name }
         : null,
+      // Se completan por lotes en findMine.
+      featuredEnabled: false,
+      isFeatured: false,
     };
   }
 
@@ -1076,13 +1098,14 @@ export class ProductsService {
       throw new NotFoundException('Producto no encontrado');
     }
 
-    const [rating, sellerRatings, saved, reviewStatus, sellerIsPro] =
+    const [rating, sellerRatings, saved, reviewStatus, sellerIsPro, featured] =
       await Promise.all([
         this.reviewsService.getProductRating(id),
         this.usersService.getSellerRatings([product.seller.sellerId]),
         this.getSavedProductIds(viewerId, [id]),
         this.reviewsService.getReviewStatus(product, viewerId),
         this.proStatusService.isPro(product.seller.userId),
+        this.findEffectiveFeaturedIds([id]),
       ]);
     const sellerRating = sellerRatings.get(product.seller.sellerId);
     // El user completo se descarta: del vendedor solo sale lo público.
@@ -1096,6 +1119,8 @@ export class ProductsService {
           : computeFinalPrice(product.price, product.discountPercent),
       isAvailable: isProductAvailable(product),
       isSaved: saved.has(id),
+      // Destacado efectivo (Pro): lo que de verdad se eleva ahora.
+      isFeatured: featured.has(id),
       seller: {
         ...seller,
         photoUrl: user?.photoUrl ?? null,
@@ -1535,6 +1560,23 @@ export class ProductsService {
       [ids],
     );
     return new Set(rows.map((row) => row.id));
+  }
+
+  // De entre estos ids, los que tienen la preferencia de destacado: el valor
+  // dice si además se elevan ahora (con el recorte al tope). Una consulta.
+  private async findFeaturedState(
+    ids: number[],
+  ): Promise<Map<number, boolean>> {
+    if (ids.length === 0) return new Map();
+    const rows = await this.dataSource.query<
+      { id: number; effective: boolean }[]
+    >(
+      `SELECT product.id, ${cappedFeaturedCondition('product')} AS effective
+         FROM product
+        WHERE product.id = ANY($1::int[]) AND product.featured_at IS NOT NULL`,
+      [ids],
+    );
+    return new Map(rows.map((row) => [row.id, row.effective]));
   }
 
   // 404 tanto si no existe como si es de otro vendedor: no se revela cuál.
