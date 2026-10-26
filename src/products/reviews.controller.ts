@@ -51,10 +51,18 @@ export class ReviewsController {
   @ApiResponse({
     status: 403,
     description:
-      'Es tu propio producto, es un producto de intercambio (aún no se pueden reseñar) o no tienes una compra completada de él',
+      'No puedes reseñar tu propio producto · Los productos de intercambio todavía no se pueden reseñar · Solo puedes reseñar productos que hayas comprado (se exige una compra con pago completed; failed, pending y refunded no cuentan)',
   })
-  @ApiResponse({ status: 404, description: 'Producto no encontrado' })
-  @ApiResponse({ status: 409, description: 'Ya reseñaste este producto' })
+  @ApiResponse({
+    status: 404,
+    description:
+      'Producto no encontrado (también un borrador ajeno, o un producto borrado del que no tienes una compra completed)',
+  })
+  @ApiResponse({
+    status: 409,
+    description:
+      'Ya reseñaste este producto (una reseña por usuario y producto, aunque lo hayas comprado varias veces; también si dos peticiones llegan a la vez)',
+  })
   create(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: CreateReviewDto,
@@ -68,7 +76,12 @@ export class ReviewsController {
   @ApiBearerAuth()
   @ApiOperation({
     summary:
-      'Reseñas de un producto, paginadas (más recientes primero), con promedio y total',
+      'Reseñas de un producto, paginadas (más recientes primero), con promedio y total. Sin sesión funciona para productos activos; un producto borrado solo lo ven quienes tienen una compra completed de él',
+  })
+  @ApiResponse({
+    status: 404,
+    description:
+      'Producto no encontrado, borrador ajeno o producto borrado sin compra completed del usuario',
   })
   findAll(
     @Param('id', ParseIntPipe) id: number,
@@ -81,7 +94,15 @@ export class ReviewsController {
   @Patch('me')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Editar mi reseña de este producto' })
+  @ApiOperation({
+    summary:
+      'Editar mi reseña de este producto. comment: null (o vacío) borra el comentario; si se omite no cambia',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Sin rating ni comment, o rating fuera de 1-5',
+  })
+  @ApiResponse({ status: 404, description: 'No has reseñado este producto' })
   updateMine(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateReviewDto,

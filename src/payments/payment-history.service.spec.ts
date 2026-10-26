@@ -322,4 +322,94 @@ describe('PaymentHistoryService', () => {
       h.service.receipt('other-user', 'tx-1'),
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
+  describe('purchases: canReview, hasReviewed y reviewId en lote', () => {
+    const buyer = 'buyer-1';
+    const item = (id: string, productId: number, overrides = {}) =>
+      completed({
+        id,
+        product: {
+          id: productId,
+          title: `Producto ${productId}`,
+          imageUrl: null,
+          type: 'sale',
+        },
+        ...overrides,
+      });
+
+    it('hace una sola consulta de reseñas para toda la página', async () => {
+      const h = createHarness();
+      h.qb.getManyAndCount.mockResolvedValue([
+        [item('a', 10), item('b', 10), item('c', 11), item('d', 12)],
+        4,
+      ]);
+
+      await h.service.purchases(buyer, { page: 1, limit: 10 });
+
+      expect(h.reviewRepository.find).toHaveBeenCalledTimes(1);
+      const [options] = h.reviewRepository.find.mock.calls[0] as [
+        { where: { authorId: string; productId: { value: number[] } } },
+      ];
+      expect(options.where.authorId).toBe(buyer);
+      expect(options.where.productId.value).toEqual([10, 11, 12]);
+    });
+
+    it('calcula los tres campos por ítem con la regla compartida', async () => {
+      const h = createHarness();
+      h.reviewRepository.find.mockResolvedValue([{ id: 5, productId: 11 }]);
+      h.qb.getManyAndCount.mockResolvedValue([
+        [
+          item('a', 10),
+          item('b', 10),
+          item('c', 11),
+          item('d', 12, {
+            product: {
+              id: 12,
+              title: 'Intercambio',
+              imageUrl: null,
+              type: 'exchange',
+            },
+          }),
+          item('e', 13, {
+            seller: { sellerId: 7, displayName: 'Yo', userId: buyer },
+          }),
+        ],
+        5,
+      ]);
+
+      const { data } = await h.service.purchases(buyer, { page: 1, limit: 10 });
+      const fields = data.map(({ canReview, hasReviewed, reviewId }) => ({
+        canReview,
+        hasReviewed,
+        reviewId,
+      }));
+
+      expect(fields).toEqual([
+        { canReview: true, hasReviewed: false, reviewId: null },
+        { canReview: true, hasReviewed: false, reviewId: null },
+        { canReview: false, hasReviewed: true, reviewId: 5 },
+        { canReview: false, hasReviewed: false, reviewId: null },
+        { canReview: false, hasReviewed: false, reviewId: null },
+      ]);
+    });
+
+    it('no consulta reseñas cuando la página está vacía', async () => {
+      const h = createHarness();
+      h.qb.getManyAndCount.mockResolvedValue([[], 0]);
+
+      const result = await h.service.purchases(buyer, { page: 1, limit: 10 });
+
+      expect(result.data).toEqual([]);
+      expect(h.reviewRepository.find).not.toHaveBeenCalled();
+    });
+
+    it('selecciona el tipo de producto y el userId del vendedor para la regla', async () => {
+      const h = createHarness();
+
+      await h.service.purchases(buyer, { page: 1, limit: 10 });
+
+      expect(h.qb.addSelect).toHaveBeenCalledWith(
+        expect.arrayContaining(['product.type', 'seller.userId']),
+      );
+    });
+  });
 });
