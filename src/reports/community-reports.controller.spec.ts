@@ -9,6 +9,8 @@ describe('CommunityReportsController', () => {
     listCommunityReports: jest.fn(),
     getCommunityReportDetail: jest.fn(),
     getModerationStats: jest.fn(),
+    resolveCommunityReport: jest.fn(),
+    dismissCommunityReport: jest.fn(),
   };
   const controller = new CommunityReportsController(service as never);
 
@@ -37,7 +39,7 @@ describe('CommunityReportsController', () => {
     expect(service.getModerationStats).toHaveBeenCalledWith(7);
   });
 
-  it.each(['list', 'detail', 'stats'])(
+  it.each(['list', 'detail', 'stats', 'resolve', 'dismiss'])(
     'protects %s with JWT and community role guards',
     (method) => {
       const handler = Object.getOwnPropertyDescriptor(
@@ -53,4 +55,24 @@ describe('CommunityReportsController', () => {
       );
     },
   );
+
+  it('passes the authenticated moderator to resolve and dismiss', async () => {
+    const request = { user: { userId: 'moderator-id' } };
+    const dto = { hideContent: true };
+
+    await controller.resolve(7, 12, dto, request as never);
+    await controller.dismiss(7, 12, request as never);
+
+    expect(service.resolveCommunityReport).toHaveBeenCalledWith(
+      7,
+      12,
+      dto,
+      'moderator-id',
+    );
+    expect(service.dismissCommunityReport).toHaveBeenCalledWith(
+      7,
+      12,
+      'moderator-id',
+    );
+  });
 });

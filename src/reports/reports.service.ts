@@ -3,10 +3,17 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, QueryFailedError, Repository } from 'typeorm';
+import {
+  DataSource,
+  EntityManager,
+  In,
+  QueryFailedError,
+  Repository,
+} from 'typeorm';
 import { Post } from '../community/entities/post.entity';
 import { Reply } from '../community/entities/reply.entity';
 import { Product } from '../products/entities/product.entity';
@@ -24,6 +31,11 @@ import { CommunityReportsQueryDto } from './dto/community-reports-query.dto';
 import { Report } from './entities/report.entity';
 import { ReportItemType } from './enums/report-item-type.enum';
 import { ReportStatus } from './enums/report-status.enum';
+import { ResolveReportDto } from './dto/resolve-report.dto';
+import { ModerationItemType } from '../moderation/enums/moderation-item-type.enum';
+import { ModerationService } from '../moderation/moderation.service';
+import { NotificationType } from '../notifications/enums/notification-type.enum';
+import { NotificationsService } from '../notifications/notifications.service';
 
 const REPORT_UNIQUE_CONSTRAINT = 'UQ_report_reporter_id_item_type_item_id';
 
@@ -47,6 +59,8 @@ type LoadedReportTarget = Post | Reply | Product | Conversation;
 
 @Injectable()
 export class ReportsService {
+  private readonly logger = new Logger(ReportsService.name);
+
   constructor(
     @InjectRepository(Report)
     private readonly reportRepository: Repository<Report>,
@@ -66,6 +80,9 @@ export class ReportsService {
     private readonly communityProfileRepository: Repository<CommunityProfile>,
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
+    private readonly dataSource: DataSource,
+    private readonly moderationService: ModerationService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   async createReport(userId: string, dto: CreateReportDto): Promise<Report> {
@@ -215,6 +232,250 @@ export class ReportsService {
       activeMembers,
       activeModerators,
     };
+  }
+
+  async resolveCommunityReport(
+    communityId: number,
+    reportId: number,
+    dto: ResolveReportDto,
+    actorUserId: string,
+  ): Promise<Report> {
+    const actions = this.buildResolutionActions(dto);
+    await this.ensureCommunityExists(communityId);
+
+    const result = await this.dataSource.transaction(async (manager) => {
+      const reportRepository = manager.getRepository(Report);
+      const report = await reportRepository.findOne({
+        where: { id: reportId, communityId },
+        lock: { mode: 'pessimistic_write' },
+      });
+
+      if (!report) throw new NotFoundException('Reporte no encontrado');
+      this.ensurePendingReport(report);
+
+      if (
+        dto.hideContent === true &&
+        report.itemType === ReportItemType.CONVERSATION
+      ) {
+        throw new BadRequestException(
+          'Las conversaciones no se pueden ocultar',
+        );
+      }
+
+      const recipientId =
+        dto.hideContent === true || dto.warnAuthor === true
+          ? await this.findReportAuthorId(report, manager)
+          : null;
+
+      if (dto.hideContent === true) {
+        await this.moderationService.hideContent(
+          this.toModerationItemType(report.itemType),
+          report.itemId,
+          actorUserId,
+          report.reason,
+          manager,
+        );
+      }
+
+      const resolvedAt = new Date();
+      const resolutionNote = this.trimNote(dto.note);
+      const resolutionAction = actions.join(',');
+      report.status = ReportStatus.RESOLVED;
+      report.resolvedAt = resolvedAt;
+      report.resolvedByUserId = actorUserId;
+      report.resolutionAction = resolutionAction;
+      report.resolutionNote = resolutionNote;
+      const updated = await reportRepository.save(report);
+
+      if (dto.hideContent === true) {
+        await this.resolveRelatedPendingReports(
+          manager,
+          report,
+          resolvedAt,
+          actorUserId,
+          resolutionAction,
+          resolutionNote,
+        );
+      }
+
+      return { report: updated, recipientId };
+    });
+
+    if (result.recipientId) {
+      await this.notifyModeration(result.report, result.recipientId, dto);
+    }
+    return result.report;
+  }
+
+  async dismissCommunityReport(
+    communityId: number,
+    reportId: number,
+    actorUserId: string,
+  ): Promise<Report> {
+    await this.ensureCommunityExists(communityId);
+
+    return this.dataSource.transaction(async (manager) => {
+      const reportRepository = manager.getRepository(Report);
+      const report = await reportRepository.findOne({
+        where: { id: reportId, communityId },
+        lock: { mode: 'pessimistic_write' },
+      });
+
+      if (!report) throw new NotFoundException('Reporte no encontrado');
+      this.ensurePendingReport(report);
+
+      report.status = ReportStatus.DISMISSED;
+      report.resolvedAt = new Date();
+      report.resolvedByUserId = actorUserId;
+      report.resolutionAction = 'dismiss';
+      report.resolutionNote = null;
+      return reportRepository.save(report);
+    });
+  }
+
+  private buildResolutionActions(dto: ResolveReportDto): string[] {
+    const note = this.trimNote(dto.note);
+    const actions: string[] = [];
+    if (dto.hideContent === true) actions.push('hide_content');
+    if (dto.warnAuthor === true) actions.push('warn_author');
+    if (note) actions.push('note');
+    if (actions.length === 0) {
+      throw new BadRequestException('Debe seleccionarse al menos una acciÃ³n');
+    }
+    return actions;
+  }
+
+  private trimNote(note?: string): string | null {
+    if (note === undefined) return null;
+    const trimmed = note.trim();
+    return trimmed || null;
+  }
+
+  private ensurePendingReport(report: Report): void {
+    if (report.status !== ReportStatus.PENDING) {
+      throw new ConflictException('El reporte ya fue resuelto');
+    }
+  }
+
+  private toModerationItemType(itemType: ReportItemType): ModerationItemType {
+    switch (itemType) {
+      case ReportItemType.POST:
+        return ModerationItemType.POST;
+      case ReportItemType.REPLY:
+        return ModerationItemType.REPLY;
+      case ReportItemType.PRODUCT:
+        return ModerationItemType.PRODUCT;
+      default:
+        throw new BadRequestException('Tipo de contenido no ocultable');
+    }
+  }
+
+  private async findReportAuthorId(
+    report: Report,
+    manager: EntityManager,
+  ): Promise<string> {
+    switch (report.itemType) {
+      case ReportItemType.POST: {
+        const post = await manager.getRepository(Post).findOne({
+          where: { id: report.itemId },
+          relations: { communityProfile: true },
+        });
+        if (!post) throw new NotFoundException('PublicaciÃ³n no encontrada');
+        return post.communityProfile.userId;
+      }
+      case ReportItemType.REPLY: {
+        const reply = await manager.getRepository(Reply).findOne({
+          where: { id: report.itemId },
+          relations: { communityProfile: true },
+        });
+        if (!reply) throw new NotFoundException('Respuesta no encontrada');
+        return reply.communityProfile.userId;
+      }
+      case ReportItemType.PRODUCT: {
+        const product = await manager.getRepository(Product).findOne({
+          where: { id: report.itemId },
+          relations: { seller: true },
+          withDeleted: true,
+        });
+        if (!product) throw new NotFoundException('Producto no encontrado');
+        return product.seller.userId;
+      }
+      case ReportItemType.CONVERSATION: {
+        const conversation = await manager
+          .getRepository(Conversation)
+          .findOne({ where: { id: report.itemId }, withDeleted: true });
+        if (!conversation) {
+          throw new NotFoundException('ConversaciÃ³n no encontrada');
+        }
+        if (report.reporterId === conversation.buyerId) {
+          return conversation.sellerId;
+        }
+        if (report.reporterId === conversation.sellerId) {
+          return conversation.buyerId;
+        }
+        throw new NotFoundException('Autor del contenido no encontrado');
+      }
+    }
+  }
+
+  private async resolveRelatedPendingReports(
+    manager: EntityManager,
+    report: Report,
+    resolvedAt: Date,
+    actorUserId: string,
+    resolutionAction: string,
+    resolutionNote: string | null,
+  ): Promise<void> {
+    await manager
+      .createQueryBuilder()
+      .update(Report)
+      .set({
+        status: ReportStatus.RESOLVED,
+        resolvedAt,
+        resolvedByUserId: actorUserId,
+        resolutionAction,
+        resolutionNote,
+      })
+      .where('item_type = :itemType', { itemType: report.itemType })
+      .andWhere('item_id = :itemId', { itemId: report.itemId })
+      .andWhere('community_id = :communityId', {
+        communityId: report.communityId,
+      })
+      .andWhere('status = :status', { status: ReportStatus.PENDING })
+      .execute();
+  }
+
+  private async notifyModeration(
+    report: Report,
+    recipientId: string,
+    dto: ResolveReportDto,
+  ): Promise<void> {
+    const hiding = dto.hideContent === true;
+    try {
+      await this.notificationsService.notify([
+        {
+          userId: recipientId,
+          type: hiding
+            ? NotificationType.CONTENT_HIDDEN
+            : NotificationType.MODERATION_WARNING,
+          data: {
+            itemType: report.itemType,
+            itemId: report.itemId,
+            communityId: report.communityId,
+            ...(hiding ? { reason: report.reason } : {}),
+            ...(dto.warnAuthor === true ? { warned: true } : {}),
+          },
+          message: hiding
+            ? 'Tu contenido fue ocultado por moderaciÃ³n'
+            : 'Recibiste una advertencia de moderaciÃ³n',
+        },
+      ]);
+    } catch (error: unknown) {
+      this.logger.warn(
+        `No se pudo notificar la moderaciÃ³n del reporte ${report.id}`,
+        error instanceof Error ? error.message : String(error),
+      );
+    }
   }
 
   private async resolveTarget(

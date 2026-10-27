@@ -13,6 +13,8 @@ import { Community } from '../community/entities/community.entity';
 import { CommunityProfile } from '../community/entities/community-profile.entity';
 import { Message } from '../conversations/entities/message.entity';
 import { User } from '../users/entities/user.entity';
+import { ModerationModule } from '../moderation/moderation.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
@@ -28,6 +30,8 @@ import { User } from '../users/entities/user.entity';
       User,
     ]),
     CommunityModule,
+    ModerationModule,
+    NotificationsModule,
   ],
   controllers: [ReportsController, CommunityReportsController],
   providers: [ReportsService],

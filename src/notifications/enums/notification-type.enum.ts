@@ -19,4 +19,7 @@ export enum NotificationType {
   // Foro.
   POST_REPLIED = 'post_replied',
   REPLY_REPLIED = 'reply_replied',
+  CONTENT_HIDDEN = 'content_hidden',
+  CONTENT_RESTORED = 'content_restored',
+  MODERATION_WARNING = 'moderation_warning',
 }

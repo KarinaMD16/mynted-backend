@@ -6,6 +6,7 @@ describe('ModerationService', () => {
   const postRepository = { findOne: jest.fn(), save: jest.fn() };
   const replyRepository = { findOne: jest.fn(), save: jest.fn() };
   const productRepository = { findOne: jest.fn(), save: jest.fn() };
+  const notificationsService = { notify: jest.fn() };
   let service: ModerationService;
 
   beforeEach(() => {
@@ -14,6 +15,7 @@ describe('ModerationService', () => {
       postRepository as never,
       replyRepository as never,
       productRepository as never,
+      notificationsService as never,
     );
   });
 
@@ -71,11 +73,13 @@ describe('ModerationService', () => {
       hiddenAt: new Date(),
       hiddenByUserId: 'moderator-id',
       hiddenReason: 'spam',
+      seller: { userId: 'product-author' },
     };
     productRepository.findOne.mockResolvedValue(product);
     productRepository.save.mockImplementation((value: unknown) =>
       Promise.resolve(value),
     );
+    notificationsService.notify.mockResolvedValue([]);
 
     const result = await service.restoreContent(
       ModerationItemType.PRODUCT,
@@ -90,5 +94,51 @@ describe('ModerationService', () => {
       hiddenByUserId: null,
       hiddenReason: null,
     });
+    expect(notificationsService.notify).toHaveBeenCalledWith([
+      expect.objectContaining({
+        userId: 'product-author',
+        type: 'content_restored',
+      }),
+    ]);
+  });
+
+  it('notifies the post author only after a real restoration', async () => {
+    const post = {
+      id: 4,
+      isHidden: true,
+      hiddenAt: new Date(),
+      hiddenByUserId: 'moderator-id',
+      hiddenReason: 'spam',
+      communityProfile: { communityId: 8, userId: 'post-author' },
+    };
+    postRepository.findOne.mockResolvedValue(post);
+    postRepository.save.mockImplementation((value: unknown) =>
+      Promise.resolve(value),
+    );
+    notificationsService.notify.mockResolvedValue([]);
+
+    await service.restoreContent(ModerationItemType.POST, 4, 8, 'owner-id');
+
+    expect(notificationsService.notify).toHaveBeenCalledWith([
+      expect.objectContaining({
+        userId: 'post-author',
+        type: 'content_restored',
+        data: { itemType: 'post', itemId: 4 },
+      }),
+    ]);
+  });
+
+  it('does not notify when restore is already idempotently visible', async () => {
+    const post = {
+      id: 4,
+      isHidden: false,
+      communityProfile: { communityId: 8, userId: 'post-author' },
+    };
+    postRepository.findOne.mockResolvedValue(post);
+
+    await service.restoreContent(ModerationItemType.POST, 4, 8, 'owner-id');
+
+    expect(notificationsService.notify).not.toHaveBeenCalled();
+    expect(postRepository.save).not.toHaveBeenCalled();
   });
 });

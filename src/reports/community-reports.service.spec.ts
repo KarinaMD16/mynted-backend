@@ -46,6 +46,9 @@ describe('ReportsService community reports', () => {
   const communityRepository = { findOne: jest.fn() };
   const communityProfileRepository = { createQueryBuilder: jest.fn() };
   const userRepository = { find: jest.fn() };
+  const dataSource = { transaction: jest.fn() };
+  const moderationService = { hideContent: jest.fn() };
+  const notificationsService = { notify: jest.fn() };
 
   const service = new ReportsService(
     reportRepository as unknown as Repository<Report>,
@@ -57,6 +60,9 @@ describe('ReportsService community reports', () => {
     communityRepository as unknown as Repository<Community>,
     communityProfileRepository as unknown as Repository<CommunityProfile>,
     userRepository as unknown as Repository<User>,
+    dataSource as never,
+    moderationService as never,
+    notificationsService as never,
   );
 
   beforeEach(() => {

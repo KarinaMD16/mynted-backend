@@ -1,19 +1,25 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 import { Post } from '../community/entities/post.entity';
 import { Reply } from '../community/entities/reply.entity';
 import { Product } from '../products/entities/product.entity';
+import { NotificationsService } from '../notifications/notifications.service';
+import { NotificationType } from '../notifications/enums/notification-type.enum';
 import { ModerationItemType } from './enums/moderation-item-type.enum';
 
 type Moderatable = Post | Reply | Product;
 
 @Injectable()
 export class ModerationService {
+  private readonly logger = new Logger(ModerationService.name);
+
   constructor(
     @InjectRepository(Post)
     private readonly postRepository: Repository<Post>,
@@ -21,6 +27,8 @@ export class ModerationService {
     private readonly replyRepository: Repository<Reply>,
     @InjectRepository(Product)
     private readonly productRepository: Repository<Product>,
+    @Optional()
+    private readonly notificationsService?: NotificationsService,
   ) {}
 
   async hideContent(
@@ -28,18 +36,19 @@ export class ModerationService {
     itemId: number,
     actorUserId: string,
     reason?: string,
+    manager?: EntityManager,
   ): Promise<Moderatable> {
     if (!Number.isInteger(itemId) || itemId < 1) {
       throw new BadRequestException('itemId debe ser un entero positivo');
     }
-    const content = await this.findContent(itemType, itemId);
+    const content = await this.findContent(itemType, itemId, manager);
     if (content.isHidden) return content;
     const trimmedReason = reason?.trim();
     content.isHidden = true;
     content.hiddenAt ??= new Date();
     content.hiddenByUserId = actorUserId;
     content.hiddenReason = trimmedReason || null;
-    return this.saveContent(itemType, content);
+    return this.saveContent(itemType, content, manager);
   }
 
   async restoreContent(
@@ -68,16 +77,25 @@ export class ModerationService {
     content.hiddenAt = null;
     content.hiddenByUserId = null;
     content.hiddenReason = null;
-    return this.saveContent(itemType, content);
+    const restored = await this.saveContent(itemType, content);
+    await this.notifyRestored(itemType, restored);
+    return restored;
   }
 
   private async findContent(
     itemType: ModerationItemType,
     itemId: number,
+    manager?: EntityManager,
   ): Promise<Moderatable> {
+    const postRepository = manager?.getRepository(Post) ?? this.postRepository;
+    const replyRepository =
+      manager?.getRepository(Reply) ?? this.replyRepository;
+    const productRepository =
+      manager?.getRepository(Product) ?? this.productRepository;
+
     switch (itemType) {
       case ModerationItemType.POST: {
-        const post = await this.postRepository.findOne({
+        const post = await postRepository.findOne({
           where: { id: itemId },
           relations: { communityProfile: true },
         });
@@ -85,16 +103,21 @@ export class ModerationService {
         return post;
       }
       case ModerationItemType.REPLY: {
-        const reply = await this.replyRepository.findOne({
+        const reply = await replyRepository.findOne({
           where: { id: itemId },
-          relations: { post: { communityProfile: true } },
+          relations: {
+            communityProfile: true,
+            post: { communityProfile: true },
+          },
         });
         if (!reply) throw new NotFoundException('Respuesta no encontrada');
         return reply;
       }
       case ModerationItemType.PRODUCT: {
-        const product = await this.productRepository.findOne({
+        const product = await productRepository.findOne({
           where: { id: itemId },
+          relations: { seller: true },
+          withDeleted: true,
         });
         if (!product) throw new NotFoundException('Producto no encontrado');
         return product;
@@ -120,16 +143,55 @@ export class ModerationService {
   private saveContent(
     itemType: ModerationItemType,
     content: Moderatable,
+    manager?: EntityManager,
   ): Promise<Moderatable> {
+    const postRepository = manager?.getRepository(Post) ?? this.postRepository;
+    const replyRepository =
+      manager?.getRepository(Reply) ?? this.replyRepository;
+    const productRepository =
+      manager?.getRepository(Product) ?? this.productRepository;
+
     switch (itemType) {
       case ModerationItemType.POST:
-        return this.postRepository.save(content as Post);
+        return postRepository.save(content as Post);
       case ModerationItemType.REPLY:
-        return this.replyRepository.save(content as Reply);
+        return replyRepository.save(content as Reply);
       case ModerationItemType.PRODUCT:
-        return this.productRepository.save(content as Product);
+        return productRepository.save(content as Product);
       default:
         throw new BadRequestException('Tipo de contenido no válido');
+    }
+  }
+
+  private async notifyRestored(
+    itemType: ModerationItemType,
+    content: Moderatable,
+  ): Promise<void> {
+    if (!this.notificationsService) return;
+
+    const recipientId =
+      itemType === ModerationItemType.POST
+        ? (content as Post).communityProfile?.userId
+        : itemType === ModerationItemType.REPLY
+          ? (content as Reply).communityProfile?.userId
+          : (content as Product).seller?.userId;
+
+    if (!recipientId) return;
+
+    try {
+      await this.notificationsService.notify([
+        {
+          userId: recipientId,
+          type: NotificationType.CONTENT_RESTORED,
+          data: { itemType, itemId: content.id },
+          message: 'Tu contenido fue restaurado por moderaciÃ³n',
+        },
+      ]);
+    } catch (error: unknown) {
+      this.logger.warn(
+        `No se pudo notificar la restauraciÃ³n de ${itemType}:${content.id}`,
+        error instanceof Error ? error.message : String(error),
+      );
     }
   }
 }

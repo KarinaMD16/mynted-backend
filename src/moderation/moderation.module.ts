@@ -3,10 +3,14 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { Post } from '../community/entities/post.entity';
 import { Reply } from '../community/entities/reply.entity';
 import { Product } from '../products/entities/product.entity';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { ModerationService } from './moderation.service';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Post, Reply, Product])],
+  imports: [
+    TypeOrmModule.forFeature([Post, Reply, Product]),
+    NotificationsModule,
+  ],
   providers: [ModerationService],
   exports: [ModerationService],
 })

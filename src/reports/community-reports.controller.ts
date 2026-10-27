@@ -1,9 +1,12 @@
 import {
+  Body,
   Controller,
   Get,
   Param,
   ParseIntPipe,
+  Patch,
   Query,
+  Req,
   UseGuards,
   ValidationPipe,
 } from '@nestjs/common';
@@ -11,6 +14,8 @@ import {
   ApiBadRequestResponse,
   ApiBearerAuth,
   ApiForbiddenResponse,
+  ApiBody,
+  ApiConflictResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
@@ -19,10 +24,12 @@ import {
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { AuthenticatedRequest } from '../auth/types/authenticated-request';
 import { CommunityProfileRole } from '../community/entities/community-profile.entity';
 import { CommunityRoleGuard } from '../community/guards/community-role.guard';
 import { RequireCommunityRole } from '../community/decorators/require-community-role.decorator';
 import { CommunityReportsQueryDto } from './dto/community-reports-query.dto';
+import { ResolveReportDto } from './dto/resolve-report.dto';
 import { ReportsService } from './reports.service';
 
 @ApiTags('community-reports')
@@ -92,5 +99,71 @@ export class CommunityReportsController {
   @ApiNotFoundResponse({ description: 'Comunidad no encontrada' })
   stats(@Param('communityId', ParseIntPipe) communityId: number) {
     return this.reportsService.getModerationStats(communityId);
+  }
+
+  @Patch('reports/:id/resolve')
+  @UseGuards(JwtAuthGuard, CommunityRoleGuard)
+  @RequireCommunityRole(
+    CommunityProfileRole.MODERATOR,
+    CommunityProfileRole.OWNER,
+  )
+  @ApiOperation({ summary: 'Resolver un reporte de la comunidad' })
+  @ApiParam({ name: 'communityId', type: Number })
+  @ApiParam({ name: 'id', type: Number })
+  @ApiBody({
+    type: ResolveReportDto,
+    description: 'Debe seleccionarse al menos una acción real',
+  })
+  @ApiOkResponse({ description: 'Reporte resuelto' })
+  @ApiBadRequestResponse({ description: 'Acciones inválidas' })
+  @ApiUnauthorizedResponse({ description: 'Se requiere autenticación' })
+  @ApiForbiddenResponse({ description: 'No tienes permisos de moderación' })
+  @ApiNotFoundResponse({ description: 'Reporte o comunidad no encontrada' })
+  @ApiConflictResponse({ description: 'El reporte ya fue resuelto' })
+  resolve(
+    @Param('communityId', ParseIntPipe) communityId: number,
+    @Param('id', ParseIntPipe) reportId: number,
+    @Body(
+      new ValidationPipe({
+        transform: true,
+        whitelist: true,
+        forbidNonWhitelisted: true,
+      }),
+    )
+    dto: ResolveReportDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.reportsService.resolveCommunityReport(
+      communityId,
+      reportId,
+      dto,
+      request.user.userId,
+    );
+  }
+
+  @Patch('reports/:id/dismiss')
+  @UseGuards(JwtAuthGuard, CommunityRoleGuard)
+  @RequireCommunityRole(
+    CommunityProfileRole.MODERATOR,
+    CommunityProfileRole.OWNER,
+  )
+  @ApiOperation({ summary: 'Descartar un reporte de la comunidad' })
+  @ApiParam({ name: 'communityId', type: Number })
+  @ApiParam({ name: 'id', type: Number })
+  @ApiOkResponse({ description: 'Reporte descartado' })
+  @ApiUnauthorizedResponse({ description: 'Se requiere autenticación' })
+  @ApiForbiddenResponse({ description: 'No tienes permisos de moderación' })
+  @ApiNotFoundResponse({ description: 'Reporte o comunidad no encontrada' })
+  @ApiConflictResponse({ description: 'El reporte ya fue resuelto' })
+  dismiss(
+    @Param('communityId', ParseIntPipe) communityId: number,
+    @Param('id', ParseIntPipe) reportId: number,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.reportsService.dismissCommunityReport(
+      communityId,
+      reportId,
+      request.user.userId,
+    );
   }
 }
