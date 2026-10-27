@@ -1,5 +1,8 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { EffectiveCosmeticsDto } from '../../cosmetics/dto/cosmetics-response.dto';
+import {
+  EffectiveAssetDto,
+  EffectiveCosmeticsDto,
+} from '../../cosmetics/dto/cosmetics-response.dto';
 import { ResponseTimeDto } from '../../response-time/response-time.dto';
 import { UserRole } from '../entities/user.entity';
 
@@ -67,6 +70,13 @@ export class PublicUserDto {
     description: 'Tiene Pro vigente (suscripción con endsAt futuro)',
   })
   isPro!: boolean;
+
+  @ApiProperty({
+    type: EffectiveAssetDto,
+    description:
+      'Marco del avatar que se aplica ahora (igual a cosmetics.frame): el equipado si tiene derecho a usarlo; si no, el por defecto. Siempre presente',
+  })
+  frame!: EffectiveAssetDto;
 
   @ApiProperty({
     type: EffectiveCosmeticsDto,

@@ -26,7 +26,7 @@ import { escapeLike } from '../common/escape-like';
 import { PublicSellerDto, PublicUserDto } from './dto/public-user.dto';
 import { CosmeticsService } from '../cosmetics/cosmetics.service';
 import { EffectiveCosmetics } from '../cosmetics/cosmetic-resolve';
-import { ProStatusService } from '../pro-status/pro-status.service';
+import { FALLBACK_USER_COSMETICS } from '../cosmetics/user-display-summary';
 import { ResponseTimeService } from '../response-time/response-time.service';
 import { SearchUsersQueryDto } from './dto/search-users-query.dto';
 import {
@@ -45,7 +45,6 @@ export class UsersService {
     @InjectRepository(Seller)
     private readonly sellersRepository: Repository<Seller>,
     private readonly responseTimeService: ResponseTimeService,
-    private readonly proStatusService: ProStatusService,
     private readonly cosmeticsService: CosmeticsService,
     @Optional() private readonly eventEmitter?: EventEmitter2,
   ) {}
@@ -93,18 +92,14 @@ export class UsersService {
     }
   > {
     const user = await this.findById(id);
-    const [seller, isPro] = await Promise.all([
+    // Una sola resolución trae el estado Pro y los cosméticos efectivos.
+    const [seller, views] = await Promise.all([
       this.sellersRepository.findOne({
         where: { userId: id, isVerified: true },
       }),
-      this.proStatusService.isPro(id),
+      this.cosmeticsService.getEffectiveCosmeticsForUsers([id]),
     ]);
-    const cosmetics = (
-      await this.cosmeticsService.getEffectiveForUsers(
-        [id],
-        new Set(isPro ? [id] : []),
-      )
-    ).get(id)!;
+    const { isPro, cosmetics } = views.get(id) ?? FALLBACK_USER_COSMETICS;
     if (!seller) return Object.assign(user, { isPro, cosmetics });
     const [publicSeller] = await this.toPublicSellers([seller]);
     return Object.assign(user, { isPro, cosmetics, seller: publicSeller });
@@ -160,12 +155,13 @@ export class UsersService {
           },
         })
       : [];
-    // Una consulta para todos los usuarios de la lista, no una por usuario.
-    const userIds = users.map((user) => user.id);
-    const proUserIds = await this.proStatusService.proUserIds(userIds);
-    const [publicSellers, cosmeticsByUser] = await Promise.all([
+    // Una resolución por lotes para toda la lista (Pro y cosméticos), no una
+    // por usuario.
+    const [publicSellers, viewsByUser] = await Promise.all([
       this.toPublicSellers(sellers),
-      this.cosmeticsService.getEffectiveForUsers(userIds, proUserIds),
+      this.cosmeticsService.getEffectiveCosmeticsForUsers(
+        users.map((user) => user.id),
+      ),
     ]);
     const sellerByUserId = new Map(
       sellers.map((seller, index) => [seller.userId, publicSellers[index]]),
@@ -173,6 +169,7 @@ export class UsersService {
 
     return users.map((user) => {
       const seller = sellerByUserId.get(user.id);
+      const view = viewsByUser.get(user.id) ?? FALLBACK_USER_COSMETICS;
       return {
         id: user.id,
         username: user.username,
@@ -181,8 +178,9 @@ export class UsersService {
         location: user.location,
         role: user.role,
         createdAt: user.createdAt,
-        isPro: proUserIds.has(user.id),
-        cosmetics: cosmeticsByUser.get(user.id)!,
+        isPro: view.isPro,
+        frame: view.cosmetics.frame,
+        cosmetics: view.cosmetics,
         ...(seller ? { seller } : {}),
       };
     });

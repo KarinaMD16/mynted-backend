@@ -17,7 +17,7 @@ import {
   resolveEffective,
 } from './cosmetic-resolve';
 import { CosmeticDto, MyCosmeticsDto } from './dto/cosmetics-response.dto';
-import { UserDisplaySummary } from './user-display-summary';
+import { UserCosmeticsView, UserDisplaySummary } from './user-display-summary';
 import { BANNER_MAX_FILE_SIZE } from './cosmetics.config';
 import { EquipCosmeticsDto } from './dto/equip-cosmetics.dto';
 import { Cosmetic, CosmeticType } from './entities/cosmetic.entity';
@@ -26,12 +26,6 @@ import { UserCosmetics } from './entities/user-cosmetics.entity';
 interface CatalogIndex {
   byId: Map<number, Cosmetic>;
   defaults: Record<CosmeticType, CosmeticLike>;
-}
-
-// Estado Pro y cosméticos completos efectivos (perfil y tienda).
-export interface UserCosmeticsView {
-  isPro: boolean;
-  cosmetics: EffectiveCosmetics;
 }
 
 // El catálogo casi nunca cambia: se guarda en memoria este tiempo para no
@@ -287,32 +281,6 @@ export class CosmeticsService {
   // Descarta el catálogo en memoria (lo siguiente lo vuelve a consultar).
   clearCatalogCache(): void {
     this.catalogCache = null;
-  }
-
-  // Cosméticos efectivos de varios usuarios con una consulta de preferencias y
-  // una del catálogo. proUserIds permite reutilizar el lote de Pro que el
-  // llamador ya resolvió (si no, se consulta aquí).
-  async getEffectiveForUsers(
-    userIds: string[],
-    proUserIds?: Set<string>,
-  ): Promise<Map<string, EffectiveCosmetics>> {
-    const ids = this.uniqueIds(userIds);
-    const result = new Map<string, EffectiveCosmetics>();
-    if (ids.length === 0) return result;
-
-    const [pro, rows, catalog] = await Promise.all([
-      proUserIds ?? this.proStatusService.proUserIds(ids),
-      this.userCosmeticsRepository.find({ where: { userId: In(ids) } }),
-      this.loadCatalog(),
-    ]);
-    const rowByUser = new Map(rows.map((row) => [row.userId, row]));
-    for (const id of ids) {
-      result.set(
-        id,
-        this.effective(rowByUser.get(id) ?? null, catalog, pro.has(id)),
-      );
-    }
-    return result;
   }
 
   // ---------------------------------------------------------------------

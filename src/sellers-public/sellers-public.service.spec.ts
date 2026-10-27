@@ -5,7 +5,6 @@ import { ProductSort } from '../products/dto/product-price-query.dto';
 import { ProductStatus } from '../products/entities/product.entity';
 import { ProductsService } from '../products/products.service';
 import { CosmeticsService } from '../cosmetics/cosmetics.service';
-import { ProStatusService } from '../pro-status/pro-status.service';
 import { ResponseTimeService } from '../response-time/response-time.service';
 import { Seller } from '../sellers/entities/seller.entity';
 import { UsersService } from '../users/users.service';
@@ -51,8 +50,10 @@ describe('SellersPublicService', () => {
   let responseTimeService: { getForUser: jest.Mock };
   let userBadgeRepository: { findOne: jest.Mock };
   let usersService: { getSellerRatings: jest.Mock };
-  let proStatusService: { isPro: jest.Mock; proUserIds: jest.Mock };
-  let cosmeticsService: { getEffectiveForUsers: jest.Mock };
+  let cosmeticsService: {
+    getEffectiveCosmeticsForUsers: jest.Mock;
+    getEffectiveSummaryForUsers: jest.Mock;
+  };
   let productsService: {
     countPublicBySeller: jest.Mock;
     findSellerTags: jest.Mock;
@@ -68,13 +69,22 @@ describe('SellersPublicService', () => {
     };
     userBadgeRepository = { findOne: jest.fn().mockResolvedValue(null) };
     cosmeticsService = {
-      getEffectiveForUsers: jest
+      getEffectiveCosmeticsForUsers: jest
         .fn()
-        .mockResolvedValue(new Map([['user-4', DEFAULT_COSMETICS]])),
-    };
-    proStatusService = {
-      isPro: jest.fn().mockResolvedValue(false),
-      proUserIds: jest.fn().mockResolvedValue(new Set<string>()),
+        .mockResolvedValue(
+          new Map([['user-4', { isPro: false, cosmetics: DEFAULT_COSMETICS }]]),
+        ),
+      getEffectiveSummaryForUsers: jest.fn().mockResolvedValue(
+        new Map([
+          [
+            'user-4',
+            {
+              isPro: false,
+              frame: { code: 'frame_default', assetUrl: null },
+            },
+          ],
+        ]),
+      ),
     };
     usersService = {
       getSellerRatings: jest
@@ -96,7 +106,6 @@ describe('SellersPublicService', () => {
       usersService as unknown as UsersService,
       productsService as unknown as ProductsService,
       responseTimeService as unknown as ResponseTimeService,
-      proStatusService as unknown as ProStatusService,
       cosmeticsService as unknown as CosmeticsService,
     );
   });
@@ -114,6 +123,7 @@ describe('SellersPublicService', () => {
         cosmetics: DEFAULT_COSMETICS,
         isVerified: true,
         isPro: false,
+        frame: { code: 'frame_default', assetUrl: null },
         ratingAverage: 4.7,
         reviewsCount: 12,
         completedSalesCount: 15,
@@ -128,10 +138,29 @@ describe('SellersPublicService', () => {
     });
 
     it('isPro es true si el dueño de la tienda tiene Pro vigente', async () => {
-      proStatusService.proUserIds.mockResolvedValue(new Set(['user-4']));
+      cosmeticsService.getEffectiveCosmeticsForUsers.mockResolvedValue(
+        new Map([['user-4', { isPro: true, cosmetics: DEFAULT_COSMETICS }]]),
+      );
 
       await expect(service.getStore(4)).resolves.toMatchObject({ isPro: true });
-      expect(proStatusService.proUserIds).toHaveBeenCalledWith(['user-4']);
+      expect(
+        cosmeticsService.getEffectiveCosmeticsForUsers,
+      ).toHaveBeenCalledWith(['user-4']);
+    });
+
+    it('frame es el marco efectivo del dueño (igual a cosmetics.frame)', async () => {
+      const gold = {
+        ...DEFAULT_COSMETICS,
+        frame: { code: 'frame_gold', assetUrl: 'https://cdn/gold.png' },
+      };
+      cosmeticsService.getEffectiveCosmeticsForUsers.mockResolvedValue(
+        new Map([['user-4', { isPro: true, cosmetics: gold }]]),
+      );
+
+      await expect(service.getStore(4)).resolves.toMatchObject({
+        frame: gold.frame,
+        cosmetics: { frame: gold.frame },
+      });
     });
 
     it('bannerUrl es el banner efectivo del dueño y cosmetics trae el resto', async () => {
@@ -146,20 +175,17 @@ describe('SellersPublicService', () => {
         gooseSkin: { code: 'goose_ninja', assetUrl: null },
         frame: { code: 'frame_default', assetUrl: null },
       };
-      const pro = new Set(['user-4']);
-      proStatusService.proUserIds.mockResolvedValue(pro);
-      cosmeticsService.getEffectiveForUsers.mockResolvedValue(
-        new Map([['user-4', custom]]),
+      cosmeticsService.getEffectiveCosmeticsForUsers.mockResolvedValue(
+        new Map([['user-4', { isPro: true, cosmetics: custom }]]),
       );
 
       await expect(service.getStore(4)).resolves.toMatchObject({
         bannerUrl: custom.banner.url,
         cosmetics: custom,
       });
-      expect(cosmeticsService.getEffectiveForUsers).toHaveBeenCalledWith(
-        ['user-4'],
-        pro,
-      );
+      expect(
+        cosmeticsService.getEffectiveCosmeticsForUsers,
+      ).toHaveBeenCalledTimes(1);
     });
 
     it('solo busca vendedores aprobados con cuenta activa', async () => {

@@ -3,7 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { BadgesModule } from '../badges/badges.module';
 import { Seller } from '../sellers/entities/seller.entity';
 import { User } from '../users/entities/user.entity';
-import { ProStatusModule } from '../pro-status/pro-status.module';
+import { CosmeticsModule } from '../cosmetics/cosmetics.module';
 import { UsersModule } from '../users/users.module';
 import { ReputationController } from './reputation.controller';
 import { ReputationService } from './reputation.service';
@@ -13,7 +13,7 @@ import { ReputationService } from './reputation.service';
     TypeOrmModule.forFeature([User, Seller]),
     UsersModule,
     BadgesModule,
-    ProStatusModule,
+    CosmeticsModule,
   ],
   controllers: [ReputationController],
   providers: [ReputationService],

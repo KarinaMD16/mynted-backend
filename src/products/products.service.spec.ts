@@ -14,6 +14,7 @@ describe('ProductsService.findDetail', () => {
   let productRepository: { findOne: jest.Mock };
   let favoriteRepository: { find: jest.Mock };
   let proStatusService: { isPro: jest.Mock };
+  let cosmeticsService: { getEffectiveSummaryForUsers: jest.Mock };
   let dataSource: { query: jest.Mock };
   let reviewsService: {
     getProductRating: jest.Mock;
@@ -58,6 +59,19 @@ describe('ProductsService.findDetail', () => {
         ),
     };
     proStatusService = { isPro: jest.fn().mockResolvedValue(false) };
+    cosmeticsService = {
+      getEffectiveSummaryForUsers: jest.fn().mockResolvedValue(
+        new Map([
+          [
+            ownerId,
+            {
+              isPro: false,
+              frame: { code: 'frame_default', assetUrl: null },
+            },
+          ],
+        ]),
+      ),
+    };
     // ids de los destacados efectivos (ninguno por defecto)
     dataSource = { query: jest.fn().mockResolvedValue([]) };
     const repo = {} as Repository<never>;
@@ -77,6 +91,7 @@ describe('ProductsService.findDetail', () => {
       dataSource as never,
       {} as PriceDisplayService,
       proStatusService as never,
+      cosmeticsService as never,
     );
   });
 
@@ -101,6 +116,7 @@ describe('ProductsService.findDetail', () => {
       isVerified: true,
       photoUrl: 'https://cdn/a.png',
       isPro: false,
+      frame: { code: 'frame_default', assetUrl: null },
       ratingAverage: 4.7,
       reviewsCount: 12,
     });
@@ -126,13 +142,19 @@ describe('ProductsService.findDetail', () => {
     expect(detail).not.toHaveProperty('featuredAt');
   });
 
-  it('seller.isPro refleja el Pro vigente del dueño del producto', async () => {
-    proStatusService.isPro.mockResolvedValue(true);
+  it('seller.isPro y seller.frame reflejan el Pro vigente y el marco efectivo del dueño', async () => {
+    const gold = { code: 'frame_gold', assetUrl: 'https://cdn/gold.png' };
+    cosmeticsService.getEffectiveSummaryForUsers.mockResolvedValue(
+      new Map([[ownerId, { isPro: true, frame: gold }]]),
+    );
 
     const detail = await service.findDetail(22, viewerId);
 
-    expect(proStatusService.isPro).toHaveBeenCalledWith(ownerId);
+    expect(cosmeticsService.getEffectiveSummaryForUsers).toHaveBeenCalledWith([
+      ownerId,
+    ]);
     expect(detail.seller.isPro).toBe(true);
+    expect(detail.seller.frame).toEqual(gold);
   });
 
   it('pasa la sesión tal cual: sin sesión la regla recibe undefined', async () => {

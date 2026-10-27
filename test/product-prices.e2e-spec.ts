@@ -154,6 +154,9 @@ describe('Precios en la moneda de visualización (e2e)', () => {
                 proUserIds: () => Promise.resolve(new Set<string>()),
                 isPro: () => Promise.resolve(false),
               } as never,
+              {
+                getEffectiveSummaryForUsers: () => Promise.resolve(new Map()),
+              } as never,
             ),
         },
       ],

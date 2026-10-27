@@ -49,6 +49,7 @@ function createHarness(): Harness {
     dataSource as never,
     {} as never,
     proStatusService as never,
+    {} as never,
   );
   return {
     service,

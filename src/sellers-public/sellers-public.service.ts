@@ -12,7 +12,10 @@ import {
   ProductsService,
 } from '../products/products.service';
 import { CosmeticsService } from '../cosmetics/cosmetics.service';
-import { ProStatusService } from '../pro-status/pro-status.service';
+import {
+  FALLBACK_USER_COSMETICS,
+  FALLBACK_USER_DISPLAY,
+} from '../cosmetics/user-display-summary';
 import { ResponseTimeService } from '../response-time/response-time.service';
 import { Seller } from '../sellers/entities/seller.entity';
 import { UsersService } from '../users/users.service';
@@ -38,26 +41,21 @@ export class SellersPublicService {
     private readonly usersService: UsersService,
     private readonly productsService: ProductsService,
     private readonly responseTimeService: ResponseTimeService,
-    private readonly proStatusService: ProStatusService,
     private readonly cosmeticsService: CosmeticsService,
   ) {}
 
   async getStore(sellerId: number): Promise<SellerStoreDto> {
     const seller = await this.findPublicSeller(sellerId);
-    const [ratings, productCounts, sellerSince, responseTime, proUserIds] =
+    const [ratings, productCounts, sellerSince, responseTime, views] =
       await Promise.all([
         this.usersService.getSellerRatings([seller.sellerId]),
         this.productsService.countPublicBySeller([seller.sellerId]),
         this.getSellerSince(seller),
         this.responseTimeService.getForUser(seller.userId),
-        this.proStatusService.proUserIds([seller.userId]),
+        this.cosmeticsService.getEffectiveCosmeticsForUsers([seller.userId]),
       ]);
-    const cosmetics = (
-      await this.cosmeticsService.getEffectiveForUsers(
-        [seller.userId],
-        proUserIds,
-      )
-    ).get(seller.userId)!;
+    const { isPro, cosmetics } =
+      views.get(seller.userId) ?? FALLBACK_USER_COSMETICS;
     const rating = ratings.get(seller.sellerId);
 
     return {
@@ -70,7 +68,8 @@ export class SellersPublicService {
       bannerUrl: cosmetics.banner.url,
       cosmetics,
       isVerified: seller.isVerified,
-      isPro: proUserIds.has(seller.userId),
+      isPro,
+      frame: cosmetics.frame,
       ratingAverage: rating?.ratingAverage ?? null,
       reviewsCount: rating?.reviewsCount ?? 0,
       completedSalesCount: seller.completedSalesCount,
@@ -138,15 +137,18 @@ export class SellersPublicService {
       .getManyAndCount();
 
     const sellerIds = sellers.map((seller) => seller.sellerId);
-    const [ratings, productCounts, proUserIds] = await Promise.all([
+    const [ratings, productCounts, displays] = await Promise.all([
       this.usersService.getSellerRatings(sellerIds),
       this.productsService.countPublicBySeller(sellerIds),
-      this.proStatusService.proUserIds(sellers.map((seller) => seller.userId)),
+      this.cosmeticsService.getEffectiveSummaryForUsers(
+        sellers.map((seller) => seller.userId),
+      ),
     ]);
 
     return {
       data: sellers.map((seller) => {
         const rating = ratings.get(seller.sellerId);
+        const display = displays.get(seller.userId) ?? FALLBACK_USER_DISPLAY;
         return {
           sellerId: seller.sellerId,
           userId: seller.userId,
@@ -154,7 +156,8 @@ export class SellersPublicService {
           photoUrl: seller.user.photoUrl ?? null,
           location: this.storeLocation(seller),
           isVerified: seller.isVerified,
-          isPro: proUserIds.has(seller.userId),
+          isPro: display.isPro,
+          frame: display.frame,
           ratingAverage: rating?.ratingAverage ?? null,
           reviewsCount: rating?.reviewsCount ?? 0,
           activeProductsCount: productCounts.get(seller.sellerId) ?? 0,

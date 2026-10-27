@@ -1,5 +1,8 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { EffectiveCosmeticsDto } from '../../cosmetics/dto/cosmetics-response.dto';
+import {
+  EffectiveAssetDto,
+  EffectiveCosmeticsDto,
+} from '../../cosmetics/dto/cosmetics-response.dto';
 import { ResponseTimeDto } from '../../response-time/response-time.dto';
 
 // Perfil público de la tienda. Nunca incluye payment_info ni el correo.
@@ -55,6 +58,13 @@ export class SellerStoreDto {
     description: 'El dueño de la tienda tiene Pro vigente',
   })
   isPro!: boolean;
+
+  @ApiProperty({
+    type: EffectiveAssetDto,
+    description:
+      'Marco del avatar del dueño que se aplica ahora (igual a cosmetics.frame). Siempre presente',
+  })
+  frame!: EffectiveAssetDto;
 
   @ApiProperty({
     type: Number,
@@ -119,6 +129,13 @@ export class StoreSearchItemDto {
     description: 'El dueño de la tienda tiene Pro vigente',
   })
   isPro!: boolean;
+
+  @ApiProperty({
+    type: EffectiveAssetDto,
+    description:
+      'Marco del avatar del dueño que se aplica ahora. Siempre presente',
+  })
+  frame!: EffectiveAssetDto;
 
   @ApiProperty({ type: Number, nullable: true, example: 4.7 })
   ratingAverage!: number | null;
