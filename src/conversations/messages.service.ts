@@ -9,7 +9,8 @@ import 'multer';
 import { DataSource, IsNull, Not, Repository } from 'typeorm';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
 import { PriceDisplayService } from '../pricing/price-display.service';
-import { ProStatusService } from '../pro-status/pro-status.service';
+import { CosmeticsService } from '../cosmetics/cosmetics.service';
+import { FALLBACK_USER_DISPLAY } from '../cosmetics/user-display-summary';
 import { Seller } from '../sellers/entities/seller.entity';
 import {
   otherParticipantId,
@@ -73,7 +74,7 @@ export class MessagesService {
     private readonly dataSource: DataSource,
     private readonly cloudinaryService: CloudinaryService,
     private readonly priceDisplay: PriceDisplayService,
-    private readonly proStatusService: ProStatusService,
+    private readonly cosmeticsService: CosmeticsService,
   ) {}
 
   // Más recientes primero, paginado por cursor (id del último mensaje
@@ -252,7 +253,7 @@ export class MessagesService {
       conversation.buyerId === viewerId
         ? conversation.seller
         : conversation.buyer;
-    const [otherSeller, rates, otherIsPro] = await Promise.all([
+    const [otherSeller, rates, otherDisplay] = await Promise.all([
       this.sellerRepository.findOne({
         where: { userId: other.id },
         select: { sellerId: true, displayName: true, isVerified: true },
@@ -260,7 +261,7 @@ export class MessagesService {
       this.priceDisplay.getDisplayRates(displayCurrency, [
         conversation.product.currency,
       ]),
-      this.proStatusService.isPro(other.id),
+      this.cosmeticsService.getEffectiveSummaryForUsers([other.id]),
     ]);
 
     return {
@@ -273,7 +274,11 @@ export class MessagesService {
           rates,
         ),
       },
-      otherParticipant: toParticipantSummary(other, otherSeller, otherIsPro),
+      otherParticipant: toParticipantSummary(
+        other,
+        otherSeller,
+        otherDisplay.get(other.id) ?? FALLBACK_USER_DISPLAY,
+      ),
     };
   }
 }

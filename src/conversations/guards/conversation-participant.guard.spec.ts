@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { DataSource, Repository } from 'typeorm';
-import { ProStatusService } from '../../pro-status/pro-status.service';
+import { CosmeticsService } from '../../cosmetics/cosmetics.service';
 import { Product } from '../../products/entities/product.entity';
 import { ConversationsService } from '../conversations.service';
 import { Conversation } from '../entities/conversation.entity';
@@ -26,7 +26,7 @@ describe('ConversationParticipantGuard', () => {
       conversationRepository as unknown as Repository<Conversation>,
       {} as Repository<Product>,
       {} as DataSource,
-      {} as ProStatusService,
+      {} as CosmeticsService,
     ),
   );
 

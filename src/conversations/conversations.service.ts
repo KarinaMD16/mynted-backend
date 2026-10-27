@@ -6,7 +6,11 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, QueryFailedError, Repository } from 'typeorm';
-import { ProStatusService } from '../pro-status/pro-status.service';
+import { CosmeticsService } from '../cosmetics/cosmetics.service';
+import {
+  FALLBACK_USER_DISPLAY,
+  UserDisplaySummary,
+} from '../cosmetics/user-display-summary';
 import { Product, ProductStatus } from '../products/entities/product.entity';
 import { toParticipantSummary, toProductSummary } from './conversation-views';
 import { ConversationResponseDto } from './dto/conversation-response.dto';
@@ -113,7 +117,7 @@ export class ConversationsService {
     @InjectRepository(Product)
     private readonly productRepository: Repository<Product>,
     private readonly dataSource: DataSource,
-    private readonly proStatusService: ProStatusService,
+    private readonly cosmeticsService: CosmeticsService,
   ) {}
 
   // Bandeja del usuario como comprador o vendedor, más reciente primero.
@@ -131,14 +135,18 @@ export class ConversationsService {
       this.dataSource.query<{ total: number }[]>(INBOX_COUNT_SQL, [userId]),
     ]);
     const total = countRows[0]?.total ?? 0;
-    // Una consulta para toda la página, no una por conversación.
-    const proUserIds = await this.proStatusService.proUserIds(
+    // Badge Pro y marco de todos los participantes de la página: una sola
+    // resolución por lotes, no una por conversación.
+    const displays = await this.cosmeticsService.getEffectiveSummaryForUsers(
       rows.map((row) => row.other_id),
     );
 
     return {
       data: rows.map((row) =>
-        this.toInboxItem(row, proUserIds.has(row.other_id)),
+        this.toInboxItem(
+          row,
+          displays.get(row.other_id) ?? FALLBACK_USER_DISPLAY,
+        ),
       ),
       pagination: {
         page,
@@ -264,7 +272,10 @@ export class ConversationsService {
     };
   }
 
-  private toInboxItem(row: InboxRow, isPro: boolean): InboxItemDto {
+  private toInboxItem(
+    row: InboxRow,
+    display: UserDisplaySummary,
+  ): InboxItemDto {
     return {
       id: row.id,
       otherParticipant: toParticipantSummary(
@@ -279,7 +290,7 @@ export class ConversationsService {
               displayName: row.other_display_name,
               isVerified: row.other_is_verified ?? false,
             },
-        isPro,
+        display,
       ),
       product: toProductSummary({
         id: row.product_id,

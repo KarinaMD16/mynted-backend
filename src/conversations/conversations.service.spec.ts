@@ -4,7 +4,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { DataSource, QueryFailedError, Repository } from 'typeorm';
-import { ProStatusService } from '../pro-status/pro-status.service';
+import { CosmeticsService } from '../cosmetics/cosmetics.service';
+import { UserDisplaySummary } from '../cosmetics/user-display-summary';
 import { Product, ProductStatus } from '../products/entities/product.entity';
 import {
   ConversationsService,
@@ -25,14 +26,21 @@ describe('ConversationsService', () => {
   };
   const productRepository = { findOne: jest.fn() };
   const dataSource = { query: jest.fn() };
-  const proStatusService = {
-    proUserIds: jest.fn().mockResolvedValue(new Set<string>()),
+  const defaultDisplay = (): UserDisplaySummary => ({
+    isPro: false,
+    frame: { code: 'frame_default', assetUrl: null },
+  });
+  // Una entrada por cada id pedido, como el cargador real.
+  const cosmeticsService = {
+    getEffectiveSummaryForUsers: jest.fn((ids: string[]) =>
+      Promise.resolve(new Map(ids.map((id) => [id, defaultDisplay()]))),
+    ),
   };
   const service = new ConversationsService(
     conversationRepository as unknown as Repository<Conversation>,
     productRepository as unknown as Repository<Product>,
     dataSource as unknown as DataSource,
-    proStatusService as unknown as ProStatusService,
+    cosmeticsService as unknown as CosmeticsService,
   );
 
   const product = (status = ProductStatus.ACTIVE, isVisible = true) => ({
@@ -314,6 +322,7 @@ describe('ConversationsService', () => {
             photoUrl: 'https://cdn/avatar.png',
             isVerified: true,
             isPro: false,
+            frame: { code: 'frame_default', assetUrl: null },
           },
           product: {
             id: 42,
@@ -389,8 +398,19 @@ describe('ConversationsService', () => {
       expect(data[0].lastMessage.content).toBeNull();
     });
 
-    it('marks isPro per participant with a single query for the whole page', async () => {
-      proStatusService.proUserIds.mockResolvedValueOnce(new Set(['pro-user']));
+    it('marks isPro and the frame per participant with a single batch for the whole page', async () => {
+      cosmeticsService.getEffectiveSummaryForUsers.mockResolvedValueOnce(
+        new Map<string, UserDisplaySummary>([
+          [sellerUserId, defaultDisplay()],
+          [
+            'pro-user',
+            {
+              isPro: true,
+              frame: { code: 'frame_gold', assetUrl: 'https://cdn/gold.png' },
+            },
+          ],
+        ]),
+      );
       dataSource.query
         .mockResolvedValueOnce([
           inboxRow({ id: 15, other_id: sellerUserId }),
@@ -398,7 +418,7 @@ describe('ConversationsService', () => {
           inboxRow({ id: 17, other_id: 'pro-user' }),
         ])
         .mockResolvedValueOnce([{ total: 3 }]);
-      proStatusService.proUserIds.mockClear();
+      cosmeticsService.getEffectiveSummaryForUsers.mockClear();
 
       const { data } = await service.getInbox(buyerId, { page: 1, limit: 20 });
 
@@ -407,12 +427,17 @@ describe('ConversationsService', () => {
         true,
         true,
       ]);
-      expect(proStatusService.proUserIds).toHaveBeenCalledTimes(1);
-      expect(proStatusService.proUserIds).toHaveBeenCalledWith([
-        sellerUserId,
-        'pro-user',
-        'pro-user',
+      expect(data.map((item) => item.otherParticipant.frame.code)).toEqual([
+        'frame_default',
+        'frame_gold',
+        'frame_gold',
       ]);
+      expect(
+        cosmeticsService.getEffectiveSummaryForUsers,
+      ).toHaveBeenCalledTimes(1);
+      expect(cosmeticsService.getEffectiveSummaryForUsers).toHaveBeenCalledWith(
+        [sellerUserId, 'pro-user', 'pro-user'],
+      );
     });
 
     it('falls back to username and unverified for a participant without a store', async () => {

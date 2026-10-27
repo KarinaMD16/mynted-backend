@@ -130,6 +130,17 @@ describe('isPro en las superficies (e2e)', () => {
     await subscribe(proSeller, new Date(Date.now() + 20 * day));
     await subscribe(proFan, new Date(Date.now() + 5 * day));
     await subscribe(expiredSeller, new Date(Date.now() - day));
+    // Marcos equipados: el Pro uno Pro y el gratuito uno gratuito.
+    await ctx.dataSource.query(
+      `INSERT INTO user_cosmetics (user_id, frame_cosmetic_id)
+       SELECT $1, id FROM cosmetic WHERE code = 'frame_gold'`,
+      [proSeller.id],
+    );
+    await ctx.dataSource.query(
+      `INSERT INTO user_cosmetics (user_id, frame_cosmetic_id)
+       SELECT $1, id FROM cosmetic WHERE code = 'frame_simple'`,
+      [freeSeller.id],
+    );
 
     const tag = await ctx.repo(Tag).save({ name: 'funko' });
     const product = async (title: string, owner: Seller) => {
@@ -342,16 +353,24 @@ describe('isPro en las superficies (e2e)', () => {
       });
 
       const data = json(response!).data as {
-        otherParticipant: { id: string; isPro: boolean };
+        otherParticipant: {
+          id: string;
+          isPro: boolean;
+          frame: { code: string };
+        };
       }[];
       expect(
         Object.fromEntries(
           data.map((item) => [
             item.otherParticipant.id,
-            item.otherParticipant.isPro,
+            [item.otherParticipant.isPro, item.otherParticipant.frame.code],
           ]),
         ),
-      ).toEqual({ [proSeller.id]: true, [freeSeller.id]: false });
+      ).toEqual({
+        [proSeller.id]: [true, 'frame_gold'],
+        // Un gratuito conserva su marco gratuito.
+        [freeSeller.id]: [false, 'frame_simple'],
+      });
       expect(queries).toBe(1);
     });
 
@@ -361,11 +380,12 @@ describe('isPro en las superficies (e2e)', () => {
       ).expect(200);
 
       const conversation = json(response).conversation as {
-        otherParticipant: { id: string; isPro: boolean };
+        otherParticipant: { id: string; isPro: boolean; frame: object };
       };
       expect(conversation.otherParticipant).toMatchObject({
         id: proSeller.id,
         isPro: true,
+        frame: { code: 'frame_gold' },
       });
     });
   });

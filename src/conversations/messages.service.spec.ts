@@ -12,7 +12,8 @@ import { Message } from './entities/message.entity';
 import { MessageType } from './enums/message-type.enum';
 import { MessagesService } from './messages.service';
 import { PriceDisplayService } from '../pricing/price-display.service';
-import { ProStatusService } from '../pro-status/pro-status.service';
+import { CosmeticsService } from '../cosmetics/cosmetics.service';
+import { UserDisplaySummary } from '../cosmetics/user-display-summary';
 
 describe('MessagesService', () => {
   const buyerId = 'buyer-1';
@@ -123,7 +124,21 @@ describe('MessagesService', () => {
         }),
       ),
     };
-    const proStatusService = { isPro: jest.fn().mockResolvedValue(false) };
+    const cosmeticsService = {
+      getEffectiveSummaryForUsers: jest.fn((ids: string[]) =>
+        Promise.resolve(
+          new Map<string, UserDisplaySummary>(
+            ids.map((id) => [
+              id,
+              {
+                isPro: false,
+                frame: { code: 'frame_default', assetUrl: null },
+              },
+            ]),
+          ),
+        ),
+      ),
+    };
     const service = new MessagesService(
       messageRepository as unknown as Repository<Message>,
       conversationRepository as unknown as Repository<Conversation>,
@@ -131,7 +146,7 @@ describe('MessagesService', () => {
       dataSource as unknown as DataSource,
       cloudinaryService as unknown as CloudinaryService,
       priceDisplay as unknown as PriceDisplayService,
-      proStatusService as unknown as ProStatusService,
+      cosmeticsService as unknown as CosmeticsService,
     );
     return {
       service,
@@ -141,7 +156,7 @@ describe('MessagesService', () => {
       manager,
       dataSource,
       cloudinaryService,
-      proStatusService,
+      cosmeticsService,
     };
   };
 
@@ -392,9 +407,19 @@ describe('MessagesService', () => {
       expect(h.messageRepository.createQueryBuilder).not.toHaveBeenCalled();
     });
 
-    it('marks the other participant as Pro when their subscription is current', async () => {
+    it('marks the other participant as Pro with their frame when the subscription is current', async () => {
       const h = createHarness();
-      h.proStatusService.isPro.mockResolvedValue(true);
+      h.cosmeticsService.getEffectiveSummaryForUsers.mockResolvedValue(
+        new Map<string, UserDisplaySummary>([
+          [
+            sellerUserId,
+            {
+              isPro: true,
+              frame: { code: 'frame_gold', assetUrl: 'https://cdn/gold.png' },
+            },
+          ],
+        ]),
+      );
       h.messageRepository.createQueryBuilder.mockReturnValue(
         buildQb({ getMany: [] }),
       );
@@ -406,8 +431,13 @@ describe('MessagesService', () => {
         'CRC',
       );
 
-      expect(h.proStatusService.isPro).toHaveBeenCalledWith(sellerUserId);
-      expect(result.conversation.otherParticipant.isPro).toBe(true);
+      expect(
+        h.cosmeticsService.getEffectiveSummaryForUsers,
+      ).toHaveBeenCalledWith([sellerUserId]);
+      expect(result.conversation.otherParticipant).toMatchObject({
+        isPro: true,
+        frame: { code: 'frame_gold', assetUrl: 'https://cdn/gold.png' },
+      });
     });
 
     it('includes product context (still readable when sold) and the other participant', async () => {
@@ -446,6 +476,7 @@ describe('MessagesService', () => {
           photoUrl: 'https://cdn/a.png',
           isVerified: true,
           isPro: false,
+          frame: { code: 'frame_default', assetUrl: null },
         },
       });
       expect(h.sellerRepository.findOne).toHaveBeenCalledWith(

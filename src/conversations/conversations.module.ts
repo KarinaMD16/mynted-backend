@@ -4,7 +4,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { WsJwtAuthenticator } from '../auth/ws-jwt-authenticator';
 import { CloudinaryModule } from '../cloudinary/cloudinary.module';
 import { PricingModule } from '../pricing/pricing.module';
-import { ProStatusModule } from '../pro-status/pro-status.module';
+import { CosmeticsModule } from '../cosmetics/cosmetics.module';
 import { Product } from '../products/entities/product.entity';
 import { Seller } from '../sellers/entities/seller.entity';
 import { ConversationMessagesController } from './conversation-messages.controller';
@@ -22,7 +22,7 @@ import { MessagesService } from './messages.service';
     TypeOrmModule.forFeature([Conversation, Message, Product, Seller]),
     CloudinaryModule,
     PricingModule,
-    ProStatusModule,
+    CosmeticsModule,
     // Solo para verificar el token del handshake: el secret se pasa al
     // verificar (JWT_SECRET), igual que en JwtStrategy.
     JwtModule.register({}),

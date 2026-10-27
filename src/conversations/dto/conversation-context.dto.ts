@@ -1,4 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { EffectiveAssetDto } from '../../cosmetics/dto/cosmetics-response.dto';
 import { ProductStatus } from '../../products/entities/product.entity';
 
 // El otro participante de la conversación, visto por quien consulta.
@@ -29,6 +30,13 @@ export class ParticipantSummaryDto {
     description: 'Tiene Pro vigente (suscripción con endsAt futuro)',
   })
   isPro!: boolean;
+
+  @ApiProperty({
+    type: EffectiveAssetDto,
+    description:
+      'Marco del avatar que se aplica ahora (el equipado si tiene derecho a usarlo; si no, el por defecto). Siempre presente',
+  })
+  frame!: EffectiveAssetDto;
 }
 
 export class ProductSummaryDto {

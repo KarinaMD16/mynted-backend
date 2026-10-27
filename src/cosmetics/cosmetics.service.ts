@@ -12,12 +12,12 @@ import { ProStatusService } from '../pro-status/pro-status.service';
 import { toStaticImageUrl } from './banner-urls';
 import {
   CosmeticLike,
-  EffectiveAsset,
   EffectiveCosmetics,
   resolveCosmetics,
   resolveEffective,
 } from './cosmetic-resolve';
 import { CosmeticDto, MyCosmeticsDto } from './dto/cosmetics-response.dto';
+import { UserDisplaySummary } from './user-display-summary';
 import { BANNER_MAX_FILE_SIZE } from './cosmetics.config';
 import { EquipCosmeticsDto } from './dto/equip-cosmetics.dto';
 import { Cosmetic, CosmeticType } from './entities/cosmetic.entity';
@@ -26,16 +26,6 @@ import { UserCosmetics } from './entities/user-cosmetics.entity';
 interface CatalogIndex {
   byId: Map<number, Cosmetic>;
   defaults: Record<CosmeticType, CosmeticLike>;
-}
-
-// Lo mínimo que necesita un listado para pintar a una persona: el badge Pro y
-// el marco del avatar. Sin banner ni ganso (eso solo importa en el perfil).
-export interface UserDisplaySummary {
-  isPro: boolean;
-  // Marco efectivo: el equipado si el usuario tiene derecho a usarlo y, si no,
-  // el marco por defecto. Siempre presente (los gratuitos también equipan
-  // marcos gratuitos).
-  frame: EffectiveAsset;
 }
 
 // Estado Pro y cosméticos completos efectivos (perfil y tienda).
