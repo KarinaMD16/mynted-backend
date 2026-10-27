@@ -125,6 +125,18 @@ describe('CommunityController', () => {
     expect(guards).toEqual(expect.arrayContaining([JwtAuthGuard]));
   });
 
+  it('protects community deletion with JWT and SuperAdminGuard', () => {
+    const method = Object.getOwnPropertyDescriptor(
+      CommunityController.prototype,
+      'deleteCommunity',
+    )?.value as (...args: never[]) => unknown;
+    const guards = Reflect.getMetadata(GUARDS_METADATA, method) as unknown[];
+
+    expect(guards).toEqual(
+      expect.arrayContaining([JwtAuthGuard, SuperAdminGuard]),
+    );
+  });
+
   it.each(['createCategory', 'activateCategory', 'deactivateCategory'])(
     'protects category endpoint %s with JwtAuthGuard and SuperAdminGuard',
     (methodName) => {

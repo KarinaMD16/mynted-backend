@@ -35,6 +35,7 @@ import { CommunityService } from './community.service';
 import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
 import { OptionalAuthenticatedRequest } from '../auth/types/authenticated-request';
 import { CreateCommunityDto } from './dto/create-community.dto';
+import { DeleteCommunityDto } from './dto/delete-community.dto';
 import { CreateCommunityRuleDto } from './dto/create-community-rule.dto';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { CreateTagDto } from './dto/create-tag.dto';
@@ -90,6 +91,11 @@ export class CommunityController {
         'rules',
       ],
       properties: {
+        ownerId: {
+          type: 'string',
+          format: 'uuid',
+          description: 'Solo SUPERADMIN; owner comunitario opcional',
+        },
         name: {
           type: 'string',
           example: 'My Little Pony Collectors MX',
@@ -245,6 +251,27 @@ export class CommunityController {
     query: GetAdminCommunitiesQueryDto,
   ) {
     return this.communityService.findAllCommunitiesForAdmin(query);
+  }
+
+  @Delete('communities/:id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @UseGuards(JwtAuthGuard, SuperAdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: '[Superadmin] Eliminar lógicamente una comunidad' })
+  @ApiParam({ name: 'id', type: Number, example: 5 })
+  deleteCommunity(
+    @Param('id', ParseIntPipe) id: number,
+    @Body(
+      new ValidationPipe({
+        transform: true,
+        whitelist: true,
+        forbidNonWhitelisted: true,
+      }),
+    )
+    dto: DeleteCommunityDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.communityService.deleteCommunity(id, request.user.userId, dto);
   }
 
   @Get('communities/by-slug/:slug')

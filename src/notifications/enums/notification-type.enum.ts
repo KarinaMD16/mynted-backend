@@ -17,6 +17,7 @@ export enum NotificationType {
   COMMUNITY_ACTIVATED = 'community_activated',
   COMMUNITY_MADE_PUBLIC = 'community_made_public',
   COMMUNITY_MADE_PRIVATE = 'community_made_private',
+  COMMUNITY_DELETED = 'community_deleted',
   // Solicitud de vendedor.
   SELLER_REQUEST_APPROVED = 'seller_request_approved',
   SELLER_REQUEST_REJECTED = 'seller_request_rejected',

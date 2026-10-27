@@ -31,6 +31,7 @@ import { UpdateCommunityRuleDto } from './dto/update-community-rule.dto';
 import { UpdateTagDto } from './dto/update-tag.dto';
 import { GetCommunitiesQueryDto } from './dto/get-communities-query.dto';
 import { GetAdminCommunitiesQueryDto } from './dto/get-admin-communities-query.dto';
+import { DeleteCommunityDto } from './dto/delete-community.dto';
 import {
   CommunityProfile,
   CommunityProfileRole,
@@ -158,6 +159,26 @@ export class CommunityService {
       );
     }
 
+    const user = await this.usersService.findById(userId);
+    const isSuperAdmin = user.role === UserRole.SUPERADMIN;
+
+    if (dto.ownerId && !isSuperAdmin) {
+      throw new ForbiddenException(
+        'Solo un superadministrador puede asignar otro owner',
+      );
+    }
+
+    let ownerUser = user;
+    if (isSuperAdmin && dto.ownerId) {
+      ownerUser = await this.usersService.findById(dto.ownerId);
+      if (!ownerUser.isActive) {
+        throw new BadRequestException(
+          'El usuario seleccionado como owner está inactivo',
+        );
+      }
+    }
+
+    const shouldCreateOwnerProfile = !isSuperAdmin || Boolean(dto.ownerId);
     let imageUrl: string | null = null;
     let bannerUrl: string | null = null;
     const filesToUpload: Express.Multer.File[] = [];
@@ -179,8 +200,6 @@ export class CommunityService {
       }
     }
 
-    const user = await this.usersService.findById(userId);
-
     let creatorProfileId: number | undefined;
 
     try {
@@ -198,18 +217,17 @@ export class CommunityService {
 
         const savedCommunity = await manager.save(Community, community);
 
-        const creatorProfile = manager.create(CommunityProfile, {
-          displayName: user.username,
-          bio: '',
-          role: CommunityProfileRole.OWNER,
-          userId,
-          communityId: savedCommunity.id,
-        });
-        const savedCreator = await manager.save(
-          CommunityProfile,
-          creatorProfile,
-        );
-        creatorProfileId = savedCreator.communityProfileId;
+        if (shouldCreateOwnerProfile) {
+          const ownerProfile = manager.create(CommunityProfile, {
+            displayName: ownerUser.username,
+            bio: '',
+            role: CommunityProfileRole.OWNER,
+            userId: ownerUser.id,
+            communityId: savedCommunity.id,
+          });
+          const savedOwner = await manager.save(CommunityProfile, ownerProfile);
+          creatorProfileId = savedOwner.communityProfileId;
+        }
 
         const communityTags = dto.tagIds.map((tagId) =>
           manager.create(CommunityTag, {
@@ -250,7 +268,7 @@ export class CommunityService {
 
       if (creatorProfileId !== undefined) {
         this.eventEmitter?.emit(BadgeEvents.MEMBER_JOINED, {
-          userId,
+          userId: ownerUser.id,
           communityProfileId: creatorProfileId,
           communityId: created.id,
         });
@@ -1021,6 +1039,7 @@ export class CommunityService {
 
     const queryBuilder = this.communityRepository
       .createQueryBuilder('community')
+      .withDeleted()
       .leftJoinAndSelect('community.category', 'category')
       .addSelect(memberCountSubquery, 'admin_member_count')
       .addSelect(productCountSubquery, 'admin_product_count')
@@ -1108,6 +1127,7 @@ export class CommunityService {
         productCount: this.toNumber(raw.admin_product_count),
         pendingReportsCount: this.toNumber(raw.admin_pending_reports_count),
         createdAt: community.createdAt,
+        deletedAt: community.deletedAt,
       };
     });
   }
@@ -1760,6 +1780,80 @@ export class CommunityService {
       throw new InternalServerErrorException(
         'Ocurrió un error al cambiar la comunidad a privada',
       );
+    }
+  }
+
+  async deleteCommunity(
+    communityId: number,
+    actorUserId: string,
+    dto: DeleteCommunityDto,
+  ): Promise<void> {
+    const reason = dto.reason.trim();
+    if (!reason || reason.length > 500) {
+      throw new BadRequestException(
+        'El motivo de eliminación es obligatorio y no puede superar 500 caracteres',
+      );
+    }
+
+    if (!this.moderationActionsService || !this.notificationsService) {
+      throw new InternalServerErrorException(
+        'La moderación administrativa no está configurada',
+      );
+    }
+
+    let changed = false;
+    let communityName = '';
+
+    await this.dataSource.transaction(async (manager) => {
+      const communityRepository = manager.getRepository(Community);
+      const community = await communityRepository.findOne({
+        where: { id: communityId },
+        withDeleted: true,
+        lock: { mode: 'pessimistic_write' },
+      });
+
+      if (!community) {
+        throw new NotFoundException('Comunidad no encontrada');
+      }
+
+      if (community.deletedAt) return;
+
+      communityName = community.name;
+      await communityRepository.softDelete(communityId);
+      await this.moderationActionsService!.record(
+        {
+          actorUserId,
+          targetType: MODERATION_TARGET_TYPES.COMMUNITY,
+          targetId: communityId,
+          action: MODERATION_ACTIONS.COMMUNITY_SOFT_DELETED,
+          reason,
+          communityId,
+        },
+        manager,
+      );
+      changed = true;
+    });
+
+    if (!changed) return;
+
+    const recipientIds =
+      await this.findCommunityModerationRecipients(communityId);
+    try {
+      await this.notificationsService.notify(
+        recipientIds.map((userId) => ({
+          userId,
+          type: NotificationType.COMMUNITY_DELETED,
+          data: {
+            communityId,
+            communityName,
+            reason,
+            actorUserId,
+          },
+          message: `${communityName}: comunidad eliminada por administración`,
+        })),
+      );
+    } catch {
+      // La eliminación y su auditoría ya fueron confirmadas.
     }
   }
 

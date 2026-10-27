@@ -125,6 +125,7 @@ export class SearchService {
       .createQueryBuilder('community')
       .where('community.is_active = :isActive', { isActive: true })
       .andWhere('community.is_private = :isPrivate', { isPrivate: false })
+      .andWhere('community.deleted_at IS NULL')
       .andWhere(
         '(community.name ILIKE :text OR community.description ILIKE :text)',
         { text: `%${escapeLike(q)}%` },

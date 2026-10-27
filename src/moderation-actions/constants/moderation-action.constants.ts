@@ -30,6 +30,7 @@ export const MODERATION_ACTIONS = {
   COMMUNITY_ACTIVATED: 'community_activated',
   COMMUNITY_MADE_PUBLIC: 'community_made_public',
   COMMUNITY_MADE_PRIVATE: 'community_made_private',
+  COMMUNITY_SOFT_DELETED: 'community_soft_deleted',
 } as const;
 
 export type ModerationActionType =

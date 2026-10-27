@@ -551,7 +551,7 @@ export class ProductsService {
     }
     if (filters.publicCommunitiesOnly) {
       qb.andWhere(
-        '(product.communityId IS NULL OR EXISTS (SELECT 1 FROM community pc WHERE pc.id = product.communityId AND pc.is_active = true AND pc.is_private = false))',
+        '(product.communityId IS NULL OR EXISTS (SELECT 1 FROM community pc WHERE pc.id = product.communityId AND pc.is_active = true AND pc.is_private = false AND pc.deleted_at IS NULL))',
       );
     }
 
