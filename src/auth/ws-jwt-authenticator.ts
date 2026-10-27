@@ -42,7 +42,9 @@ export class WsJwtAuthenticator {
       );
       if (this.usersService) {
         const user = await this.usersService.findById(payload.sub);
-        if (!user.isActive) throw new UnauthorizedException('Cuenta inactiva');
+        if (!user.isActive || user.deletedAt) {
+          throw new UnauthorizedException('Cuenta inactiva');
+        }
       }
       return toAuthenticatedUser(payload);
     } catch {

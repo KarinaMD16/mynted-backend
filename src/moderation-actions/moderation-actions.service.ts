@@ -71,6 +71,7 @@ export class ModerationActionsService {
     query: ModerationActionQueryDto,
   ): Promise<ModerationActionListResponseDto> {
     const [actions, total] = await this.repository.findAndCount({
+      withDeleted: true,
       relations: { actor: true },
       order: { createdAt: 'DESC', id: 'DESC' },
       skip: (query.page - 1) * query.limit,

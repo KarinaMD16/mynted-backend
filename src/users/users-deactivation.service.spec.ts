@@ -25,6 +25,137 @@ const queryBuilder = (rows: Array<{ id: number }>) => {
 };
 
 describe('UsersService account deactivation effects', () => {
+  it('soft-deletes a user atomically and records only user_soft_deleted', async () => {
+    const user = Object.assign(new User(), {
+      id: 'target-id',
+      role: 'user',
+      isActive: true,
+      deletedAt: null,
+    });
+    const userRepository = {
+      findOne: jest.fn().mockResolvedValue(user),
+      save: jest.fn(),
+      softRemove: jest.fn().mockImplementation((value: User) => {
+        value.deletedAt = new Date();
+        return value;
+      }),
+    };
+    const repository = () => ({
+      createQueryBuilder: jest.fn().mockReturnValue(queryBuilder([])),
+    });
+    const postRepository = repository();
+    const replyRepository = repository();
+    const productRepository = repository();
+    const manager = {
+      getRepository: jest.fn((entity: unknown) =>
+        entity === User
+          ? userRepository
+          : entity === Post
+            ? postRepository
+            : entity === Reply
+              ? replyRepository
+              : productRepository,
+      ),
+    };
+    const dataSource = {
+      transaction: jest.fn((callback: (value: typeof manager) => unknown) =>
+        callback(manager),
+      ),
+    };
+    const actionsService = { record: jest.fn() };
+    const notificationsService = { notify: jest.fn() };
+    const service = new UsersService(
+      userRepository as unknown as Repository<User>,
+      {} as Repository<UserOAuthAccount>,
+      {} as CloudinaryService,
+      {} as Repository<Seller>,
+      {} as ResponseTimeService,
+      undefined,
+      postRepository as unknown as Repository<Post>,
+      replyRepository as unknown as Repository<Reply>,
+      productRepository as unknown as Repository<Product>,
+      dataSource as never,
+      undefined,
+      actionsService as unknown as ModerationActionsService,
+      notificationsService as unknown as NotificationsService,
+    );
+
+    const result = await service.softDelete(
+      'target-id',
+      'admin-id',
+      'Motivo grave',
+    );
+
+    expect(result.isActive).toBe(false);
+    expect(result.deletedAt).toBeInstanceOf(Date);
+    expect(userRepository.softRemove).toHaveBeenCalledWith(user);
+    expect(actionsService.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'user_soft_deleted',
+        targetType: 'user',
+        targetId: 'target-id',
+        reason: 'Motivo grave',
+        communityId: null,
+      }),
+      manager,
+    );
+    expect(notificationsService.notify).toHaveBeenCalledTimes(1);
+    expect(notificationsService.notify).toHaveBeenCalledWith(
+      [
+        expect.objectContaining({
+          userId: 'target-id',
+          type: 'user_deactivated',
+        }),
+      ],
+      { allowInactiveRecipient: true },
+    );
+  });
+
+  it('makes a repeated soft delete idempotent without new side effects', async () => {
+    const user = Object.assign(new User(), {
+      id: 'target-id',
+      role: 'user',
+      isActive: false,
+      deletedAt: new Date(),
+    });
+    const userRepository = {
+      findOne: jest.fn().mockResolvedValue(user),
+      softRemove: jest.fn(),
+    };
+    const manager = {
+      getRepository: jest.fn().mockReturnValue(userRepository),
+    };
+    const dataSource = {
+      transaction: jest.fn((callback: (value: typeof manager) => unknown) =>
+        callback(manager),
+      ),
+    };
+    const actionsService = { record: jest.fn() };
+    const notificationsService = { notify: jest.fn() };
+    const service = new UsersService(
+      userRepository as unknown as Repository<User>,
+      {} as Repository<UserOAuthAccount>,
+      {} as CloudinaryService,
+      {} as Repository<Seller>,
+      {} as ResponseTimeService,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      dataSource as never,
+      undefined,
+      actionsService as unknown as ModerationActionsService,
+      notificationsService as unknown as NotificationsService,
+    );
+
+    await expect(
+      service.softDelete('target-id', 'admin-id', 'Motivo'),
+    ).resolves.toBe(user);
+    expect(userRepository.softRemove).not.toHaveBeenCalled();
+    expect(actionsService.record).not.toHaveBeenCalled();
+    expect(notificationsService.notify).not.toHaveBeenCalled();
+  });
+
   it('hides all visible content in one transaction and records the account action', async () => {
     const user = Object.assign(new User(), {
       id: 'target-id',

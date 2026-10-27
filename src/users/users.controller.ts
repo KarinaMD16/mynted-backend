@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   forwardRef,
   Get,
   Inject,
@@ -214,6 +215,48 @@ export class UsersController {
     );
   }
 
+  @Delete(':id')
+  @UseGuards(JwtAuthGuard, SuperAdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: '[Superadmin] Eliminar lógicamente un usuario' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['reason'],
+      properties: {
+        reason: {
+          type: 'string',
+          maxLength: 500,
+          example: 'Incumplimiento grave de normas',
+        },
+      },
+    },
+  })
+  @ApiBadRequestResponse({ description: 'Motivo inválido' })
+  @ApiForbiddenResponse({ description: 'Operación no permitida' })
+  @ApiNotFoundResponse({ description: 'Usuario no encontrado' })
+  @ApiUnauthorizedResponse({ description: 'Se requiere autenticación' })
+  @ApiOkResponse({
+    schema: {
+      example: {
+        id: 'uuid',
+        username: 'usuario',
+        role: 'user',
+        isActive: false,
+        deletedAt: '2026-10-27T04:00:00.000Z',
+      },
+    },
+  })
+  remove(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() request: AuthenticatedRequest,
+    @Body() dto: DeactivateUserDto,
+  ) {
+    return this.toDeletedUser(
+      this.usersService.softDelete(id, request.user.userId, dto.reason),
+    );
+  }
+
   private async toStatusUser(userPromise: Promise<User>) {
     const user = await userPromise;
     return {
@@ -221,6 +264,17 @@ export class UsersController {
       username: user.username,
       role: user.role,
       isActive: user.isActive,
+    };
+  }
+
+  private async toDeletedUser(userPromise: Promise<User>) {
+    const user = await userPromise;
+    return {
+      id: user.id,
+      username: user.username,
+      role: user.role,
+      isActive: user.isActive,
+      deletedAt: user.deletedAt,
     };
   }
 

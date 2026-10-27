@@ -123,6 +123,7 @@ describe('ModerationActionsService', () => {
 
     expect(repository.findAndCount).toHaveBeenCalledWith({
       relations: { actor: true },
+      withDeleted: true,
       order: { createdAt: 'DESC', id: 'DESC' },
       skip: 0,
       take: 20,

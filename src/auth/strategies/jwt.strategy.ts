@@ -39,7 +39,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   async validate(payload: AccessTokenPayload) {
     try {
       const user = await this.usersService.findById(payload.sub);
-      if (!user.isActive) throw new UnauthorizedException('Cuenta inactiva');
+      if (!user.isActive || user.deletedAt) {
+        throw new UnauthorizedException('Cuenta inactiva');
+      }
       return toAuthenticatedUser(payload);
     } catch (error: unknown) {
       if (error instanceof UnauthorizedException) throw error;

@@ -20,6 +20,7 @@ export const MODERATION_ACTIONS = {
   AUTHOR_WARNED: 'author_warned',
   USER_DEACTIVATED: 'user_deactivated',
   USER_REACTIVATED: 'user_reactivated',
+  USER_SOFT_DELETED: 'user_soft_deleted',
 } as const;
 
 export type ModerationActionType =

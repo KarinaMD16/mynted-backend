@@ -140,8 +140,11 @@ export class ReportsService {
   ) {
     await this.ensureCommunityExists(communityId);
 
-    const reportQuery = this.reportRepository
-      .createQueryBuilder('report')
+    const reportQuery = this.reportRepository.createQueryBuilder('report');
+    if (typeof reportQuery.withDeleted === 'function') {
+      reportQuery.withDeleted();
+    }
+    reportQuery
       .leftJoinAndSelect('report.reporter', 'reporter')
       .where('report.community_id = :communityId', { communityId });
 
@@ -193,6 +196,7 @@ export class ReportsService {
 
     const report = await this.reportRepository.findOne({
       where: { id: reportId, communityId },
+      withDeleted: true,
       relations: { reporter: true, resolvedByUser: true },
     });
 

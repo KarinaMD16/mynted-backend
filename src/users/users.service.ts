@@ -368,67 +368,15 @@ export class UsersService {
     }
 
     const execute = async (manager?: EntityManager) => {
-      const userRepository =
-        manager?.getRepository(User) ?? this.usersRepository;
-      const user = manager
-        ? await userRepository.findOne({
-            where: { id: userId },
-            lock: { mode: 'pessimistic_write' },
-          })
-        : await userRepository.findOne({ where: { id: userId } });
-      if (!user) throw new NotFoundException('Usuario no encontrado');
-      if (user.role === UserRole.SUPERADMIN) {
-        throw new ForbiddenException(
-          'No se puede desactivar una cuenta de superadministrador',
-        );
-      }
-      if (!user.isActive) return { user, changed: false };
-
-      const content = await this.findUserContentIds(manager, userId, false);
-      for (const postId of content.posts) {
-        await this.moderationService?.hideContent(
-          ModerationItemType.POST,
-          postId,
-          requestingUserId,
-          USER_DEACTIVATED_HIDDEN_REASON,
-          manager,
-        );
-      }
-      for (const replyId of content.replies) {
-        await this.moderationService?.hideContent(
-          ModerationItemType.REPLY,
-          replyId,
-          requestingUserId,
-          USER_DEACTIVATED_HIDDEN_REASON,
-          manager,
-        );
-      }
-      for (const productId of content.products) {
-        await this.moderationService?.hideContent(
-          ModerationItemType.PRODUCT,
-          productId,
-          requestingUserId,
-          USER_DEACTIVATED_HIDDEN_REASON,
-          manager,
-        );
-      }
-
-      user.isActive = false;
-      const saved = await userRepository.save(user);
-      await this.moderationActionsService?.record(
-        {
-          actorUserId: requestingUserId,
-          targetType: MODERATION_TARGET_TYPES.USER,
-          targetId: userId,
-          action: MODERATION_ACTIONS.USER_DEACTIVATED,
-          reason: trimmedReason,
-          communityId: null,
-        },
+      return this.executeAccountDeactivation(
+        userId,
+        requestingUserId,
+        trimmedReason,
         manager,
+        false,
+        MODERATION_ACTIONS.USER_DEACTIVATED,
       );
-      return { user: saved, changed: true };
     };
-
     const result = this.dataSource
       ? await this.dataSource.transaction((manager) => execute(manager))
       : await execute();
@@ -442,6 +390,124 @@ export class UsersService {
       );
     }
     return result.user;
+  }
+
+  async softDelete(
+    userId: string,
+    requestingUserId: string,
+    reason = '',
+  ): Promise<User> {
+    if (userId === requestingUserId) {
+      throw new ForbiddenException(
+        'Un superadministrador no puede eliminar su propia cuenta',
+      );
+    }
+
+    const trimmedReason = reason.trim();
+    if (!trimmedReason) {
+      throw new BadRequestException('El motivo de eliminación es requerido');
+    }
+
+    const execute = (manager?: EntityManager) =>
+      this.executeAccountDeactivation(
+        userId,
+        requestingUserId,
+        trimmedReason,
+        manager,
+        true,
+        MODERATION_ACTIONS.USER_SOFT_DELETED,
+      );
+    const result = this.dataSource
+      ? await this.dataSource.transaction((manager) => execute(manager))
+      : await execute();
+    if (result.changed) {
+      await this.notifyAccountChange(
+        userId,
+        NotificationType.USER_DEACTIVATED,
+        `Tu cuenta fue eliminada administrativamente: ${trimmedReason}`,
+        { reason: trimmedReason },
+        true,
+      );
+    }
+    return result.user;
+  }
+
+  private async executeAccountDeactivation(
+    userId: string,
+    requestingUserId: string,
+    reason: string,
+    manager: EntityManager | undefined,
+    softDelete: boolean,
+    action: (typeof MODERATION_ACTIONS)[keyof typeof MODERATION_ACTIONS],
+  ): Promise<{ user: User; changed: boolean }> {
+    const userRepository = manager?.getRepository(User) ?? this.usersRepository;
+    const user = manager
+      ? await userRepository.findOne({
+          where: { id: userId },
+          ...(softDelete ? { withDeleted: true } : {}),
+          lock: { mode: 'pessimistic_write' },
+        })
+      : await userRepository.findOne({
+          where: { id: userId },
+          ...(softDelete ? { withDeleted: true } : {}),
+        });
+    if (!user) throw new NotFoundException('Usuario no encontrado');
+    if (user.role === UserRole.SUPERADMIN) {
+      throw new ForbiddenException(
+        softDelete
+          ? 'No se puede eliminar una cuenta de superadministrador'
+          : 'No se puede desactivar una cuenta de superadministrador',
+      );
+    }
+    if (user.deletedAt || (!softDelete && !user.isActive)) {
+      return { user, changed: false };
+    }
+
+    const content = await this.findUserContentIds(manager, userId, false);
+    for (const postId of content.posts) {
+      await this.moderationService?.hideContent(
+        ModerationItemType.POST,
+        postId,
+        requestingUserId,
+        USER_DEACTIVATED_HIDDEN_REASON,
+        manager,
+      );
+    }
+    for (const replyId of content.replies) {
+      await this.moderationService?.hideContent(
+        ModerationItemType.REPLY,
+        replyId,
+        requestingUserId,
+        USER_DEACTIVATED_HIDDEN_REASON,
+        manager,
+      );
+    }
+    for (const productId of content.products) {
+      await this.moderationService?.hideContent(
+        ModerationItemType.PRODUCT,
+        productId,
+        requestingUserId,
+        USER_DEACTIVATED_HIDDEN_REASON,
+        manager,
+      );
+    }
+
+    user.isActive = false;
+    const saved = softDelete
+      ? await userRepository.softRemove(user)
+      : await userRepository.save(user);
+    await this.moderationActionsService?.record(
+      {
+        actorUserId: requestingUserId,
+        targetType: MODERATION_TARGET_TYPES.USER,
+        targetId: userId,
+        action,
+        reason,
+        communityId: null,
+      },
+      manager,
+    );
+    return { user: saved, changed: true };
   }
 
   async activate(userId: string, requestingUserId?: string): Promise<User> {
@@ -707,6 +773,30 @@ export class UsersService {
       relations: { user: true },
     });
     return account?.user ?? null;
+  }
+
+  async findByOAuthAccountIncludingDeleted(
+    provider: OAuthProvider,
+    providerUserId: string,
+  ): Promise<User | null> {
+    const account = await this.oauthAccountsRepository
+      .createQueryBuilder('account')
+      .withDeleted()
+      .leftJoinAndSelect('account.user', 'user')
+      .where('account.provider = :provider', { provider })
+      .andWhere('account.provider_user_id = :providerUserId', {
+        providerUserId,
+      })
+      .getOne();
+    return account?.user ?? null;
+  }
+
+  async findByEmailIncludingDeleted(email: string): Promise<User | null> {
+    return this.usersRepository
+      .createQueryBuilder('user')
+      .withDeleted()
+      .where('user.email = :email', { email })
+      .getOne();
   }
 
   async linkOAuthAccount(
