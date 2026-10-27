@@ -65,12 +65,13 @@ export class SellersController {
   @ApiBearerAuth()
   @ApiOperation({
     summary:
-      '[Superadmin] Aprobar o rechazar una solicitud de vendedor pendiente',
+      '[Superadmin] Aprobar, rechazar, revocar o restaurar el estado de vendedor',
   })
   updateSellerStatus(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateSellerStatusDto,
+    @Req() req: AuthenticatedRequest,
   ) {
-    return this.sellersService.updateSellerStatus(id, dto);
+    return this.sellersService.updateSellerStatus(id, dto, req.user.userId);
   }
 }

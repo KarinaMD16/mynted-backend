@@ -9,13 +9,23 @@ import { CloudinaryModule } from '../cloudinary/cloudinary.module';
 import { SuperAdminGuard } from '../auth/guards/super-admin.guard';
 import { AuthModule } from '../auth/auth.module';
 import { ResponseTimeModule } from '../response-time/response-time.module';
+import { Post } from '../community/entities/post.entity';
+import { Reply } from '../community/entities/reply.entity';
+import { Product } from '../products/entities/product.entity';
+import { ModerationModule } from '../moderation/moderation.module';
+import { NotificationsModule } from '../notifications/notifications.module';
+import { Community } from '../community/entities/community.entity';
+import { Report } from '../reports/entities/report.entity';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([User, UserOAuthAccount, Seller]),
+    TypeOrmModule.forFeature([Post, Reply, Product, Community, Report]),
     CloudinaryModule,
     forwardRef(() => AuthModule),
     ResponseTimeModule,
+    forwardRef(() => ModerationModule),
+    NotificationsModule,
   ],
   providers: [UsersService, SuperAdminGuard],
   controllers: [UsersController],

@@ -15,6 +15,7 @@ import { Seller } from '../../sellers/entities/seller.entity';
 import { Community } from '../../community/entities/community.entity';
 import { ProductTag } from './product-tag.entity';
 import { ProductImage } from './product-image.entity';
+import { User } from '../../users/entities/user.entity';
 
 export enum ProductStatus {
   // Borrador: solo lo ve su dueño; no aparece en ningún listado público.
@@ -135,6 +136,29 @@ export class Product {
   // Los listados públicos filtran por isVisible = true y status = active.
   @Column({ name: 'is_visible', type: 'boolean', default: true })
   isVisible!: boolean;
+
+  @Column({ name: 'is_deactivated', type: 'boolean', default: false })
+  isDeactivated!: boolean;
+
+  @Column({ name: 'is_hidden', type: 'boolean', default: false })
+  isHidden!: boolean;
+
+  @Column({
+    name: 'hidden_at',
+    type: 'timestamp with time zone',
+    nullable: true,
+  })
+  hiddenAt!: Date | null;
+
+  @Column({ name: 'hidden_by_user_id', type: 'uuid', nullable: true })
+  hiddenByUserId!: string | null;
+
+  @ManyToOne(() => User, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'hidden_by_user_id', referencedColumnName: 'id' })
+  hiddenByUser!: User | null;
+
+  @Column({ name: 'hidden_reason', type: 'text', nullable: true })
+  hiddenReason!: string | null;
 
   // Se fija al publicar un borrador por primera vez.
   @Column({

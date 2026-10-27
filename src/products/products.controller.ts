@@ -31,6 +31,8 @@ import { ProductsService } from './products.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { UpdateProductStatusDto } from './dto/update-product-status.dto';
+import { ProductAdminActionDto } from './dto/product-admin-action.dto';
+import { DeleteProductDto } from './dto/delete-product.dto';
 import { GetProductsQueryDto } from './dto/get-products-query.dto';
 import { GetRecommendedProductsQueryDto } from './dto/get-recommended-products-query.dto';
 import { GetShopQueryDto } from './dto/get-shop-query.dto';
@@ -38,6 +40,7 @@ import { GetMyProductsQueryDto } from './dto/get-my-products-query.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
 import { SellerGuard } from '../auth/guards/seller.guard';
+import { SuperAdminGuard } from '../auth/guards/super-admin.guard';
 import {
   ApiDisplayCurrencyHeader,
   DisplayCurrency,
@@ -479,6 +482,34 @@ export class ProductsController {
     return this.productsService.publish(id, request.user.userId);
   }
 
+  @Patch('products/:id/deactivate')
+  @UseGuards(JwtAuthGuard, SuperAdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: '[Superadmin] Desactivar administrativamente un producto',
+  })
+  deactivate(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: ProductAdminActionDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.productsService.deactivateByAdmin(id, request.user.userId, dto);
+  }
+
+  @Patch('products/:id/activate')
+  @UseGuards(JwtAuthGuard, SuperAdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: '[Superadmin] Retirar la desactivación administrativa',
+  })
+  activate(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: ProductAdminActionDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.productsService.activateByAdmin(id, request.user.userId, dto);
+  }
+
   @Patch('products/:id/status')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
@@ -496,7 +527,7 @@ export class ProductsController {
 
   @Delete('products/:id')
   @HttpCode(HttpStatus.NO_CONTENT)
-  @UseGuards(JwtAuthGuard, SellerGuard)
+  @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({
     summary:
@@ -504,8 +535,9 @@ export class ProductsController {
   })
   async remove(
     @Param('id', ParseIntPipe) id: number,
+    @Body() dto: DeleteProductDto,
     @Req() request: AuthenticatedRequest,
   ) {
-    await this.productsService.remove(id, request.user.userId);
+    await this.productsService.remove(id, request.user.userId, dto);
   }
 }

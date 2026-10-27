@@ -9,7 +9,14 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { BadgeEvents, ReplyCreatedEvent } from '../badges/badge-events';
 import { FavoriteNotificationsDto } from './dto/favorite-notifications.dto';
-import { DataSource, FindOptionsWhere, In, Not, Repository } from 'typeorm';
+import {
+  Brackets,
+  DataSource,
+  FindOptionsWhere,
+  In,
+  Not,
+  Repository,
+} from 'typeorm';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
 import { PriceDisplayService } from '../pricing/price-display.service';
 import { Product, ProductStatus } from '../products/entities/product.entity';
@@ -49,7 +56,10 @@ import {
   GetMyContentQueryDto,
 } from './dto/get-my-content-query.dto';
 import { VoteDto } from './dto/vote.dto';
-import { CommunityProfile } from './entities/community-profile.entity';
+import {
+  CommunityProfile,
+  CommunityProfileRole,
+} from './entities/community-profile.entity';
 import { Community } from './entities/community.entity';
 import { Favorite, FavoriteItemType } from './entities/favorite.entity';
 import { PostImage } from './entities/post-image.entity';
@@ -189,7 +199,7 @@ export class ForumService {
       await this.getMemberProfile(userId, communityId);
     }
 
-    const base = this.rankedPostsBase().andWhere(
+    const base = this.rankedPostsBase(userId).andWhere(
       'community.id = :communityId',
       {
         communityId,
@@ -212,7 +222,7 @@ export class ForumService {
     query: GetGlobalPostsQueryDto,
   ) {
     // Política del feed global: solo comunidades públicas activas.
-    const base = this.rankedPostsBase().andWhere(
+    const base = this.rankedPostsBase(userId).andWhere(
       'community.is_private = :isPrivate',
       { isPrivate: false },
     );
@@ -274,7 +284,7 @@ export class ForumService {
     const userTagIds = [...new Set(userTags.map((userTag) => userTag.tagId))];
     const joinedIds = profiles.map((profile) => profile.communityId);
 
-    const base = this.rankedPostsBase().andWhere(
+    const base = this.rankedPostsBase(userId).andWhere(
       'community.is_private = :isPrivate',
       { isPrivate: false },
     );
@@ -323,7 +333,7 @@ export class ForumService {
 
     if (joinedIds.length > 0) {
       const joined = await this.pageRankedPosts(
-        this.rankedPostsBase().andWhere(
+        this.rankedPostsBase(userId).andWhere(
           'community.id = ANY(CAST(:joinedIds AS int[]))',
           { joinedIds },
         ),
@@ -342,9 +352,12 @@ export class ForumService {
     }
 
     const publicPosts = await this.pageRankedPosts(
-      this.rankedPostsBase().andWhere('community.is_private = :isPrivate', {
-        isPrivate: false,
-      }),
+      this.rankedPostsBase(userId).andWhere(
+        'community.is_private = :isPrivate',
+        {
+          isPrivate: false,
+        },
+      ),
       score,
       {},
       query,
@@ -360,12 +373,26 @@ export class ForumService {
   // Base de las consultas de feed: posts de comunidades activas. Los alias
   // `post`, `profile` y `community` son los que usan las fórmulas de
   // post-ranking.
-  private rankedPostsBase() {
-    return this.postRepository
+  private rankedPostsBase(viewerId?: string) {
+    const query = this.postRepository
       .createQueryBuilder('post')
       .innerJoin('post.communityProfile', 'profile')
       .innerJoin('profile.community', 'community')
       .where('community.is_active = :isActive', { isActive: true });
+    if (!viewerId) {
+      query.andWhere('post.is_hidden = false');
+    } else {
+      query.andWhere(
+        `(post.is_hidden = false OR profile.user_id = :viewerId OR EXISTS (
+          SELECT 1 FROM community_profile hidden_post_viewer
+          WHERE hidden_post_viewer.user_id = :viewerId
+            AND hidden_post_viewer.community_id = profile.community_id
+            AND hidden_post_viewer.role IN ('moderator', 'owner')
+        ))`,
+        { viewerId },
+      );
+    }
+    return query;
   }
 
   // Pagina por puntaje (ids primero, sin joins que rompan skip/take) e
@@ -462,7 +489,13 @@ export class ForumService {
       profile?.communityProfileId,
       userId,
     );
-    const replyCounts = await this.getReplyCounts([post.id]);
+    if (
+      post.isHidden &&
+      !(await this.canViewHiddenPost(post, userId, community.id))
+    ) {
+      throw new NotFoundException('Publicación no encontrada');
+    }
+    const replyCounts = await this.getReplyCounts([post.id], userId);
     const replies = await this.findReplies(post.id, userId, profile);
 
     return {
@@ -521,54 +554,67 @@ export class ForumService {
     const profile =
       knownProfile !== undefined
         ? knownProfile
-          : post.communityProfile.community.isPrivate
-            ? userId
-              ? await this.getMemberProfile(
+        : post.communityProfile.community.isPrivate
+          ? userId
+            ? await this.getMemberProfile(
+                userId,
+                post.communityProfile.communityId,
+              )
+            : (() => {
+                throw new ForbiddenException(
+                  'Debes pertenecer a la comunidad para ver estas respuestas',
+                );
+              })()
+          : userId
+            ? await this.communityProfileRepository.findOne({
+                where: {
                   userId,
-                  post.communityProfile.communityId,
-                )
-              : (() => {
-                  throw new ForbiddenException(
-                    'Debes pertenecer a la comunidad para ver estas respuestas',
-                  );
-                })()
-            : userId
-              ? await this.communityProfileRepository.findOne({
-                  where: {
-                    userId,
-                    communityId: post.communityProfile.communityId,
-                  },
-                  select: { communityProfileId: true },
-                })
-              : null;
-    const replies = await this.replyRepository.find({
-      where: { postId },
-      relations: { communityProfile: { user: true } },
-      order: { postedAt: 'ASC', id: 'ASC' },
-    });
+                  communityId: post.communityProfile.communityId,
+                },
+                select: { communityProfileId: true },
+              })
+            : null;
+    if (
+      post.isHidden &&
+      !(await this.canViewHiddenPost(
+        post,
+        userId,
+        post.communityProfile.communityId,
+      ))
+    ) {
+      throw new NotFoundException('Publicación no encontrada');
+    }
+    const repliesQuery = this.replyRepository
+      .createQueryBuilder('reply')
+      .leftJoinAndSelect('reply.communityProfile', 'replyProfile')
+      .leftJoinAndSelect('replyProfile.user', 'replyUser')
+      .where('reply.post_id = :postId', { postId });
+    if (!userId) {
+      repliesQuery.andWhere('reply.is_hidden = false');
+    } else {
+      repliesQuery.andWhere(
+        `(reply.is_hidden = false OR (replyProfile.user_id = :viewerId OR EXISTS (
+          SELECT 1 FROM community_profile reply_viewer_profile
+          WHERE reply_viewer_profile.user_id = :viewerId
+            AND reply_viewer_profile.community_id = :communityId
+            AND reply_viewer_profile.role IN ('moderator', 'owner')
+        )))`,
+        { viewerId: userId, communityId: post.communityProfile.communityId },
+      );
+    }
+    const replies = await repliesQuery
+      .orderBy('reply.posted_at', 'ASC')
+      .addOrderBy('reply.id', 'ASC')
+      .getMany();
     const metrics = await this.getReplyMetrics(
       replies.map((reply) => reply.id),
       profile?.communityProfileId,
       userId,
     );
 
-    return replies.map((reply) => ({
-      id: reply.id,
-      body: reply.body,
-      postedAt: reply.postedAt,
-      postId: reply.postId,
-      communityProfileId: reply.communityProfileId,
-      parentReplyId: reply.parentReplyId,
-      author: reply.communityProfile
-        ? {
-            communityProfileId: reply.communityProfile.communityProfileId,
-            displayName: reply.communityProfile.displayName,
-            role: reply.communityProfile.role,
-            photoUrl: reply.communityProfile.user?.photoUrl ?? null,
-          }
-        : null,
-      ...(metrics.get(reply.id) ?? this.emptyMetric()),
-    }));
+    return replies.map((reply) =>
+      this.mapReply(reply, metrics.get(reply.id) ?? this.emptyMetric()),
+    );
   }
 
   async findReplyResponse(replyId: number, userId: string) {
@@ -583,6 +629,9 @@ export class ForumService {
       throw new NotFoundException('Respuesta no encontrada');
     }
     await this.getActiveCommunity(reply.post.communityProfile.communityId);
+    if (reply.isHidden && !(await this.canViewHiddenReply(reply, userId))) {
+      throw new NotFoundException('Respuesta no encontrada');
+    }
     const profile = await this.communityProfileRepository.findOne({
       where: {
         userId,
@@ -596,23 +645,7 @@ export class ForumService {
       userId,
     );
 
-    return {
-      id: reply.id,
-      body: reply.body,
-      postedAt: reply.postedAt,
-      postId: reply.postId,
-      communityProfileId: reply.communityProfileId,
-      parentReplyId: reply.parentReplyId,
-      author: reply.communityProfile
-        ? {
-            communityProfileId: reply.communityProfile.communityProfileId,
-            displayName: reply.communityProfile.displayName,
-            role: reply.communityProfile.role,
-            photoUrl: reply.communityProfile.user?.photoUrl ?? null,
-          }
-        : null,
-      ...(metrics.get(reply.id) ?? this.emptyMetric()),
-    };
+    return this.mapReply(reply, metrics.get(reply.id) ?? this.emptyMetric());
   }
 
   async votePost(postId: number, userId: string, dto: VoteDto) {
@@ -823,12 +856,50 @@ export class ForumService {
   private async getActivePost(postId: number): Promise<Post> {
     const post = await this.postRepository.findOne({
       where: { id: postId },
-      relations: { communityProfile: { community: true } },
+      relations: { communityProfile: { community: true, user: true } },
     });
     if (!post || !post.communityProfile?.community?.isActive) {
       throw new NotFoundException('Publicación no encontrada');
     }
     return post;
+  }
+
+  private async canViewHiddenPost(
+    post: Post,
+    viewerId: string | undefined,
+    communityId: number,
+  ): Promise<boolean> {
+    if (!post.isHidden) return true;
+    if (!viewerId) return false;
+    if (post.communityProfile?.userId === viewerId) return true;
+    const profile = await this.communityProfileRepository.findOne({
+      where: { userId: viewerId, communityId },
+      select: { role: true },
+    });
+    return (
+      profile?.role === CommunityProfileRole.MODERATOR ||
+      profile?.role === CommunityProfileRole.OWNER
+    );
+  }
+
+  private async canViewHiddenReply(
+    reply: Reply,
+    viewerId: string | undefined,
+  ): Promise<boolean> {
+    if (!reply.isHidden) return true;
+    if (!viewerId) return false;
+    if (reply.communityProfile?.userId === viewerId) return true;
+    const profile = await this.communityProfileRepository.findOne({
+      where: {
+        userId: viewerId,
+        communityId: reply.post.communityProfile.communityId,
+      },
+      select: { role: true },
+    });
+    return (
+      profile?.role === CommunityProfileRole.MODERATOR ||
+      profile?.role === CommunityProfileRole.OWNER
+    );
   }
 
   private async getReplyWithPost(replyId: number): Promise<Reply> {
@@ -940,14 +1011,46 @@ export class ForumService {
 
   private async getReplyCounts(
     postIds: number[],
+    viewerId?: string,
   ): Promise<Map<number, number>> {
     const counts = new Map<number, number>();
     if (postIds.length === 0) return counts;
-    const rows = (await this.replyRepository
+    const countsQuery = this.replyRepository
       .createQueryBuilder('reply')
       .select('reply.post_id', 'post_id')
       .addSelect('COUNT(reply.id)', 'count')
-      .where('reply.post_id IN (:...postIds)', { postIds })
+      .innerJoin('reply.communityProfile', 'reply_profile')
+      .innerJoin('reply.post', 'reply_post')
+      .innerJoin('reply_post.communityProfile', 'reply_post_profile')
+      .where('reply.post_id IN (:...postIds)', { postIds });
+    if (!viewerId) {
+      countsQuery.andWhere(
+        new Brackets((visibility) => {
+          visibility.where('reply.is_hidden = false');
+        }),
+      );
+    } else {
+      countsQuery
+        .andWhere(
+          new Brackets((visibility) => {
+            visibility.where('reply.is_hidden = false');
+            visibility.orWhere('reply_profile.user_id = :viewerId');
+            visibility.orWhere(
+              new Brackets((moderation) => {
+                moderation.where(`EXISTS (
+                  SELECT 1
+                  FROM community_profile reply_viewer
+                  WHERE reply_viewer.user_id = :viewerId
+                    AND reply_viewer.community_id = reply_post_profile.community_id
+                    AND reply_viewer.role IN ('moderator', 'owner')
+                )`);
+              }),
+            );
+          }),
+        )
+        .setParameter('viewerId', viewerId);
+    }
+    const rows = (await countsQuery
       .groupBy('reply.post_id')
       .getRawMany()) as unknown as { post_id: string; count: string }[];
     rows.forEach((row) => counts.set(Number(row.post_id), Number(row.count)));
@@ -1069,6 +1172,32 @@ export class ForumService {
         .map(({ id, url, order }) => ({ id, url, order })),
       ...postMetric,
       replyCount,
+      isHidden: post.isHidden,
+      hiddenAt: post.hiddenAt,
+      hiddenReason: post.hiddenReason,
+    };
+  }
+
+  private mapReply(reply: Reply, metric: PostMetric) {
+    return {
+      id: reply.id,
+      body: reply.body,
+      postedAt: reply.postedAt,
+      postId: reply.postId,
+      communityProfileId: reply.communityProfileId,
+      parentReplyId: reply.parentReplyId,
+      isHidden: reply.isHidden,
+      hiddenAt: reply.hiddenAt,
+      hiddenReason: reply.hiddenReason,
+      author: reply.communityProfile
+        ? {
+            communityProfileId: reply.communityProfile.communityProfileId,
+            displayName: reply.communityProfile.displayName,
+            role: reply.communityProfile.role,
+            photoUrl: reply.communityProfile.user?.photoUrl ?? null,
+          }
+        : null,
+      ...metric,
     };
   }
 
@@ -1111,6 +1240,15 @@ export class ForumService {
       .innerJoin('profile.community', 'community')
       .where('profile.user_id = :ownerId', { ownerId })
       .andWhere('community.is_active = :isActive', { isActive: true });
+    base.andWhere(
+      `(post.is_hidden = false OR profile.user_id = :viewerId OR EXISTS (
+        SELECT 1 FROM community_profile viewer_profile
+        WHERE viewer_profile.user_id = :viewerId
+          AND viewer_profile.community_id = profile.community_id
+          AND viewer_profile.role IN ('moderator', 'owner')
+      ))`,
+      { viewerId },
+    );
     if (publicOnly) {
       base.andWhere('community.is_private = :isPrivate', { isPrivate: false });
     }
@@ -1162,6 +1300,7 @@ export class ForumService {
             isActive: true,
             ...(publicOnly ? { isPrivate: false } : {}),
           },
+          ...(publicOnly ? { isHidden: false } : {}),
         },
       },
       select: { id: true, postedAt: true },
@@ -1224,6 +1363,7 @@ export class ForumService {
           seller: { userId: ownerId },
           status: ProductStatus.ACTIVE,
           isVisible: true,
+          isHidden: false,
         }))
       : // Los borradores no cuentan como contenido publicado.
         { seller: { userId: ownerId }, status: Not(ProductStatus.DRAFT) };
@@ -1253,23 +1393,55 @@ export class ForumService {
 
     const [visiblePosts, visibleProducts] = await Promise.all([
       postIds.length
-        ? this.postRepository.find({
-            where: {
-              id: In(postIds),
-              communityProfile: { community: { isActive: true } },
-            },
-            select: { id: true },
-          })
+        ? this.postRepository
+            .createQueryBuilder('favorite_post')
+            .innerJoin(
+              'favorite_post.communityProfile',
+              'favorite_post_profile',
+            )
+            .innerJoin(
+              'favorite_post_profile.community',
+              'favorite_post_community',
+            )
+            .where('favorite_post.id IN (:...postIds)', { postIds })
+            .andWhere('favorite_post_community.is_active = true')
+            .andWhere(
+              `(favorite_post.is_hidden = false OR favorite_post_profile.user_id = :viewerId OR EXISTS (
+                SELECT 1 FROM community_profile favorite_post_viewer
+                WHERE favorite_post_viewer.user_id = :viewerId
+                  AND favorite_post_viewer.community_id = favorite_post_profile.community_id
+                  AND favorite_post_viewer.role IN ('moderator', 'owner')
+              ))`,
+              { viewerId: userId },
+            )
+            .select('favorite_post.id', 'id')
+            .getRawMany<{ id: number }>()
+            .then((rows) => rows.map((row) => ({ id: Number(row.id) }) as Post))
         : ([] as Post[]),
       productIds.length
-        ? this.productRepository.find({
-            where: {
-              id: In(productIds),
-              status: In([ProductStatus.ACTIVE, ProductStatus.SOLD]),
-              isVisible: true,
-            },
-            select: { id: true },
-          })
+        ? this.productRepository
+            .createQueryBuilder('favorite_product')
+            .innerJoin('favorite_product.seller', 'favorite_product_seller')
+            .where('favorite_product.id IN (:...productIds)', { productIds })
+            .andWhere(
+              '(favorite_product.status IN (:...statuses) OR favorite_product.is_deactivated = true)',
+              { statuses: [ProductStatus.ACTIVE, ProductStatus.SOLD] },
+            )
+            .andWhere('favorite_product.is_visible = true')
+            .andWhere(
+              `(favorite_product.is_hidden = false OR favorite_product_seller.user_id = :viewerId OR EXISTS (
+                SELECT 1 FROM community_profile favorite_product_viewer
+                WHERE favorite_product_viewer.user_id = :viewerId
+                  AND favorite_product_viewer.community_id = favorite_product.community_id
+                  AND favorite_product_viewer.role IN ('moderator', 'owner')
+              ))`,
+              { viewerId: userId },
+            )
+            .select('favorite_product.id', 'id')
+            .getRawMany<{ id: number }>()
+            .then((rows) =>
+              rows.map((row) => ({ id: Number(row.id) }) as Product),
+            )
         : ([] as Product[]),
     ]);
     const visiblePostIds = new Set(visiblePosts.map((post) => post.id));
@@ -1311,6 +1483,7 @@ export class ForumService {
       .innerJoin('profile.community', 'community')
       .where('community.is_active = :isActive', { isActive: true })
       .andWhere('community.is_private = :isPrivate', { isPrivate: false })
+      .andWhere('post.is_hidden = false')
       .andWhere('(post.title ILIKE :text OR post.body ILIKE :text)', {
         text: `%${escapeLike(q)}%`,
       });
@@ -1458,7 +1631,10 @@ export class ForumService {
       userId,
       profileByPostId,
     );
-    const replyCounts = await this.getReplyCounts(ordered.map((p) => p.id));
+    const replyCounts = await this.getReplyCounts(
+      ordered.map((p) => p.id),
+      viewerId,
+    );
 
     return ordered.map((post) => ({
       ...this.mapPost(

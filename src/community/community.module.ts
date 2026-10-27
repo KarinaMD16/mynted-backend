@@ -28,6 +28,11 @@ import { ForumService } from './forum.service';
 import { CategorySeed } from './seeds/category.seed';
 import { TagSeed } from './seeds/tag.seed';
 import { UserTag } from '../user-tags/entities/user-tag.entity';
+import { User } from '../users/entities/user.entity';
+import { ModerationModule } from '../moderation/moderation.module';
+import { Report } from '../reports/entities/report.entity';
+import { NotificationsModule } from '../notifications/notifications.module';
+import { ModerationActionsModule } from '../moderation-actions/moderation-actions.module';
 
 @Module({
   imports: [
@@ -48,10 +53,15 @@ import { UserTag } from '../user-tags/entities/user-tag.entity';
       Favorite,
       Product,
       UserTag,
+      User,
+      Report,
     ]),
     CloudinaryModule,
     UsersModule,
     PricingModule,
+    ModerationModule,
+    NotificationsModule,
+    ModerationActionsModule,
   ],
   controllers: [CommunityController, ForumController, PublicProfileController],
   providers: [
@@ -62,6 +72,6 @@ import { UserTag } from '../user-tags/entities/user-tag.entity';
     SuperAdminGuard,
     CommunityRoleGuard,
   ],
-  exports: [CommunityService, ForumService],
+  exports: [CommunityService, ForumService, CommunityRoleGuard],
 })
 export class CommunityModule {}
