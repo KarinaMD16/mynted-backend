@@ -62,6 +62,31 @@ describe('CommunityController', () => {
     );
   });
 
+  it('protects the administrative community list with JWT and SuperAdminGuard', async () => {
+    const communityService = {
+      findAllCommunitiesForAdmin: jest.fn().mockResolvedValue({ data: [] }),
+    };
+    const controller = new CommunityController(
+      communityService as never,
+      {} as never,
+    );
+    const method = Object.getOwnPropertyDescriptor(
+      CommunityController.prototype,
+      'findAllCommunitiesForAdmin',
+    )?.value as (...args: never[]) => unknown;
+    const guards = Reflect.getMetadata(GUARDS_METADATA, method) as unknown[];
+    const query = { page: 1, limit: 10 };
+
+    await controller.findAllCommunitiesForAdmin(query);
+
+    expect(guards).toEqual(
+      expect.arrayContaining([JwtAuthGuard, SuperAdminGuard]),
+    );
+    expect(communityService.findAllCommunitiesForAdmin).toHaveBeenCalledWith(
+      query,
+    );
+  });
+
   it('protects the community stats endpoint and passes the community id', async () => {
     const communityService = {
       getStats: jest.fn().mockResolvedValue({}),

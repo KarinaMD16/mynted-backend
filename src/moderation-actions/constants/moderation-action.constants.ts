@@ -26,6 +26,10 @@ export const MODERATION_ACTIONS = {
   PRODUCT_DEACTIVATED: 'product_deactivated',
   PRODUCT_ACTIVATED: 'product_activated',
   PRODUCT_SOFT_DELETED: 'product_soft_deleted',
+  COMMUNITY_DEACTIVATED: 'community_deactivated',
+  COMMUNITY_ACTIVATED: 'community_activated',
+  COMMUNITY_MADE_PUBLIC: 'community_made_public',
+  COMMUNITY_MADE_PRIVATE: 'community_made_private',
 } as const;
 
 export type ModerationActionType =

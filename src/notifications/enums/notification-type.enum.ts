@@ -13,6 +13,10 @@ export enum NotificationType {
   COMMUNITY_JOIN_REQUESTED = 'community_join_requested',
   COMMUNITY_JOIN_ACCEPTED = 'community_join_accepted',
   COMMUNITY_JOIN_REJECTED = 'community_join_rejected',
+  COMMUNITY_DEACTIVATED = 'community_deactivated',
+  COMMUNITY_ACTIVATED = 'community_activated',
+  COMMUNITY_MADE_PUBLIC = 'community_made_public',
+  COMMUNITY_MADE_PRIVATE = 'community_made_private',
   // Solicitud de vendedor.
   SELLER_REQUEST_APPROVED = 'seller_request_approved',
   SELLER_REQUEST_REJECTED = 'seller_request_rejected',

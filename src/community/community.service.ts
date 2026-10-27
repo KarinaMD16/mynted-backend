@@ -30,6 +30,7 @@ import { UpdateCommunityDto } from './dto/update-community.dto';
 import { UpdateCommunityRuleDto } from './dto/update-community-rule.dto';
 import { UpdateTagDto } from './dto/update-tag.dto';
 import { GetCommunitiesQueryDto } from './dto/get-communities-query.dto';
+import { GetAdminCommunitiesQueryDto } from './dto/get-admin-communities-query.dto';
 import {
   CommunityProfile,
   CommunityProfileRole,
@@ -49,6 +50,18 @@ import { Favorite, FavoriteItemType } from './entities/favorite.entity';
 import { VoteType } from './entities/vote-type.enum';
 import { UserTag } from '../user-tags/entities/user-tag.entity';
 import { UsersService } from '../users/users.service';
+import { UserRole } from '../users/entities/user.entity';
+import { Product } from '../products/entities/product.entity';
+import { Report } from '../reports/entities/report.entity';
+import { ReportStatus } from '../reports/enums/report-status.enum';
+import { NotificationType } from '../notifications/enums/notification-type.enum';
+import { NotificationsService } from '../notifications/notifications.service';
+import { ModerationActionsService } from '../moderation-actions/moderation-actions.service';
+import {
+  MODERATION_ACTIONS,
+  MODERATION_TARGET_TYPES,
+  ModerationActionType,
+} from '../moderation-actions/constants/moderation-action.constants';
 
 interface PostgresError {
   code?: string;
@@ -92,6 +105,16 @@ export class CommunityService {
     private readonly favoriteRepository?: Repository<Favorite>,
     @Optional()
     private readonly eventEmitter?: EventEmitter2,
+    @Optional()
+    @InjectRepository(Product)
+    private readonly productRepository?: Repository<Product>,
+    @Optional()
+    @InjectRepository(Report)
+    private readonly reportRepository?: Repository<Report>,
+    @Optional()
+    private readonly notificationsService?: NotificationsService,
+    @Optional()
+    private readonly moderationActionsService?: ModerationActionsService,
   ) {}
 
   async create(
@@ -249,6 +272,20 @@ export class CommunityService {
 
     return {
       data: this.mapCommunityList(entities, raw),
+      pagination: this.buildPagination(query.page, query.limit, total),
+    };
+  }
+
+  async findAllCommunitiesForAdmin(query: GetAdminCommunitiesQueryDto) {
+    const queryBuilder = this.buildAdminCommunityListQuery(query);
+    const total = await queryBuilder.clone().getCount();
+    const { entities, raw } = await queryBuilder
+      .skip((query.page - 1) * query.limit)
+      .take(query.limit)
+      .getRawAndEntities();
+
+    return {
+      data: this.mapAdminCommunityList(entities, raw),
       pagination: this.buildPagination(query.page, query.limit, total),
     };
   }
@@ -955,6 +992,71 @@ export class CommunityService {
     return queryBuilder;
   }
 
+  private buildAdminCommunityListQuery(query: GetAdminCommunitiesQueryDto) {
+    const memberCountSubquery = this.communityRepository
+      .createQueryBuilder('admin_member_profile')
+      .subQuery()
+      .select('COUNT(*)')
+      .from(CommunityProfile, 'admin_member_profile')
+      .where('admin_member_profile.community_id = community.id')
+      .getQuery();
+
+    const productCountSubquery = this.communityRepository
+      .createQueryBuilder('admin_product')
+      .subQuery()
+      .select('COUNT(*)')
+      .from(Product, 'admin_product')
+      .where('admin_product.community_id = community.id')
+      .andWhere('admin_product.deleted_at IS NULL')
+      .getQuery();
+
+    const pendingReportsCountSubquery = this.communityRepository
+      .createQueryBuilder('admin_report')
+      .subQuery()
+      .select('COUNT(*)')
+      .from(Report, 'admin_report')
+      .where('admin_report.community_id = community.id')
+      .andWhere('admin_report.status = :pendingReportStatus')
+      .getQuery();
+
+    const queryBuilder = this.communityRepository
+      .createQueryBuilder('community')
+      .leftJoinAndSelect('community.category', 'category')
+      .addSelect(memberCountSubquery, 'admin_member_count')
+      .addSelect(productCountSubquery, 'admin_product_count')
+      .addSelect(pendingReportsCountSubquery, 'admin_pending_reports_count')
+      .setParameter('pendingReportStatus', ReportStatus.PENDING)
+      .orderBy('community.created_at', 'DESC')
+      .addOrderBy('community.id', 'ASC');
+
+    if (query.search) {
+      queryBuilder.andWhere(
+        '(community.name ILIKE :adminSearch OR community.slug ILIKE :adminSearch OR community.description ILIKE :adminSearch)',
+        { adminSearch: `%${query.search}%` },
+      );
+    }
+
+    if (query.categoryId !== undefined) {
+      queryBuilder.andWhere('community.category_id = :adminCategoryId', {
+        adminCategoryId: query.categoryId,
+      });
+    }
+
+    if (query.isActive !== undefined) {
+      queryBuilder.andWhere('community.is_active = :adminIsActive', {
+        adminIsActive: query.isActive,
+      });
+    }
+
+    if (query.isPrivate !== undefined) {
+      queryBuilder.andWhere('community.is_private = :adminIsPrivate', {
+        adminIsPrivate: query.isPrivate,
+      });
+    }
+
+    return queryBuilder;
+  }
+
   private mapCommunityList(
     communities: Community[],
     rawRows: Record<string, unknown>[],
@@ -984,6 +1086,28 @@ export class CommunityService {
         ...(includeMembershipRole
           ? { membershipRole: raw.membership_role }
           : {}),
+      };
+    });
+  }
+
+  private mapAdminCommunityList(
+    communities: Community[],
+    rawRows: Record<string, unknown>[],
+  ) {
+    return communities.map((community, index) => {
+      const raw = rawRows[index] ?? {};
+      return {
+        id: community.id,
+        name: community.name,
+        slug: community.slug,
+        description: community.description,
+        isActive: community.isActive,
+        isPrivate: community.isPrivate,
+        category: community.category,
+        memberCount: this.toNumber(raw.admin_member_count),
+        productCount: this.toNumber(raw.admin_product_count),
+        pendingReportsCount: this.toNumber(raw.admin_pending_reports_count),
+        createdAt: community.createdAt,
       };
     });
   }
@@ -1475,7 +1599,23 @@ export class CommunityService {
     }
   }
 
-  async deactivate(communityId: number): Promise<{ message: string }> {
+  async deactivate(
+    communityId: number,
+    actorUserId?: string,
+  ): Promise<{ message: string }> {
+    if (await this.isSuperAdmin(actorUserId)) {
+      return this.changeCommunityStateAsSuperAdmin(
+        communityId,
+        actorUserId!,
+        'isActive',
+        false,
+        MODERATION_ACTIONS.COMMUNITY_DEACTIVATED,
+        NotificationType.COMMUNITY_DEACTIVATED,
+        'Comunidad desactivada por administración',
+        'Comunidad desactivada exitosamente',
+      );
+    }
+
     const community = await this.communityRepository.findOne({
       where: { id: communityId },
     });
@@ -1500,7 +1640,23 @@ export class CommunityService {
     }
   }
 
-  async activate(communityId: number): Promise<{ message: string }> {
+  async activate(
+    communityId: number,
+    actorUserId?: string,
+  ): Promise<{ message: string }> {
+    if (await this.isSuperAdmin(actorUserId)) {
+      return this.changeCommunityStateAsSuperAdmin(
+        communityId,
+        actorUserId!,
+        'isActive',
+        true,
+        MODERATION_ACTIONS.COMMUNITY_ACTIVATED,
+        NotificationType.COMMUNITY_ACTIVATED,
+        'Comunidad activada por administración',
+        'Comunidad activada exitosamente',
+      );
+    }
+
     const community = await this.communityRepository.findOne({
       where: { id: communityId },
     });
@@ -1525,7 +1681,23 @@ export class CommunityService {
     }
   }
 
-  async makePublic(communityId: number): Promise<{ message: string }> {
+  async makePublic(
+    communityId: number,
+    actorUserId?: string,
+  ): Promise<{ message: string }> {
+    if (await this.isSuperAdmin(actorUserId)) {
+      return this.changeCommunityStateAsSuperAdmin(
+        communityId,
+        actorUserId!,
+        'isPrivate',
+        false,
+        MODERATION_ACTIONS.COMMUNITY_MADE_PUBLIC,
+        NotificationType.COMMUNITY_MADE_PUBLIC,
+        'Comunidad configurada como pública por administración',
+        'Comunidad configurada como pública exitosamente',
+      );
+    }
+
     const community = await this.communityRepository.findOne({
       where: { id: communityId },
     });
@@ -1550,7 +1722,23 @@ export class CommunityService {
     }
   }
 
-  async makePrivate(communityId: number): Promise<{ message: string }> {
+  async makePrivate(
+    communityId: number,
+    actorUserId?: string,
+  ): Promise<{ message: string }> {
+    if (await this.isSuperAdmin(actorUserId)) {
+      return this.changeCommunityStateAsSuperAdmin(
+        communityId,
+        actorUserId!,
+        'isPrivate',
+        true,
+        MODERATION_ACTIONS.COMMUNITY_MADE_PRIVATE,
+        NotificationType.COMMUNITY_MADE_PRIVATE,
+        'Comunidad configurada como privada por administración',
+        'Comunidad configurada como privada exitosamente',
+      );
+    }
+
     const community = await this.communityRepository.findOne({
       where: { id: communityId },
     });
@@ -1573,6 +1761,115 @@ export class CommunityService {
         'Ocurrió un error al cambiar la comunidad a privada',
       );
     }
+  }
+
+  private async isSuperAdmin(actorUserId?: string): Promise<boolean> {
+    if (!actorUserId) return false;
+    const actor = await this.usersService.findById(actorUserId);
+    return actor.role === UserRole.SUPERADMIN;
+  }
+
+  private async changeCommunityStateAsSuperAdmin(
+    communityId: number,
+    actorUserId: string,
+    field: 'isActive' | 'isPrivate',
+    value: boolean,
+    action: ModerationActionType,
+    notificationType: NotificationType,
+    notificationMessage: string,
+    successMessage: string,
+  ): Promise<{ message: string }> {
+    if (!this.moderationActionsService || !this.notificationsService) {
+      throw new InternalServerErrorException(
+        'La moderación administrativa no está configurada',
+      );
+    }
+
+    let changed = false;
+    let communityName = '';
+
+    await this.dataSource.transaction(async (manager) => {
+      const communityRepository = manager.getRepository(Community);
+      const community = await communityRepository.findOne({
+        where: { id: communityId },
+        lock: { mode: 'pessimistic_write' },
+      });
+
+      if (!community) {
+        throw new NotFoundException('Comunidad no encontrada');
+      }
+
+      const currentValue =
+        field === 'isActive' ? community.isActive : community.isPrivate;
+      communityName = community.name;
+
+      if (currentValue === value) return;
+
+      if (field === 'isActive') {
+        community.isActive = value;
+      } else {
+        community.isPrivate = value;
+      }
+
+      await communityRepository.save(community);
+      await this.moderationActionsService!.record(
+        {
+          actorUserId,
+          targetType: MODERATION_TARGET_TYPES.COMMUNITY,
+          targetId: community.id,
+          action,
+          reason: null,
+          communityId: community.id,
+        },
+        manager,
+      );
+      changed = true;
+    });
+
+    if (changed) {
+      const recipientIds =
+        await this.findCommunityModerationRecipients(communityId);
+      try {
+        await this.notificationsService.notify(
+          recipientIds.map((userId) => ({
+            userId,
+            type: notificationType,
+            data: {
+              communityId,
+              communityName,
+              action,
+              actorUserId,
+            },
+            message: `${communityName}: ${notificationMessage}`,
+          })),
+        );
+      } catch {
+        // La acción y su auditoría ya fueron confirmadas; una falla de
+        // notificación no debe revertir la operación administrativa.
+      }
+    }
+
+    return { message: successMessage };
+  }
+
+  private async findCommunityModerationRecipients(
+    communityId: number,
+  ): Promise<string[]> {
+    const profiles = await this.communityProfileRepository.find({
+      where: {
+        communityId,
+        role: In([CommunityProfileRole.OWNER, CommunityProfileRole.MODERATOR]),
+      },
+      relations: { user: true },
+    });
+
+    return [
+      ...new Set(
+        profiles
+          .filter((profile) => profile.user?.isActive !== false)
+          .map((profile) => profile.userId),
+      ),
+    ];
   }
 
   private validateCollections(dto: CreateCommunityDto): void {

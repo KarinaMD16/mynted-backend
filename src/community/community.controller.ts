@@ -40,6 +40,7 @@ import { CreateCategoryDto } from './dto/create-category.dto';
 import { CreateTagDto } from './dto/create-tag.dto';
 import { GetTagsQueryDto } from './dto/get-tags-query.dto';
 import { GetCommunitiesQueryDto } from './dto/get-communities-query.dto';
+import { GetAdminCommunitiesQueryDto } from './dto/get-admin-communities-query.dto';
 import { UpdateCommunityDto } from './dto/update-community.dto';
 import { UpdateCommunityRuleDto } from './dto/update-community-rule.dto';
 import { UpdateTagDto } from './dto/update-tag.dto';
@@ -227,6 +228,23 @@ export class CommunityController {
     query: GetCommunitiesQueryDto,
   ) {
     return this.communityService.findAllCommunities(query);
+  }
+
+  @Get('communities/all')
+  @UseGuards(JwtAuthGuard, SuperAdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: '[Superadmin] Listar todas las comunidades' })
+  findAllCommunitiesForAdmin(
+    @Query(
+      new ValidationPipe({
+        transform: true,
+        whitelist: true,
+        forbidNonWhitelisted: true,
+      }),
+    )
+    query: GetAdminCommunitiesQueryDto,
+  ) {
+    return this.communityService.findAllCommunitiesForAdmin(query);
   }
 
   @Get('communities/by-slug/:slug')
@@ -548,8 +566,11 @@ export class CommunityController {
   @ApiOkResponse({
     schema: { example: { message: 'Comunidad desactivada exitosamente' } },
   })
-  deactivate(@Param('communityId', ParseIntPipe) communityId: number) {
-    return this.communityService.deactivate(communityId);
+  deactivate(
+    @Param('communityId', ParseIntPipe) communityId: number,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.communityService.deactivate(communityId, request.user.userId);
   }
 
   @Patch('communities/:communityId/activate')
@@ -560,8 +581,11 @@ export class CommunityController {
   @ApiOkResponse({
     schema: { example: { message: 'Comunidad activada exitosamente' } },
   })
-  activate(@Param('communityId', ParseIntPipe) communityId: number) {
-    return this.communityService.activate(communityId);
+  activate(
+    @Param('communityId', ParseIntPipe) communityId: number,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.communityService.activate(communityId, request.user.userId);
   }
 
   @Patch('communities/:communityId/public')
@@ -574,8 +598,11 @@ export class CommunityController {
       example: { message: 'Comunidad configurada como pública exitosamente' },
     },
   })
-  makePublic(@Param('communityId', ParseIntPipe) communityId: number) {
-    return this.communityService.makePublic(communityId);
+  makePublic(
+    @Param('communityId', ParseIntPipe) communityId: number,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.communityService.makePublic(communityId, request.user.userId);
   }
 
   @Patch('communities/:communityId/private')
@@ -588,8 +615,11 @@ export class CommunityController {
       example: { message: 'Comunidad configurada como privada exitosamente' },
     },
   })
-  makePrivate(@Param('communityId', ParseIntPipe) communityId: number) {
-    return this.communityService.makePrivate(communityId);
+  makePrivate(
+    @Param('communityId', ParseIntPipe) communityId: number,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.communityService.makePrivate(communityId, request.user.userId);
   }
 
   @Patch('communities/:communityId/moderation/:itemType/:itemId/restore')

@@ -30,6 +30,9 @@ import { TagSeed } from './seeds/tag.seed';
 import { UserTag } from '../user-tags/entities/user-tag.entity';
 import { User } from '../users/entities/user.entity';
 import { ModerationModule } from '../moderation/moderation.module';
+import { Report } from '../reports/entities/report.entity';
+import { NotificationsModule } from '../notifications/notifications.module';
+import { ModerationActionsModule } from '../moderation-actions/moderation-actions.module';
 
 @Module({
   imports: [
@@ -51,11 +54,14 @@ import { ModerationModule } from '../moderation/moderation.module';
       Product,
       UserTag,
       User,
+      Report,
     ]),
     CloudinaryModule,
     UsersModule,
     PricingModule,
     ModerationModule,
+    NotificationsModule,
+    ModerationActionsModule,
   ],
   controllers: [CommunityController, ForumController, PublicProfileController],
   providers: [
