@@ -51,6 +51,7 @@ describe('Reglas de reseñas (compra completada, borrado, reembolso, rating)', (
   let reviews: FakeReview[];
   let nextReviewId: number;
   let service: ReviewsService;
+  let cosmeticsService: { getEffectiveSummaryForUsers: jest.Mock };
 
   const aProduct = (overrides: Partial<FakeProduct> = {}): FakeProduct => ({
     id: productId,
@@ -187,10 +188,27 @@ describe('Reglas de reseñas (compra completada, borrado, reembolso, rating)', (
         ),
     };
 
+    cosmeticsService = {
+      getEffectiveSummaryForUsers: jest.fn((ids: string[]) =>
+        Promise.resolve(
+          new Map(
+            ids.map((id) => [
+              id,
+              {
+                isPro: false,
+                frame: { code: 'frame_default', assetUrl: null },
+              },
+            ]),
+          ),
+        ),
+      ),
+    };
+
     service = new ReviewsService(
       reviewRepository as unknown as Repository<Review>,
       productRepository as unknown as Repository<Product>,
       transactionRepository as unknown as Repository<PaymentTransaction>,
+      cosmeticsService as never,
     );
   });
 
@@ -588,6 +606,86 @@ describe('Reglas de reseñas (compra completada, borrado, reembolso, rating)', (
       ).resolves.toMatchObject({
         pagination: { total: 0, totalPages: 1 },
       });
+    });
+
+    it('cada autor de la página trae isPro y su marco, resueltos en una sola llamada al cargador', async () => {
+      for (const id of ['a', 'b', 'c']) {
+        transactions.push(purchase(TransactionStatus.COMPLETED, id));
+        await create(id, 5);
+      }
+      cosmeticsService.getEffectiveSummaryForUsers.mockClear();
+      cosmeticsService.getEffectiveSummaryForUsers.mockResolvedValue(
+        new Map([
+          [
+            'a',
+            {
+              isPro: true,
+              frame: { code: 'frame_gold', assetUrl: 'https://cdn/gold.png' },
+            },
+          ],
+          [
+            'b',
+            {
+              isPro: false,
+              frame: { code: 'frame_simple', assetUrl: null },
+            },
+          ],
+        ]),
+      );
+
+      const page = await service.findByProduct(
+        productId,
+        { page: 1, limit: 10 },
+        undefined,
+      );
+
+      // 'c' no aparece en el cargador: se pinta sin Pro y sin marco propio.
+      expect(
+        Object.fromEntries(
+          page.data.map((review) => [
+            review.author.id,
+            [review.author.isPro, review.author.frame.code],
+          ]),
+        ),
+      ).toEqual({
+        a: [true, 'frame_gold'],
+        b: [false, 'frame_simple'],
+        c: [false, 'frame_default'],
+      });
+      expect(
+        cosmeticsService.getEffectiveSummaryForUsers,
+      ).toHaveBeenCalledTimes(1);
+      expect(cosmeticsService.getEffectiveSummaryForUsers).toHaveBeenCalledWith(
+        ['c', 'b', 'a'],
+      );
+    });
+
+    it('crear y editar devuelven la reseña con isPro y frame del autor', async () => {
+      transactions.push(purchase(TransactionStatus.COMPLETED));
+      cosmeticsService.getEffectiveSummaryForUsers.mockResolvedValue(
+        new Map([
+          [
+            buyerId,
+            {
+              isPro: true,
+              frame: { code: 'frame_neon', assetUrl: null },
+            },
+          ],
+        ]),
+      );
+
+      const created = await create(buyerId, 4);
+      const updated = await service.updateMine(productId, buyerId, {
+        rating: 5,
+      });
+
+      for (const review of [created, updated]) {
+        expect(review.author).toMatchObject({
+          id: buyerId,
+          isPro: true,
+          frame: { code: 'frame_neon' },
+        });
+      }
     });
 
     it('lista las más recientes primero y pagina', async () => {

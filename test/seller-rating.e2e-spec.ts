@@ -100,6 +100,7 @@ describe('Rating del vendedor (e2e)', () => {
       repo(Review),
       repo(Product),
       {} as never,
+      {} as never,
     );
 
     const users = repo(User);

@@ -14,6 +14,11 @@ import {
   GetReviewsQueryDto,
   UpdateReviewDto,
 } from './dto/review.dto';
+import { CosmeticsService } from '../cosmetics/cosmetics.service';
+import {
+  FALLBACK_USER_DISPLAY,
+  UserDisplaySummary,
+} from '../cosmetics/user-display-summary';
 import { PaymentTransaction } from '../payments/entities/payment-transaction.entity';
 import { TransactionStatus } from '../payments/enums/transaction-status.enum';
 import { Product, ProductStatus, ProductType } from './entities/product.entity';
@@ -64,6 +69,7 @@ export class ReviewsService {
     private readonly productRepository: Repository<Product>,
     @InjectRepository(PaymentTransaction)
     private readonly transactionRepository: Repository<PaymentTransaction>,
+    private readonly cosmeticsService: CosmeticsService,
     @Optional() private readonly eventEmitter?: EventEmitter2,
   ) {}
 
@@ -183,11 +189,23 @@ export class ReviewsService {
       skip: (query.page - 1) * query.limit,
       take: query.limit,
     });
-    const summary = await this.getProductRating(productId);
+    // Badge Pro y marco de los autores de la página: una sola resolución.
+    const [summary, displays] = await Promise.all([
+      this.getProductRating(productId),
+      this.cosmeticsService.getEffectiveSummaryForUsers(
+        reviews.map((review) => review.authorId),
+      ),
+    ]);
 
     return {
       ...summary,
-      data: reviews.map((review) => this.toResponse(review, viewerId)),
+      data: reviews.map((review) =>
+        this.toResponse(
+          review,
+          viewerId,
+          displays.get(review.authorId) ?? FALLBACK_USER_DISPLAY,
+        ),
+      ),
       pagination: {
         page: query.page,
         limit: query.limit,
@@ -284,10 +302,21 @@ export class ReviewsService {
       where: { id },
       relations: { author: true },
     });
-    return this.toResponse(review, viewerId);
+    const displays = await this.cosmeticsService.getEffectiveSummaryForUsers([
+      review.authorId,
+    ]);
+    return this.toResponse(
+      review,
+      viewerId,
+      displays.get(review.authorId) ?? FALLBACK_USER_DISPLAY,
+    );
   }
 
-  private toResponse(review: Review, viewerId: string | undefined) {
+  private toResponse(
+    review: Review,
+    viewerId: string | undefined,
+    display: UserDisplaySummary,
+  ) {
     return {
       id: review.id,
       productId: review.productId,
@@ -299,6 +328,8 @@ export class ReviewsService {
         id: review.author.id,
         username: review.author.username,
         photoUrl: review.author.photoUrl ?? null,
+        isPro: display.isPro,
+        frame: display.frame,
       },
       isMine: review.authorId === viewerId,
     };
