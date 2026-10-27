@@ -179,8 +179,53 @@ Cada ítem tiene los mismos campos que la respuesta del pago (`status` es `compl
 | Detalle `GET /products/:id` | `seller.isPro` |
 | Reputación `GET /profiles/:id/reputation` | `isPro` (también si no es vendedor) |
 | Chat: bandeja `GET /conversations` y `conversation` de `GET /conversations/:id/messages` | `otherParticipant.isPro` |
+| Reseñas `GET /products/:id/reviews` | `author.isPro` |
 
-Los listados de productos que no traen objeto `seller` (`GET /products`, relacionados, recomendados, productos de una tienda) **no cambian**.
+Cada una trae además `frame` (el marco efectivo): ver la sección «Badge Pro y marco en listados». Los listados de productos que no traen objeto `seller` (`GET /products`, relacionados, recomendados, productos de una tienda) **no cambian**.
+
+---
+
+## Badge Pro y marco en listados
+
+Donde se muestra a otro usuario (chat, reseñas, perfil, búsquedas, tarjetas del Shop, detalle de producto) el backend manda un **resumen liviano** del usuario, siempre con la misma forma y **al mismo nivel** que sus demás campos (no cambió ninguno):
+
+```json
+{ "isPro": true, "frame": { "code": "frame_gold", "assetUrl": null } }
+```
+
+- `isPro`: Pro vigente ahora mismo (pinta el badge).
+- `frame`: el marco de avatar **efectivo** — el que de verdad se aplica hoy, no el equipado. Es el equipado si el usuario tiene derecho a usarlo (gratuito, o Pro vigente); si no, es el marco por defecto `{ "code": "frame_default", "assetUrl": null }`.
+- `frame` **siempre viene**, nunca es `null` ni falta, aunque el usuario nunca haya equipado nada. Un `assetUrl` en `null` significa "mapea el recurso por `code`", igual que en el catálogo (sección 8).
+- El **banner** y el **ganso** (`cosmetics.banner`, `cosmetics.gooseSkin`) **no** van en los listados: solo el perfil, la tienda y `GET /users/me` traen el objeto `cosmetics` completo.
+
+### Dónde aparece
+
+| Dónde | Dónde leerlo |
+|---|---|
+| Chat: bandeja `GET /conversations` y `conversation` de `GET /conversations/:id/messages` | `otherParticipant.isPro`, `otherParticipant.frame` |
+| Reseñas: `GET /products/:id/reviews` (y la reseña devuelta al crear o editar la tuya) | `author.isPro`, `author.frame` |
+| Perfil público (`GET /users/:id`, `by-username`) y búsqueda de usuarios (`GET /users/search`, `GET /search?type=users`) | `isPro`, `frame` en cada usuario (`frame` es igual a `cosmetics.frame`) |
+| Tienda: `GET /sellers/:sellerId` y `GET /search?type=stores` | `isPro`, `frame` del dueño |
+| Tarjetas de `GET /products/shop` y detalle `GET /products/:id` | `seller.isPro`, `seller.frame` |
+| Reputación `GET /profiles/:id/reputation` | `isPro`, `frame` (también si no es vendedor) |
+| `GET /users/me` | `isPro` y `cosmetics.frame` (no repite `frame` suelto) |
+
+Los listados de productos que no traen objeto `seller` (`GET /products`, relacionados, recomendados, productos de una tienda) siguen sin él.
+
+### Qué mostrar según el usuario
+
+| Usuario | `isPro` | `frame` | Qué pintar |
+|---|---|---|---|
+| Pro vigente | `true` | su marco equipado (puede ser Pro) | badge Pro + ese marco |
+| Gratuito con un marco gratuito equipado | `false` | ese marco gratuito | sin badge, con ese marco |
+| Gratuito sin preferencias | `false` | `frame_default` | sin badge, avatar sin marco decorativo |
+| Pro vencido que tenía un marco Pro | `false` | `frame_default` | sin badge, marco por defecto (su preferencia se conserva y vuelve al renovar) |
+
+No hace falta comparar nada en el cliente: pinta `frame` tal cual viene.
+
+### Costo
+
+Cada lista resuelve a todos sus usuarios **juntos**: una consulta de suscripciones, una de preferencias y una del catálogo (en memoria ~60 s), sin importar cuántos usuarios traiga. No hay que pedir nada extra: el resumen ya viene en la misma respuesta.
 
 ---
 
@@ -275,7 +320,7 @@ En el selector, muestra los `proOnly` con un candado a quien no es Pro y ofrece 
 
 `GET /users/me`, el perfil público (`GET /users/:id`, `by-username`), cada usuario de la búsqueda de usuarios y `GET /sellers/:sellerId` (junto al `bannerUrl`).
 
-> **Hoy** el chat, los posts y los listados de productos **no** traen `cosmetics`. Cuando se agreguen, usarán el mismo objeto (con `staticUrl` para listados, chat y posts).
+> Los listados (chat, reseñas, tarjetas del Shop, detalle de producto, reputación) **no** traen `cosmetics`: traen solo `isPro` y `frame` (ver «Badge Pro y marco en listados»). Los posts y respuestas del foro todavía no traen ninguno de los dos.
 
 ### La tienda
 
