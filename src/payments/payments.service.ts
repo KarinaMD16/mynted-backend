@@ -20,7 +20,7 @@ import {
 } from '../products/entities/product.entity';
 import { computeFinalPrice } from '../products/product-pricing';
 import { Seller } from '../sellers/entities/seller.entity';
-import { User } from '../users/entities/user.entity';
+import { SellerRequestStatus, User } from '../users/entities/user.entity';
 import { PaymentTransaction } from './entities/payment-transaction.entity';
 import { TransactionStatus } from './enums/transaction-status.enum';
 import { CommissionService } from './commission/commission.service';
@@ -90,6 +90,17 @@ export class PaymentsService {
       throw new InternalServerErrorException(
         'El producto tiene un vendedor inconsistente',
       );
+    }
+    const sellerUser = await this.userRepository.findOne({
+      where: { id: seller.userId },
+    });
+    if (
+      !sellerUser ||
+      sellerUser.isActive === false ||
+      (sellerUser.sellerRequestStatus !== undefined &&
+        sellerUser.sellerRequestStatus !== SellerRequestStatus.APPROVED)
+    ) {
+      throw new ConflictException('El producto no estÃ¡ disponible');
     }
 
     const user = await this.userRepository.findOne({ where: { id: userId } });
@@ -227,7 +238,7 @@ export class PaymentsService {
       );
     }
 
-    if (product.isHidden) {
+    if (product.isHidden || product.isDeactivated) {
       throw new ConflictException('El producto no está disponible');
     }
     if (product.status !== ProductStatus.ACTIVE) {
@@ -262,6 +273,17 @@ export class PaymentsService {
       throw new InternalServerErrorException(
         'El producto tiene un vendedor inconsistente',
       );
+    }
+    const sellerUser = await manager.getRepository(User).findOne({
+      where: { id: seller.userId },
+    });
+    if (
+      !sellerUser ||
+      sellerUser.isActive === false ||
+      (sellerUser.sellerRequestStatus !== undefined &&
+        sellerUser.sellerRequestStatus !== SellerRequestStatus.APPROVED)
+    ) {
+      throw new ConflictException('El producto no estÃ¡ disponible');
     }
     if (seller.userId === buyerId) {
       throw new BadRequestException('No puedes comprar tu propio producto');
@@ -524,7 +546,7 @@ export class PaymentsService {
   }
 
   private validateQuoteProduct(product: Product): void {
-    if (product.isHidden) {
+    if (product.isHidden || product.isDeactivated) {
       throw new ConflictException('El producto no está disponible');
     }
     if (product.status !== ProductStatus.ACTIVE) {

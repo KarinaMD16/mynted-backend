@@ -1,4 +1,5 @@
 import { FindOptionsWhere, IsNull, MoreThan, Raw } from 'typeorm';
+import { SellerRequestStatus } from '../users/entities/user.entity';
 import { Product, ProductStatus } from './entities/product.entity';
 import { UnavailableReason } from './product-events';
 
@@ -6,13 +7,14 @@ type AvailabilityFields = Pick<
   Product,
   'status' | 'isVisible' | 'deletedAt' | 'quantity'
 > &
-  Partial<Pick<Product, 'isHidden'>>;
+  Partial<Pick<Product, 'isHidden' | 'isDeactivated'>>;
 
 // Disponible para comprar: activo, visible, no borrado y con stock.
 export function isProductAvailable(product: AvailabilityFields): boolean {
   return (
     product.status === ProductStatus.ACTIVE &&
     product.isVisible &&
+    !product.isDeactivated &&
     !product.isHidden &&
     !product.deletedAt &&
     product.quantity > 0
@@ -24,6 +26,7 @@ export function unavailableReason(
   product: AvailabilityFields,
 ): UnavailableReason | null {
   if (product.deletedAt) return 'deleted';
+  if (product.isDeactivated) return 'inactive';
   if (product.status === ProductStatus.SOLD) return 'sold';
   if (product.status !== ProductStatus.ACTIVE) return 'inactive';
   if (product.quantity <= 0) return 'sold';
@@ -48,6 +51,10 @@ export const PUBLIC_PRODUCT_WHERE: FindOptionsWhere<Product> = {
   status: ProductStatus.ACTIVE,
   isVisible: true,
   isHidden: false,
+  isDeactivated: false,
+  seller: {
+    user: { isActive: true, sellerRequestStatus: SellerRequestStatus.APPROVED },
+  },
   // Un producto agotado no se lista aunque su status no se haya sincronizado.
   quantity: MoreThan(0),
 };

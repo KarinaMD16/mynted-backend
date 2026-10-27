@@ -347,6 +347,7 @@ export class UsersService {
                   id: product.id,
                   title: product.title,
                   status: product.status,
+                  isDeactivated: product.isDeactivated,
                   isHidden: product.isHidden,
                   isVisible: product.isVisible,
                   publishedAt: product.publishedAt,

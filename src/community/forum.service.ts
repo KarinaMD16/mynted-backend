@@ -1423,9 +1423,10 @@ export class ForumService {
             .createQueryBuilder('favorite_product')
             .innerJoin('favorite_product.seller', 'favorite_product_seller')
             .where('favorite_product.id IN (:...productIds)', { productIds })
-            .andWhere('favorite_product.status IN (:...statuses)', {
-              statuses: [ProductStatus.ACTIVE, ProductStatus.SOLD],
-            })
+            .andWhere(
+              '(favorite_product.status IN (:...statuses) OR favorite_product.is_deactivated = true)',
+              { statuses: [ProductStatus.ACTIVE, ProductStatus.SOLD] },
+            )
             .andWhere('favorite_product.is_visible = true')
             .andWhere(
               `(favorite_product.is_hidden = false OR favorite_product_seller.user_id = :viewerId OR EXISTS (

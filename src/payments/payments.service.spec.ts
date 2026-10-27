@@ -13,6 +13,7 @@ import {
   ProductType,
 } from '../products/entities/product.entity';
 import { Seller } from '../sellers/entities/seller.entity';
+import { SellerRequestStatus, User } from '../users/entities/user.entity';
 import { PaymentTransaction } from './entities/payment-transaction.entity';
 import { TransactionStatus } from './enums/transaction-status.enum';
 import {
@@ -62,9 +63,18 @@ describe('PaymentsService', () => {
       findOne: jest.fn().mockResolvedValue(seller),
       save: jest.fn(async (value) => value),
     };
-    const userRepo = {
-      findOne: jest.fn().mockResolvedValue({ id: buyerId, currency: 'CRC' }),
-    };
+    const userRepo = { findOne: jest.fn() };
+    userRepo.findOne.mockImplementation(({ where }) =>
+      Promise.resolve(
+        where.id === 'seller-id'
+          ? {
+              id: 'seller-id',
+              isActive: true,
+              sellerRequestStatus: SellerRequestStatus.APPROVED,
+            }
+          : { id: buyerId, currency: 'CRC' },
+      ),
+    );
     const exchangeRateService = {
       convert: jest.fn().mockResolvedValue({
         amount: 240,
@@ -103,6 +113,7 @@ describe('PaymentsService', () => {
       getRepository: jest.fn((entity) => {
         if (entity === Product) return productRepo;
         if (entity === Seller) return sellerRepo;
+        if (entity === User) return userRepo;
         return txRepo;
       }),
       createQueryBuilder: jest.fn(() => updateBuilder),

@@ -1,6 +1,8 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
+  InternalServerErrorException,
   Injectable,
   NotFoundException,
   Optional,
@@ -36,10 +38,13 @@ import { Tag } from '../community/entities/tag.entity';
 import { Seller } from '../sellers/entities/seller.entity';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
 import { UsersService } from '../users/users.service';
+import { SellerRequestStatus, UserRole } from '../users/entities/user.entity';
 import { UserTag } from '../user-tags/entities/user-tag.entity';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { UpdateProductStatusDto } from './dto/update-product-status.dto';
+import { ProductAdminActionDto } from './dto/product-admin-action.dto';
+import { DeleteProductDto } from './dto/delete-product.dto';
 import { GetRecommendedProductsQueryDto } from './dto/get-recommended-products-query.dto';
 import { GetShopQueryDto } from './dto/get-shop-query.dto';
 import { GetMyProductsQueryDto } from './dto/get-my-products-query.dto';
@@ -75,6 +80,13 @@ import {
   applyProductSort,
 } from './product-price-query';
 import { ReviewsService } from './reviews.service';
+import { ModerationActionsService } from '../moderation-actions/moderation-actions.service';
+import {
+  MODERATION_ACTIONS,
+  MODERATION_TARGET_TYPES,
+} from '../moderation-actions/constants/moderation-action.constants';
+import { NotificationsService } from '../notifications/notifications.service';
+import { NotificationType } from '../notifications/enums/notification-type.enum';
 
 // Máximo de productos que devuelve /products/:id/related (los elegidos por el
 // vendedor son hasta 6, así que caben todos).
@@ -306,6 +318,10 @@ export class ProductsService {
     private readonly priceDisplay: PriceDisplayService,
     @Optional()
     private readonly eventEmitter?: EventEmitter2,
+    @Optional()
+    private readonly moderationActionsService?: ModerationActionsService,
+    @Optional()
+    private readonly notificationsService?: NotificationsService,
   ) {}
 
   // Publica (o guarda como borrador con saveAsDraft) un producto. La
@@ -503,10 +519,19 @@ export class ProductsService {
   ): SelectQueryBuilder<Product> {
     const qb = this.productRepository
       .createQueryBuilder('product')
+      .innerJoin('product.seller', 'public_seller')
+      .innerJoin('public_seller.user', 'public_seller_user')
       .where('product.status = :status', {
         status: filters.status ?? ProductStatus.ACTIVE,
       })
-      .andWhere('product.isVisible = :isVisible', { isVisible: true });
+      .andWhere('product.isVisible = :isVisible', { isVisible: true })
+      .andWhere('product.isDeactivated = false')
+      .andWhere('public_seller_user.is_active = true')
+      .andWhere('public_seller_user.deleted_at IS NULL')
+      .andWhere(
+        'public_seller_user.seller_request_status = :approvedSellerStatus',
+        { approvedSellerStatus: SellerRequestStatus.APPROVED },
+      );
     if (!filters.viewerId) {
       qb.andWhere('product.isHidden = false');
     } else {
@@ -1140,6 +1165,8 @@ export class ProductsService {
 
       const queryBuilder = this.productRepository
         .createQueryBuilder('product')
+        .innerJoin('product.seller', 'related_seller')
+        .innerJoin('related_seller.user', 'related_seller_user')
         .leftJoin('product.productTags', 'productTag')
         .leftJoinAndSelect('product.productTags', 'allProductTags')
         .leftJoinAndSelect('allProductTags.tag', 'tag')
@@ -1147,6 +1174,13 @@ export class ProductsService {
         .andWhere('product.status = :status', { status: ProductStatus.ACTIVE })
         .andWhere('product.isVisible = :isVisible', { isVisible: true })
         .andWhere('product.isHidden = false')
+        .andWhere('product.isDeactivated = false')
+        .andWhere('related_seller_user.is_active = true')
+        .andWhere('related_seller_user.deleted_at IS NULL')
+        .andWhere(
+          'related_seller_user.seller_request_status = :approvedSellerStatus',
+          { approvedSellerStatus: SellerRequestStatus.APPROVED },
+        )
         .andWhere(
           [
             tagIds.size > 0 ? 'productTag.tagId IN (:...tagIds)' : null,
@@ -1395,14 +1429,209 @@ export class ProductsService {
     return this.findDetail(id, userId);
   }
 
+  async deactivateByAdmin(
+    id: number,
+    actorUserId: string,
+    dto: ProductAdminActionDto,
+  ): Promise<Product> {
+    const result = await this.setAdministrativeDeactivation(
+      id,
+      actorUserId,
+      dto.reason,
+      true,
+    );
+    this.emitFavoriteChanges(result.product, result.before, actorUserId);
+    await this.notifyProductAdminAction(
+      result.product,
+      NotificationType.PRODUCT_DEACTIVATED,
+      `El producto "${result.product.title}" fue desactivado administrativamente: ${dto.reason.trim()}`,
+      { productId: result.product.id, reason: dto.reason.trim() },
+    );
+    return result.product;
+  }
+
+  async activateByAdmin(
+    id: number,
+    actorUserId: string,
+    dto: ProductAdminActionDto,
+  ): Promise<Product> {
+    const result = await this.setAdministrativeDeactivation(
+      id,
+      actorUserId,
+      dto.reason,
+      false,
+    );
+    this.emitFavoriteChanges(result.product, result.before, actorUserId);
+    await this.notifyProductAdminAction(
+      result.product,
+      NotificationType.PRODUCT_ACTIVATED,
+      `Se retiró la desactivación administrativa del producto "${result.product.title}".`,
+      { productId: result.product.id, reason: dto.reason.trim() },
+    );
+    return result.product;
+  }
+
+  private async setAdministrativeDeactivation(
+    id: number,
+    actorUserId: string,
+    reason: string,
+    isDeactivated: boolean,
+  ): Promise<{ product: Product; before: FavoriteSnapshot }> {
+    const normalizedReason = typeof reason === 'string' ? reason.trim() : '';
+    if (!normalizedReason || normalizedReason.length > 500) {
+      throw new BadRequestException(
+        'reason es obligatorio y no puede superar 500 caracteres',
+      );
+    }
+
+    return this.dataSource.transaction(async (manager) => {
+      const product = await manager.getRepository(Product).findOne({
+        where: { id },
+        relations: { seller: true },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!product) throw new NotFoundException('Producto no encontrado');
+
+      if (product.isDeactivated === isDeactivated) {
+        throw new ConflictException(
+          isDeactivated
+            ? 'El producto ya está desactivado'
+            : 'El producto ya está activado',
+        );
+      }
+
+      const before = this.favoriteSnapshot(product);
+      await manager.update(Product, id, { isDeactivated });
+
+      if (!this.moderationActionsService) {
+        throw new InternalServerErrorException(
+          'El servicio de auditoría de moderación no está disponible',
+        );
+      }
+      await this.moderationActionsService.record(
+        {
+          actorUserId,
+          targetType: MODERATION_TARGET_TYPES.PRODUCT,
+          targetId: id,
+          action: isDeactivated
+            ? MODERATION_ACTIONS.PRODUCT_DEACTIVATED
+            : MODERATION_ACTIONS.PRODUCT_ACTIVATED,
+          reason: normalizedReason,
+          communityId: product.communityId,
+        },
+        manager,
+      );
+
+      const updated = await manager.findOne(Product, {
+        where: { id },
+        relations: { seller: true },
+      });
+      if (!updated) {
+        throw new InternalServerErrorException(
+          'No fue posible recuperar el producto actualizado',
+        );
+      }
+      return { product: updated, before };
+    });
+  }
+
   // Borrado lógico: el producto desaparece de listados y detalle pero se
-  // conservan favoritos y conversaciones que lo referencian.
-  async remove(id: number, userId: string): Promise<void> {
-    const product = await this.getOwnedProduct(id, userId);
-    const before = this.favoriteSnapshot(product);
-    await this.productRepository.softDelete(id);
-    product.deletedAt = new Date();
-    this.emitFavoriteChanges(product, before, userId);
+  // conservan favoritos y conversaciones que lo referencian. SUPERADMIN puede
+  // borrar cualquier producto y debe proporcionar motivo.
+  async remove(
+    id: number,
+    userId: string,
+    dto: DeleteProductDto = {},
+  ): Promise<void> {
+    const actor = await this.usersService.findById(userId);
+    const isSuperAdmin = actor.role === UserRole.SUPERADMIN;
+    if (
+      !isSuperAdmin &&
+      (actor.role !== UserRole.SELLER ||
+        actor.sellerRequestStatus !== SellerRequestStatus.APPROVED)
+    ) {
+      throw new ForbiddenException('Requiere ser un vendedor aprobado');
+    }
+
+    const reason = dto.reason?.trim();
+    if (isSuperAdmin && (!reason || reason.length > 500)) {
+      throw new BadRequestException(
+        'reason es obligatorio y no puede superar 500 caracteres',
+      );
+    }
+
+    const result = await this.dataSource.transaction(async (manager) => {
+      const product = await manager.getRepository(Product).findOne({
+        where: { id },
+        relations: { seller: true },
+        withDeleted: isSuperAdmin,
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!product) throw new NotFoundException('Producto no encontrado');
+      if (isSuperAdmin && product.deletedAt) return { product, changed: false };
+      if (!isSuperAdmin && product.seller.userId !== userId) {
+        throw new ForbiddenException('No eres el dueño de este producto');
+      }
+
+      const before = this.favoriteSnapshot(product);
+      await manager.softDelete(Product, id);
+      product.deletedAt = new Date();
+
+      if (isSuperAdmin) {
+        if (!this.moderationActionsService) {
+          throw new InternalServerErrorException(
+            'El servicio de auditoría de moderación no está disponible',
+          );
+        }
+        await this.moderationActionsService.record(
+          {
+            actorUserId: userId,
+            targetType: MODERATION_TARGET_TYPES.PRODUCT,
+            targetId: id,
+            action: MODERATION_ACTIONS.PRODUCT_SOFT_DELETED,
+            reason,
+            communityId: product.communityId,
+          },
+          manager,
+        );
+      }
+      return { product, changed: true, before };
+    });
+
+    if (!result.changed) return;
+    this.emitFavoriteChanges(result.product, result.before!, userId);
+    if (isSuperAdmin) {
+      await this.notifyProductAdminAction(
+        result.product,
+        NotificationType.PRODUCT_DELETED,
+        `El producto "${result.product.title}" fue eliminado lógicamente por administración.`,
+        { productId: result.product.id, reason },
+      );
+    }
+  }
+
+  private async notifyProductAdminAction(
+    product: Product,
+    type: NotificationType,
+    message: string,
+    data: Record<string, unknown>,
+  ): Promise<void> {
+    if (!this.notificationsService || !product.seller?.userId) return;
+    try {
+      await this.notificationsService.notify(
+        [
+          {
+            userId: product.seller.userId,
+            type,
+            data,
+            message,
+          },
+        ],
+        { allowInactiveRecipient: true },
+      );
+    } catch {
+      // La notificación ocurre después del commit y no debe revertirlo.
+    }
   }
 
   // quantity 0 deja agotado (active -> sold); reponer stock lo reactiva
@@ -1568,7 +1797,16 @@ export class ProductsService {
       .leftJoinAndSelect('allProductTags.tag', 'tag')
       .where('product.status = :status', { status: ProductStatus.ACTIVE })
       .andWhere('product.isVisible = :isVisible', { isVisible: true })
-      .andWhere('product.isHidden = false');
+      .andWhere('product.isHidden = false')
+      .andWhere('product.isDeactivated = false')
+      .innerJoin('product.seller', 'recommended_seller')
+      .innerJoin('recommended_seller.user', 'recommended_seller_user')
+      .andWhere('recommended_seller_user.is_active = true')
+      .andWhere('recommended_seller_user.deleted_at IS NULL')
+      .andWhere(
+        'recommended_seller_user.seller_request_status = :approvedSellerStatus',
+        { approvedSellerStatus: SellerRequestStatus.APPROVED },
+      );
 
     if (excludeId !== undefined) {
       queryBuilder.andWhere('product.id != :excludeId', { excludeId });

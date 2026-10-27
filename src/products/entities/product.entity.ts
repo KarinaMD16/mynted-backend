@@ -137,6 +137,9 @@ export class Product {
   @Column({ name: 'is_visible', type: 'boolean', default: true })
   isVisible!: boolean;
 
+  @Column({ name: 'is_deactivated', type: 'boolean', default: false })
+  isDeactivated!: boolean;
+
   @Column({ name: 'is_hidden', type: 'boolean', default: false })
   isHidden!: boolean;
 

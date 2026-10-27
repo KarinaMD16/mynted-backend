@@ -23,6 +23,9 @@ export const MODERATION_ACTIONS = {
   USER_SOFT_DELETED: 'user_soft_deleted',
   SELLER_REVOKED: 'seller_revoked',
   SELLER_RESTORED: 'seller_restored',
+  PRODUCT_DEACTIVATED: 'product_deactivated',
+  PRODUCT_ACTIVATED: 'product_activated',
+  PRODUCT_SOFT_DELETED: 'product_soft_deleted',
 } as const;
 
 export type ModerationActionType =
