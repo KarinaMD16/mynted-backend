@@ -24,7 +24,11 @@ describe('ReportsService resolution', () => {
   const communityId = 7;
   const actorId = 'moderator-id';
   const authorId = 'author-id';
-  const reportRepository = { findOne: jest.fn(), save: jest.fn() };
+  const reportRepository = {
+    findOne: jest.fn(),
+    find: jest.fn(),
+    save: jest.fn(),
+  };
   const postRepository = { findOne: jest.fn() };
   const replyRepository = { findOne: jest.fn() };
   const productRepository = { findOne: jest.fn() };
@@ -35,6 +39,7 @@ describe('ReportsService resolution', () => {
   const userRepository = { find: jest.fn() };
   const moderationService = { hideContent: jest.fn() };
   const notificationsService = { notify: jest.fn() };
+  const moderationActionsService = { record: jest.fn() };
   const updateQuery = {
     update: jest.fn().mockReturnThis(),
     set: jest.fn().mockReturnThis(),
@@ -71,6 +76,7 @@ describe('ReportsService resolution', () => {
     dataSource as never,
     moderationService as unknown as ModerationService,
     notificationsService as unknown as NotificationsService,
+    moderationActionsService as never,
   );
 
   const pendingReport = (overrides: Partial<Report> = {}) =>
@@ -91,6 +97,7 @@ describe('ReportsService resolution', () => {
     reportRepository.save.mockImplementation((value: Report) =>
       Promise.resolve(value),
     );
+    reportRepository.find.mockResolvedValue([]);
     notificationsService.notify.mockResolvedValue([]);
     updateQuery.execute.mockResolvedValue({ affected: 2 });
   });
@@ -142,6 +149,24 @@ describe('ReportsService resolution', () => {
     expect(
       JSON.stringify(notificationsService.notify.mock.calls[0]),
     ).not.toContain('reporter-id');
+    expect(moderationActionsService.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetType: 'report',
+        targetId: report.id,
+        action: 'report_resolved',
+        communityId,
+      }),
+      manager,
+    );
+    expect(moderationActionsService.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetType: 'user',
+        targetId: authorId,
+        action: 'author_warned',
+        communityId,
+      }),
+      manager,
+    );
   });
 
   it('resolves a reply and a product through the existing moderation service', async () => {
@@ -182,6 +207,54 @@ describe('ReportsService resolution', () => {
         manager,
       );
     }
+  });
+
+  it('records one content event and one report event per pending batch report', async () => {
+    const report = pendingReport({ id: 15 });
+    const relatedReports = [
+      pendingReport({ id: 16 }),
+      pendingReport({ id: 17 }),
+      pendingReport({ id: 18 }),
+    ];
+    const post = { id: 42, communityProfile: { userId: authorId } };
+    reportRepository.findOne.mockResolvedValue(report);
+    reportRepository.find.mockResolvedValue(relatedReports);
+    postRepository.findOne.mockResolvedValue(post);
+    moderationService.hideContent.mockResolvedValue(post);
+
+    await service.resolveCommunityReport(
+      communityId,
+      report.id,
+      { hideContent: true },
+      actorId,
+    );
+
+    expect(moderationActionsService.record).toHaveBeenCalledTimes(4);
+    const recordedInputs = (
+      moderationActionsService.record.mock.calls as unknown as Array<
+        [Record<string, unknown>]
+      >
+    ).map(([input]) => input);
+    expect(recordedInputs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action: 'report_resolved',
+          targetId: 15,
+        }),
+        expect.objectContaining({
+          action: 'report_resolved',
+          targetId: 16,
+        }),
+        expect.objectContaining({
+          action: 'report_resolved',
+          targetId: 17,
+        }),
+        expect.objectContaining({
+          action: 'report_resolved',
+          targetId: 18,
+        }),
+      ]),
+    );
   });
 
   it('rejects hiding conversations', async () => {
@@ -256,6 +329,15 @@ describe('ReportsService resolution', () => {
     });
     expect(moderationService.hideContent).not.toHaveBeenCalled();
     expect(notificationsService.notify).not.toHaveBeenCalled();
+    expect(moderationActionsService.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetType: 'report',
+        targetId: report.id,
+        action: 'report_dismissed',
+        communityId,
+      }),
+      manager,
+    );
   });
 
   it('returns not found for a report outside the requested community', async () => {

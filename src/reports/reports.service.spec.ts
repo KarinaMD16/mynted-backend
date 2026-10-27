@@ -51,6 +51,7 @@ describe('ReportsService', () => {
   const dataSource = { transaction: jest.fn() };
   const moderationService = { hideContent: jest.fn() };
   const notificationsService = { notify: jest.fn() };
+  const moderationActionsService = { record: jest.fn() };
   const service = new ReportsService(
     reportRepository as unknown as Repository<Report>,
     postRepository as unknown as Repository<Post>,
@@ -64,6 +65,7 @@ describe('ReportsService', () => {
     dataSource as never,
     moderationService as never,
     notificationsService as never,
+    moderationActionsService as never,
   );
 
   const dto = (itemType: ReportItemType, itemId = 7): CreateReportDto => ({

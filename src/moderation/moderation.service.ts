@@ -6,12 +6,18 @@ import {
   Optional,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, Repository } from 'typeorm';
+import { DataSource, EntityManager, Repository } from 'typeorm';
 import { Post } from '../community/entities/post.entity';
 import { Reply } from '../community/entities/reply.entity';
 import { Product } from '../products/entities/product.entity';
 import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationType } from '../notifications/enums/notification-type.enum';
+import {
+  MODERATION_ACTIONS,
+  MODERATION_TARGET_TYPES,
+  ModerationTargetType,
+} from '../moderation-actions/constants/moderation-action.constants';
+import { ModerationActionsService } from '../moderation-actions/moderation-actions.service';
 import { ModerationItemType } from './enums/moderation-item-type.enum';
 
 type Moderatable = Post | Reply | Product;
@@ -29,9 +35,41 @@ export class ModerationService {
     private readonly productRepository: Repository<Product>,
     @Optional()
     private readonly notificationsService?: NotificationsService,
+    @Optional()
+    private readonly dataSource?: DataSource,
+    @Optional()
+    private readonly moderationActionsService?: ModerationActionsService,
   ) {}
 
   async hideContent(
+    itemType: ModerationItemType,
+    itemId: number,
+    actorUserId: string,
+    reason?: string,
+    manager?: EntityManager,
+  ): Promise<Moderatable> {
+    if (!manager && this.dataSource) {
+      return this.dataSource.transaction((transactionManager) =>
+        this.hideContent(
+          itemType,
+          itemId,
+          actorUserId,
+          reason,
+          transactionManager,
+        ),
+      );
+    }
+
+    return this.hideContentInManager(
+      itemType,
+      itemId,
+      actorUserId,
+      reason,
+      manager,
+    );
+  }
+
+  private async hideContentInManager(
     itemType: ModerationItemType,
     itemId: number,
     actorUserId: string,
@@ -43,12 +81,25 @@ export class ModerationService {
     }
     const content = await this.findContent(itemType, itemId, manager);
     if (content.isHidden) return content;
+    const communityId = this.getCommunityId(itemType, content);
     const trimmedReason = reason?.trim();
     content.isHidden = true;
     content.hiddenAt ??= new Date();
     content.hiddenByUserId = actorUserId;
     content.hiddenReason = trimmedReason || null;
-    return this.saveContent(itemType, content, manager);
+    const saved = await this.saveContent(itemType, content, manager);
+    await this.moderationActionsService?.record(
+      {
+        actorUserId,
+        targetType: this.toTargetType(itemType),
+        targetId: itemId,
+        action: MODERATION_ACTIONS.CONTENT_HIDDEN,
+        reason: trimmedReason || null,
+        communityId,
+      },
+      manager,
+    );
+    return saved;
   }
 
   async restoreContent(
@@ -57,6 +108,36 @@ export class ModerationService {
     communityId: number,
     actorUserId: string,
   ): Promise<Moderatable> {
+    if (this.dataSource) {
+      const result = await this.dataSource.transaction((transactionManager) =>
+        this.restoreContentInManager(
+          itemType,
+          itemId,
+          communityId,
+          actorUserId,
+          transactionManager,
+        ),
+      );
+      if (result.changed) await this.notifyRestored(itemType, result.content);
+      return result.content;
+    }
+    const result = await this.restoreContentInManager(
+      itemType,
+      itemId,
+      communityId,
+      actorUserId,
+    );
+    if (result.changed) await this.notifyRestored(itemType, result.content);
+    return result.content;
+  }
+
+  private async restoreContentInManager(
+    itemType: ModerationItemType,
+    itemId: number,
+    communityId: number,
+    actorUserId: string,
+    manager?: EntityManager,
+  ): Promise<{ content: Moderatable; changed: boolean }> {
     void actorUserId;
     if (
       !Number.isInteger(itemId) ||
@@ -66,20 +147,43 @@ export class ModerationService {
     ) {
       throw new BadRequestException('itemId debe ser un entero positivo');
     }
-    const content = await this.findContent(itemType, itemId);
+    const content = await this.findContent(itemType, itemId, manager);
     const contentCommunityId = this.getCommunityId(itemType, content);
     if (contentCommunityId === null || contentCommunityId !== communityId) {
       throw new NotFoundException('Contenido no encontrado');
     }
-    if (!content.isHidden) return content;
+    if (!content.isHidden) return { content, changed: false };
 
     content.isHidden = false;
     content.hiddenAt = null;
     content.hiddenByUserId = null;
     content.hiddenReason = null;
-    const restored = await this.saveContent(itemType, content);
-    await this.notifyRestored(itemType, restored);
-    return restored;
+    const restored = await this.saveContent(itemType, content, manager);
+    await this.moderationActionsService?.record(
+      {
+        actorUserId,
+        targetType: this.toTargetType(itemType),
+        targetId: itemId,
+        action: MODERATION_ACTIONS.CONTENT_RESTORED,
+        reason: null,
+        communityId: contentCommunityId,
+      },
+      manager,
+    );
+    return { content: restored, changed: true };
+  }
+
+  private toTargetType(itemType: ModerationItemType): ModerationTargetType {
+    switch (itemType) {
+      case ModerationItemType.POST:
+        return MODERATION_TARGET_TYPES.POST;
+      case ModerationItemType.REPLY:
+        return MODERATION_TARGET_TYPES.REPLY;
+      case ModerationItemType.PRODUCT:
+        return MODERATION_TARGET_TYPES.PRODUCT;
+      default:
+        throw new BadRequestException('Tipo de contenido no vÃ¡lido');
+    }
   }
 
   private async findContent(

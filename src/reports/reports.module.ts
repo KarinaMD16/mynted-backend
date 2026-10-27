@@ -15,6 +15,7 @@ import { Message } from '../conversations/entities/message.entity';
 import { User } from '../users/entities/user.entity';
 import { ModerationModule } from '../moderation/moderation.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { ModerationActionsModule } from '../moderation-actions/moderation-actions.module';
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
     CommunityModule,
     ModerationModule,
     NotificationsModule,
+    ModerationActionsModule,
   ],
   controllers: [ReportsController, CommunityReportsController],
   providers: [ReportsService],

@@ -11,6 +11,7 @@ import {
   DataSource,
   EntityManager,
   In,
+  Not,
   QueryFailedError,
   Repository,
 } from 'typeorm';
@@ -36,6 +37,11 @@ import { ModerationItemType } from '../moderation/enums/moderation-item-type.enu
 import { ModerationService } from '../moderation/moderation.service';
 import { NotificationType } from '../notifications/enums/notification-type.enum';
 import { NotificationsService } from '../notifications/notifications.service';
+import {
+  MODERATION_ACTIONS,
+  MODERATION_TARGET_TYPES,
+} from '../moderation-actions/constants/moderation-action.constants';
+import { ModerationActionsService } from '../moderation-actions/moderation-actions.service';
 
 const REPORT_UNIQUE_CONSTRAINT = 'UQ_report_reporter_id_item_type_item_id';
 
@@ -83,6 +89,7 @@ export class ReportsService {
     private readonly dataSource: DataSource,
     private readonly moderationService: ModerationService,
     private readonly notificationsService: NotificationsService,
+    private readonly moderationActionsService: ModerationActionsService,
   ) {}
 
   async createReport(userId: string, dto: CreateReportDto): Promise<Report> {
@@ -267,6 +274,11 @@ export class ReportsService {
           ? await this.findReportAuthorId(report, manager)
           : null;
 
+      const relatedReports =
+        dto.hideContent === true
+          ? await this.findRelatedPendingReports(manager, report)
+          : [];
+
       if (dto.hideContent === true) {
         await this.moderationService.hideContent(
           this.toModerationItemType(report.itemType),
@@ -287,6 +299,32 @@ export class ReportsService {
       report.resolutionNote = resolutionNote;
       const updated = await reportRepository.save(report);
 
+      await this.moderationActionsService.record(
+        {
+          actorUserId,
+          targetType: MODERATION_TARGET_TYPES.REPORT,
+          targetId: report.id,
+          action: MODERATION_ACTIONS.REPORT_RESOLVED,
+          reason: null,
+          communityId: report.communityId,
+        },
+        manager,
+      );
+
+      if (dto.warnAuthor === true && recipientId) {
+        await this.moderationActionsService.record(
+          {
+            actorUserId,
+            targetType: MODERATION_TARGET_TYPES.USER,
+            targetId: recipientId,
+            action: MODERATION_ACTIONS.AUTHOR_WARNED,
+            reason: report.reason,
+            communityId: report.communityId,
+          },
+          manager,
+        );
+      }
+
       if (dto.hideContent === true) {
         await this.resolveRelatedPendingReports(
           manager,
@@ -296,6 +334,19 @@ export class ReportsService {
           resolutionAction,
           resolutionNote,
         );
+        for (const relatedReport of relatedReports) {
+          await this.moderationActionsService.record(
+            {
+              actorUserId,
+              targetType: MODERATION_TARGET_TYPES.REPORT,
+              targetId: relatedReport.id,
+              action: MODERATION_ACTIONS.REPORT_RESOLVED,
+              reason: null,
+              communityId: relatedReport.communityId,
+            },
+            manager,
+          );
+        }
       }
 
       return { report: updated, recipientId };
@@ -329,7 +380,19 @@ export class ReportsService {
       report.resolvedByUserId = actorUserId;
       report.resolutionAction = 'dismiss';
       report.resolutionNote = null;
-      return reportRepository.save(report);
+      const updated = await reportRepository.save(report);
+      await this.moderationActionsService.record(
+        {
+          actorUserId,
+          targetType: MODERATION_TARGET_TYPES.REPORT,
+          targetId: report.id,
+          action: MODERATION_ACTIONS.REPORT_DISMISSED,
+          reason: null,
+          communityId: report.communityId,
+        },
+        manager,
+      );
+      return updated;
     });
   }
 
@@ -439,10 +502,27 @@ export class ReportsService {
       .where('item_type = :itemType', { itemType: report.itemType })
       .andWhere('item_id = :itemId', { itemId: report.itemId })
       .andWhere('community_id = :communityId', {
-        communityId: report.communityId,
+        communityId: report.communityId as number,
       })
       .andWhere('status = :status', { status: ReportStatus.PENDING })
       .execute();
+  }
+
+  private findRelatedPendingReports(
+    manager: EntityManager,
+    report: Report,
+  ): Promise<Report[]> {
+    return manager.getRepository(Report).find({
+      where: {
+        id: Not(report.id),
+        itemType: report.itemType,
+        itemId: report.itemId,
+        communityId: report.communityId as number,
+        status: ReportStatus.PENDING,
+      },
+      order: { id: 'ASC' },
+      lock: { mode: 'pessimistic_write' },
+    });
   }
 
   private async notifyModeration(

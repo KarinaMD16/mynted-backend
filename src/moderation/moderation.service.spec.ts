@@ -7,6 +7,7 @@ describe('ModerationService', () => {
   const replyRepository = { findOne: jest.fn(), save: jest.fn() };
   const productRepository = { findOne: jest.fn(), save: jest.fn() };
   const notificationsService = { notify: jest.fn() };
+  const moderationActionsService = { record: jest.fn() };
   let service: ModerationService;
 
   beforeEach(() => {
@@ -16,6 +17,8 @@ describe('ModerationService', () => {
       replyRepository as never,
       productRepository as never,
       notificationsService as never,
+      undefined,
+      moderationActionsService as never,
     );
   });
 
@@ -46,6 +49,16 @@ describe('ModerationService', () => {
       hiddenReason: null,
     });
     expect(postRepository.save).toHaveBeenCalledTimes(1);
+    expect(moderationActionsService.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorUserId: 'moderator-id',
+        targetType: 'post',
+        targetId: 4,
+        action: 'content_hidden',
+        communityId: 8,
+      }),
+      undefined,
+    );
   });
 
   it('restores only content belonging to the URL community', async () => {
@@ -126,6 +139,16 @@ describe('ModerationService', () => {
         data: { itemType: 'post', itemId: 4 },
       }),
     ]);
+    expect(moderationActionsService.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorUserId: 'owner-id',
+        targetType: 'post',
+        targetId: 4,
+        action: 'content_restored',
+        communityId: 8,
+      }),
+      undefined,
+    );
   });
 
   it('does not notify when restore is already idempotently visible', async () => {
@@ -140,5 +163,6 @@ describe('ModerationService', () => {
 
     expect(notificationsService.notify).not.toHaveBeenCalled();
     expect(postRepository.save).not.toHaveBeenCalled();
+    expect(moderationActionsService.record).not.toHaveBeenCalled();
   });
 });
