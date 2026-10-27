@@ -19,6 +19,7 @@ export enum SellerRequestStatus {
   PENDING = 'pending',
   APPROVED = 'approved',
   REJECTED = 'rejected',
+  REVOKED = 'revoked',
 }
 
 @Entity('users')
