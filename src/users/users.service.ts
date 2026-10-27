@@ -38,10 +38,15 @@ import { escapeLike } from '../common/escape-like';
 import { PublicSellerDto, PublicUserDto } from './dto/public-user.dto';
 import { ResponseTimeService } from '../response-time/response-time.service';
 import { SearchUsersQueryDto } from './dto/search-users-query.dto';
+import { GetUsersQueryDto } from './dto/get-users-query.dto';
 import {
   isSupportedCurrency,
   normalizeSupportedCurrency,
 } from '../payments/exchange-rate/exchange-rate.constants';
+import { PaymentTransaction } from '../payments/entities/payment-transaction.entity';
+import { TransactionStatus } from '../payments/enums/transaction-status.enum';
+import { Report } from '../reports/entities/report.entity';
+import { ReportItemType } from '../reports/enums/report-item-type.enum';
 
 @Injectable()
 export class UsersService {
@@ -277,8 +282,167 @@ export class UsersService {
     return result;
   }
 
-  async findAll(): Promise<User[]> {
-    return this.usersRepository.find({ order: { createdAt: 'DESC' } });
+  async findAll(query: GetUsersQueryDto = {}): Promise<User[]> {
+    const users = await this.usersRepository.find({
+      ...(query.sellerStatus !== undefined
+        ? { where: { sellerRequestStatus: query.sellerStatus } }
+        : {}),
+      order: { createdAt: 'DESC' },
+    });
+    const sellers = await this.sellersRepository.find({
+      where: { userId: In(users.map((user) => user.id)) },
+    });
+    const usersWithSellers =
+      query.sellerStatus === undefined
+        ? users
+        : users.filter((user) =>
+            sellers.some((seller) => seller.userId === user.id),
+          );
+    return this.mapAdminUsers(usersWithSellers, sellers);
+  }
+
+  async findAdminById(id: string): Promise<User> {
+    const user = await this.findById(id);
+    const seller = await this.sellersRepository.findOne({
+      where: { userId: id },
+    });
+    return (await this.mapAdminUsers([user], seller ? [seller] : [], true))[0];
+  }
+
+  private async mapAdminUsers(
+    users: User[],
+    sellers: Seller[],
+    includeProducts = false,
+  ): Promise<User[]> {
+    const sellerByUserId = new Map(
+      sellers.map((seller) => [seller.userId, seller]),
+    );
+    const sellerIds = sellers.map((seller) => seller.sellerId);
+    const metrics = await this.getSellerMetrics(sellerIds);
+    const productsBySellerId = includeProducts
+      ? await this.getSellerProducts(sellerIds)
+      : new Map<number, Product[]>();
+
+    return users.map((user) => {
+      const seller = sellerByUserId.get(user.id);
+      if (!seller) return Object.assign(user, { seller: null });
+
+      const sellerMetrics = metrics.get(seller.sellerId) ?? {
+        productCount: 0,
+        salesCount: 0,
+        reportsReceivedCount: 0,
+      };
+      const products = productsBySellerId.get(seller.sellerId) ?? [];
+      return Object.assign(user, {
+        seller: {
+          sellerId: seller.sellerId,
+          status: user.sellerRequestStatus,
+          isVerified: seller.isVerified,
+          productCount: sellerMetrics.productCount,
+          salesCount: sellerMetrics.salesCount,
+          reportsReceivedCount: sellerMetrics.reportsReceivedCount,
+          ...(includeProducts
+            ? {
+                products: products.map((product) => ({
+                  id: product.id,
+                  title: product.title,
+                  status: product.status,
+                  isHidden: product.isHidden,
+                  isVisible: product.isVisible,
+                  publishedAt: product.publishedAt,
+                })),
+              }
+            : {}),
+        },
+      });
+    });
+  }
+
+  private async getSellerProducts(
+    sellerIds: number[],
+  ): Promise<Map<number, Product[]>> {
+    const result = new Map<number, Product[]>();
+    if (!sellerIds.length || !this.productRepository) return result;
+    const products = await this.productRepository.find({
+      where: { sellerId: In(sellerIds) },
+      order: { createdAt: 'DESC', id: 'DESC' },
+    });
+    for (const product of products) {
+      const current = result.get(product.sellerId) ?? [];
+      current.push(product);
+      result.set(product.sellerId, current);
+    }
+    return result;
+  }
+
+  private async getSellerMetrics(sellerIds: number[]) {
+    const result = new Map<
+      number,
+      {
+        productCount: number;
+        salesCount: number;
+        reportsReceivedCount: number;
+      }
+    >();
+    if (!sellerIds.length || !this.dataSource) return result;
+
+    const [productRows, salesRows, reportRows] = await Promise.all([
+      this.dataSource
+        .getRepository(Product)
+        .createQueryBuilder('product')
+        .select('product.seller_id', 'sellerId')
+        .addSelect('COUNT(product.id)', 'count')
+        .where('product.seller_id IN (:...sellerIds)', { sellerIds })
+        .andWhere('product.deleted_at IS NULL')
+        .groupBy('product.seller_id')
+        .getRawMany<{ sellerId: number; count: string }>(),
+      this.dataSource
+        .getRepository(PaymentTransaction)
+        .createQueryBuilder('transaction')
+        .select('transaction.seller_id', 'sellerId')
+        .addSelect('COUNT(transaction.id)', 'count')
+        .where('transaction.seller_id IN (:...sellerIds)', { sellerIds })
+        .andWhere('transaction.status = :status', {
+          status: TransactionStatus.COMPLETED,
+        })
+        .groupBy('transaction.seller_id')
+        .getRawMany<{ sellerId: number; count: string }>(),
+      this.dataSource
+        .getRepository(Product)
+        .createQueryBuilder('product')
+        .withDeleted()
+        .innerJoin(
+          Report,
+          'report',
+          'report.item_id = product.id AND report.item_type = :itemType',
+          { itemType: ReportItemType.PRODUCT },
+        )
+        .select('product.seller_id', 'sellerId')
+        .addSelect('COUNT(DISTINCT report.id)', 'count')
+        .where('product.seller_id IN (:...sellerIds)', { sellerIds })
+        .groupBy('product.seller_id')
+        .getRawMany<{ sellerId: number; count: string }>(),
+    ]);
+
+    for (const sellerId of sellerIds) {
+      result.set(sellerId, {
+        productCount: 0,
+        salesCount: 0,
+        reportsReceivedCount: 0,
+      });
+    }
+    for (const row of productRows) {
+      result.get(Number(row.sellerId))!.productCount = Number(row.count);
+    }
+    for (const row of salesRows) {
+      result.get(Number(row.sellerId))!.salesCount = Number(row.count);
+    }
+    for (const row of reportRows) {
+      result.get(Number(row.sellerId))!.reportsReceivedCount = Number(
+        row.count,
+      );
+    }
+    return result;
   }
 
   async updateProfile(

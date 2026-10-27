@@ -44,6 +44,7 @@ import { AuthenticatedRequest } from '../auth/types/authenticated-request';
 import { AuthService } from '../auth/auth.service';
 import { setAuthCookies } from '../auth/auth-cookies.util';
 import { DeactivateUserDto } from './dto/deactivate-user.dto';
+import { GetUsersQueryDto } from './dto/get-users-query.dto';
 
 @ApiTags('users')
 @Controller('users')
@@ -74,8 +75,8 @@ export class UsersController {
   @UseGuards(JwtAuthGuard, SuperAdminGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: '[Superadmin] Obtener todos los usuarios' })
-  findAll() {
-    return this.usersService.findAll();
+  findAll(@Query() query: GetUsersQueryDto) {
+    return this.usersService.findAll(query);
   }
 
   @Get('me')
@@ -315,7 +316,7 @@ export class UsersController {
   ) {
     const requester = await this.usersService.findById(request.user.userId);
     if (requester.role === UserRole.SUPERADMIN) {
-      return this.usersService.findById(id);
+      return this.usersService.findAdminById(id);
     }
     return this.usersService.findPublicById(id);
   }
