@@ -302,6 +302,29 @@ export class UsersController {
     return this.usersService.findPublicByUsername(username);
   }
 
+  @Get('stats')
+  @UseGuards(JwtAuthGuard, SuperAdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: '[Superadmin] Obtener estadÃ­sticas del resumen' })
+  @ApiOkResponse({
+    schema: {
+      example: {
+        totalUsers: 0,
+        approvedSellers: 0,
+        activeCommunities: 0,
+        activeProducts: 0,
+        pendingReports: 0,
+      },
+    },
+  })
+  @ApiForbiddenResponse({
+    description: 'Requiere permisos de superadministrador',
+  })
+  @ApiUnauthorizedResponse({ description: 'Se requiere autenticaciÃ³n' })
+  getStats() {
+    return this.usersService.getStats();
+  }
+
   @Get(':id')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()

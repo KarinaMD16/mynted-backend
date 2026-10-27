@@ -20,7 +20,8 @@ import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
 import { Seller } from '../sellers/entities/seller.entity';
-import { Product } from '../products/entities/product.entity';
+import { Product, ProductStatus } from '../products/entities/product.entity';
+import { Community } from '../community/entities/community.entity';
 import { Post } from '../community/entities/post.entity';
 import { Reply } from '../community/entities/reply.entity';
 import { ModerationService } from '../moderation/moderation.service';
@@ -47,6 +48,7 @@ import { PaymentTransaction } from '../payments/entities/payment-transaction.ent
 import { TransactionStatus } from '../payments/enums/transaction-status.enum';
 import { Report } from '../reports/entities/report.entity';
 import { ReportItemType } from '../reports/enums/report-item-type.enum';
+import { ReportStatus } from '../reports/enums/report-status.enum';
 
 @Injectable()
 export class UsersService {
@@ -74,7 +76,85 @@ export class UsersService {
     @Optional()
     private readonly moderationActionsService?: ModerationActionsService,
     @Optional() private readonly notificationsService?: NotificationsService,
+    @Optional()
+    @InjectRepository(Community)
+    private readonly communityRepository?: Repository<Community>,
+    @Optional()
+    @InjectRepository(Report)
+    private readonly reportRepository?: Repository<Report>,
   ) {}
+
+  async getStats() {
+    if (!this.communityRepository || !this.reportRepository) {
+      throw new BadRequestException(
+        'Las estadÃ­sticas administrativas no estÃ¡n configuradas',
+      );
+    }
+
+    const [
+      totalUsers,
+      approvedSellers,
+      activeCommunities,
+      activeProducts,
+      pendingReports,
+    ] = await Promise.all([
+      this.usersRepository.count(),
+      this.sellersRepository
+        .createQueryBuilder('seller')
+        .innerJoin(User, 'seller_user', 'seller_user.id = seller.user_id')
+        .where('seller.is_verified = true')
+        .andWhere('seller_user.role = :sellerRole', {
+          sellerRole: UserRole.SELLER,
+        })
+        .andWhere('seller_user.seller_request_status = :approvedSellerStatus', {
+          approvedSellerStatus: SellerRequestStatus.APPROVED,
+        })
+        .andWhere('seller_user.is_active = true')
+        .andWhere('seller_user.deleted_at IS NULL')
+        .getCount(),
+      this.communityRepository.count({ where: { isActive: true } }),
+      this.productRepository
+        ? this.productRepository
+            .createQueryBuilder('product')
+            .innerJoin(
+              Seller,
+              'product_seller',
+              'product_seller.seller_id = product.seller_id',
+            )
+            .innerJoin(
+              User,
+              'product_seller_user',
+              'product_seller_user.id = product_seller.user_id',
+            )
+            .where('product.status = :activeProductStatus', {
+              activeProductStatus: ProductStatus.ACTIVE,
+            })
+            .andWhere('product.is_deactivated = false')
+            .andWhere('product.is_hidden = false')
+            .andWhere('product.is_visible = true')
+            .andWhere('product_seller.is_verified = true')
+            .andWhere('product_seller_user.role = :productSellerRole', {
+              productSellerRole: UserRole.SELLER,
+            })
+            .andWhere(
+              'product_seller_user.seller_request_status = :productSellerStatus',
+              { productSellerStatus: SellerRequestStatus.APPROVED },
+            )
+            .andWhere('product_seller_user.is_active = true')
+            .andWhere('product_seller_user.deleted_at IS NULL')
+            .getCount()
+        : Promise.resolve(0),
+      this.reportRepository.count({ where: { status: ReportStatus.PENDING } }),
+    ]);
+
+    return {
+      totalUsers,
+      approvedSellers,
+      activeCommunities,
+      activeProducts,
+      pendingReports,
+    };
+  }
 
   async create(dto: CreateUserDto): Promise<User> {
     const existing = await this.usersRepository.findOne({
