@@ -22,6 +22,10 @@ import { ModerationItemType } from './enums/moderation-item-type.enum';
 
 type Moderatable = Post | Reply | Product;
 
+export interface ModerationContentOptions {
+  notifyAuthor?: boolean;
+}
+
 @Injectable()
 export class ModerationService {
   private readonly logger = new Logger(ModerationService.name);
@@ -105,9 +109,24 @@ export class ModerationService {
   async restoreContent(
     itemType: ModerationItemType,
     itemId: number,
-    communityId: number,
+    communityId: number | undefined,
     actorUserId: string,
+    manager?: EntityManager,
+    options: ModerationContentOptions = {},
   ): Promise<Moderatable> {
+    if (manager) {
+      const result = await this.restoreContentInManager(
+        itemType,
+        itemId,
+        communityId,
+        actorUserId,
+        manager,
+      );
+      if (result.changed && options.notifyAuthor !== false) {
+        await this.notifyRestored(itemType, result.content);
+      }
+      return result.content;
+    }
     if (this.dataSource) {
       const result = await this.dataSource.transaction((transactionManager) =>
         this.restoreContentInManager(
@@ -118,7 +137,9 @@ export class ModerationService {
           transactionManager,
         ),
       );
-      if (result.changed) await this.notifyRestored(itemType, result.content);
+      if (result.changed && options.notifyAuthor !== false) {
+        await this.notifyRestored(itemType, result.content);
+      }
       return result.content;
     }
     const result = await this.restoreContentInManager(
@@ -127,14 +148,16 @@ export class ModerationService {
       communityId,
       actorUserId,
     );
-    if (result.changed) await this.notifyRestored(itemType, result.content);
+    if (result.changed && options.notifyAuthor !== false) {
+      await this.notifyRestored(itemType, result.content);
+    }
     return result.content;
   }
 
   private async restoreContentInManager(
     itemType: ModerationItemType,
     itemId: number,
-    communityId: number,
+    communityId: number | undefined,
     actorUserId: string,
     manager?: EntityManager,
   ): Promise<{ content: Moderatable; changed: boolean }> {
@@ -142,14 +165,17 @@ export class ModerationService {
     if (
       !Number.isInteger(itemId) ||
       itemId < 1 ||
-      !Number.isInteger(communityId) ||
-      communityId < 1
+      (communityId !== undefined &&
+        (!Number.isInteger(communityId) || communityId < 1))
     ) {
       throw new BadRequestException('itemId debe ser un entero positivo');
     }
     const content = await this.findContent(itemType, itemId, manager);
     const contentCommunityId = this.getCommunityId(itemType, content);
-    if (contentCommunityId === null || contentCommunityId !== communityId) {
+    if (
+      contentCommunityId === null ||
+      (communityId !== undefined && contentCommunityId !== communityId)
+    ) {
       throw new NotFoundException('Contenido no encontrado');
     }
     if (!content.isHidden) return { content, changed: false };

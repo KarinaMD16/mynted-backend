@@ -129,6 +129,9 @@ export class AuthService {
    * usuario recién registrado.
    */
   buildSession(user: User) {
+    if (user.isActive === false) {
+      throw new UnauthorizedException('La cuenta está desactivada');
+    }
     const payload = { sub: user.id, email: user.email };
     const accessToken = this.jwtService.sign(payload);
 

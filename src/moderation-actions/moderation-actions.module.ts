@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { User } from '../users/entities/user.entity';
 import { UsersModule } from '../users/users.module';
@@ -7,7 +7,10 @@ import { ModerationActionsController } from './moderation-actions.controller';
 import { ModerationActionsService } from './moderation-actions.service';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([ModerationAction, User]), UsersModule],
+  imports: [
+    TypeOrmModule.forFeature([ModerationAction, User]),
+    forwardRef(() => UsersModule),
+  ],
   controllers: [ModerationActionsController],
   providers: [ModerationActionsService],
   exports: [ModerationActionsService],

@@ -23,6 +23,10 @@ import {
   ApiConsumes,
   ApiOkResponse,
   ApiOperation,
+  ApiBadRequestResponse,
+  ApiForbiddenResponse,
+  ApiNotFoundResponse,
+  ApiUnauthorizedResponse,
   ApiTags,
 } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
@@ -32,12 +36,13 @@ import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { PublicUserDto } from './dto/public-user.dto';
 import { SearchUsersQueryDto } from './dto/search-users-query.dto';
-import { UserRole } from './entities/user.entity';
+import { User, UserRole } from './entities/user.entity';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { SuperAdminGuard } from '../auth/guards/super-admin.guard';
 import { AuthenticatedRequest } from '../auth/types/authenticated-request';
 import { AuthService } from '../auth/auth.service';
 import { setAuthCookies } from '../auth/auth-cookies.util';
+import { DeactivateUserDto } from './dto/deactivate-user.dto';
 
 @ApiTags('users')
 @Controller('users')
@@ -159,19 +164,64 @@ export class UsersController {
   @UseGuards(JwtAuthGuard, SuperAdminGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: '[Superadmin] Desactivar un usuario' })
+  @ApiBadRequestResponse({ description: 'Motivo inválido' })
+  @ApiForbiddenResponse({ description: 'Operación no permitida' })
+  @ApiNotFoundResponse({ description: 'Usuario no encontrado' })
+  @ApiUnauthorizedResponse({ description: 'Se requiere autenticación' })
+  @ApiOkResponse({
+    schema: {
+      example: {
+        id: 'uuid',
+        username: 'usuario',
+        role: 'user',
+        isActive: false,
+      },
+    },
+  })
   deactivate(
     @Param('id', ParseUUIDPipe) id: string,
     @Req() request: AuthenticatedRequest,
+    @Body() dto: DeactivateUserDto,
   ) {
-    return this.usersService.deactivate(id, request.user.userId);
+    return this.toStatusUser(
+      this.usersService.deactivate(id, request.user.userId, dto.reason),
+    );
   }
 
   @Patch(':id/activate')
   @UseGuards(JwtAuthGuard, SuperAdminGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: '[Superadmin] Activar un usuario' })
-  activate(@Param('id', ParseUUIDPipe) id: string) {
-    return this.usersService.activate(id);
+  @ApiForbiddenResponse({ description: 'Operación no permitida' })
+  @ApiNotFoundResponse({ description: 'Usuario no encontrado' })
+  @ApiUnauthorizedResponse({ description: 'Se requiere autenticación' })
+  @ApiOkResponse({
+    schema: {
+      example: {
+        id: 'uuid',
+        username: 'usuario',
+        role: 'user',
+        isActive: true,
+      },
+    },
+  })
+  activate(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.toStatusUser(
+      this.usersService.activate(id, request.user.userId),
+    );
+  }
+
+  private async toStatusUser(userPromise: Promise<User>) {
+    const user = await userPromise;
+    return {
+      id: user.id,
+      username: user.username,
+      role: user.role,
+      isActive: user.isActive,
+    };
   }
 
   // Las rutas literales (search, by-username) van antes de ':id'.

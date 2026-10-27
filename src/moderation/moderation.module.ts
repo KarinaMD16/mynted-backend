@@ -14,6 +14,6 @@ import { ModerationService } from './moderation.service';
     ModerationActionsModule,
   ],
   providers: [ModerationService],
-  exports: [ModerationService],
+  exports: [ModerationService, ModerationActionsModule],
 })
 export class ModerationModule {}

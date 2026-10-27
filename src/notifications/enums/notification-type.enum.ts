@@ -22,4 +22,6 @@ export enum NotificationType {
   CONTENT_HIDDEN = 'content_hidden',
   CONTENT_RESTORED = 'content_restored',
   MODERATION_WARNING = 'moderation_warning',
+  USER_DEACTIVATED = 'user_deactivated',
+  USER_REACTIVATED = 'user_reactivated',
 }

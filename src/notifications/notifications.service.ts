@@ -25,6 +25,7 @@ export interface NotifyOptions {
   // Claves de data que se conservan de la notificación que se unifica (p. ej.
   // previousPrice: el precio que el usuario vio por última vez).
   preserveKeys?: string[];
+  allowInactiveRecipient?: boolean;
 }
 
 // Columna de favorite que guarda cada aviso (nunca se interpola otra cosa).
@@ -101,7 +102,8 @@ export class NotificationsService {
               i.message, i.dedupe_key
          FROM unnest($1::uuid[], $2::text[], $3::text[], $4::text[], $5::text[])
               AS i(user_id, type, data, message, dedupe_key)
-         JOIN users u ON u.id = i.user_id AND u.is_active = true
+       JOIN users u ON u.id = i.user_id
+       ${options.allowInactiveRecipient ? '' : 'AND u.is_active = true'}
        ${dedupeUpsertSql(6)}`,
       [
         inputs.map((input) => input.userId),

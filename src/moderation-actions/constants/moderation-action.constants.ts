@@ -18,7 +18,11 @@ export const MODERATION_ACTIONS = {
   REPORT_RESOLVED: 'report_resolved',
   REPORT_DISMISSED: 'report_dismissed',
   AUTHOR_WARNED: 'author_warned',
+  USER_DEACTIVATED: 'user_deactivated',
+  USER_REACTIVATED: 'user_reactivated',
 } as const;
 
 export type ModerationActionType =
   (typeof MODERATION_ACTIONS)[keyof typeof MODERATION_ACTIONS];
+
+export const USER_DEACTIVATED_HIDDEN_REASON = 'user_deactivated' as const;

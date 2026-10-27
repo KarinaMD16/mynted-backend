@@ -8,7 +8,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Optional } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { In, Repository } from 'typeorm';
+import { DataSource, EntityManager, In, Repository } from 'typeorm';
 import { BadgeEvents } from '../badges/badge-events';
 import * as bcrypt from 'bcrypt';
 import { SellerRequestStatus, User, UserRole } from './entities/user.entity';
@@ -21,6 +21,18 @@ import { UpdateProfileDto } from './dto/update-profile.dto';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
 import { Seller } from '../sellers/entities/seller.entity';
 import { Product } from '../products/entities/product.entity';
+import { Post } from '../community/entities/post.entity';
+import { Reply } from '../community/entities/reply.entity';
+import { ModerationService } from '../moderation/moderation.service';
+import { ModerationActionsService } from '../moderation-actions/moderation-actions.service';
+import {
+  MODERATION_ACTIONS,
+  MODERATION_TARGET_TYPES,
+  USER_DEACTIVATED_HIDDEN_REASON,
+} from '../moderation-actions/constants/moderation-action.constants';
+import { ModerationItemType } from '../moderation/enums/moderation-item-type.enum';
+import { NotificationsService } from '../notifications/notifications.service';
+import { NotificationType } from '../notifications/enums/notification-type.enum';
 import { Review } from '../products/entities/review.entity';
 import { escapeLike } from '../common/escape-like';
 import { PublicSellerDto, PublicUserDto } from './dto/public-user.dto';
@@ -43,6 +55,20 @@ export class UsersService {
     private readonly sellersRepository: Repository<Seller>,
     private readonly responseTimeService: ResponseTimeService,
     @Optional() private readonly eventEmitter?: EventEmitter2,
+    @Optional()
+    @InjectRepository(Post)
+    private readonly postRepository?: Repository<Post>,
+    @Optional()
+    @InjectRepository(Reply)
+    private readonly replyRepository?: Repository<Reply>,
+    @Optional()
+    @InjectRepository(Product)
+    private readonly productRepository?: Repository<Product>,
+    @Optional() private readonly dataSource?: DataSource,
+    @Optional() private readonly moderationService?: ModerationService,
+    @Optional()
+    private readonly moderationActionsService?: ModerationActionsService,
+    @Optional() private readonly notificationsService?: NotificationsService,
   ) {}
 
   async create(dto: CreateUserDto): Promise<User> {
@@ -325,22 +351,242 @@ export class UsersService {
     }
   }
 
-  async deactivate(userId: string, requestingUserId: string): Promise<User> {
+  async deactivate(
+    userId: string,
+    requestingUserId: string,
+    reason = '',
+  ): Promise<User> {
     if (userId === requestingUserId) {
       throw new ForbiddenException(
         'Un superadministrador no puede desactivar su propia cuenta',
       );
     }
 
-    const user = await this.findById(userId);
-    user.isActive = false;
-    return this.usersRepository.save(user);
+    const trimmedReason = reason.trim();
+    if (!trimmedReason) {
+      throw new BadRequestException('El motivo de desactivación es requerido');
+    }
+
+    const execute = async (manager?: EntityManager) => {
+      const userRepository =
+        manager?.getRepository(User) ?? this.usersRepository;
+      const user = manager
+        ? await userRepository.findOne({
+            where: { id: userId },
+            lock: { mode: 'pessimistic_write' },
+          })
+        : await userRepository.findOne({ where: { id: userId } });
+      if (!user) throw new NotFoundException('Usuario no encontrado');
+      if (user.role === UserRole.SUPERADMIN) {
+        throw new ForbiddenException(
+          'No se puede desactivar una cuenta de superadministrador',
+        );
+      }
+      if (!user.isActive) return { user, changed: false };
+
+      const content = await this.findUserContentIds(manager, userId, false);
+      for (const postId of content.posts) {
+        await this.moderationService?.hideContent(
+          ModerationItemType.POST,
+          postId,
+          requestingUserId,
+          USER_DEACTIVATED_HIDDEN_REASON,
+          manager,
+        );
+      }
+      for (const replyId of content.replies) {
+        await this.moderationService?.hideContent(
+          ModerationItemType.REPLY,
+          replyId,
+          requestingUserId,
+          USER_DEACTIVATED_HIDDEN_REASON,
+          manager,
+        );
+      }
+      for (const productId of content.products) {
+        await this.moderationService?.hideContent(
+          ModerationItemType.PRODUCT,
+          productId,
+          requestingUserId,
+          USER_DEACTIVATED_HIDDEN_REASON,
+          manager,
+        );
+      }
+
+      user.isActive = false;
+      const saved = await userRepository.save(user);
+      await this.moderationActionsService?.record(
+        {
+          actorUserId: requestingUserId,
+          targetType: MODERATION_TARGET_TYPES.USER,
+          targetId: userId,
+          action: MODERATION_ACTIONS.USER_DEACTIVATED,
+          reason: trimmedReason,
+          communityId: null,
+        },
+        manager,
+      );
+      return { user: saved, changed: true };
+    };
+
+    const result = this.dataSource
+      ? await this.dataSource.transaction((manager) => execute(manager))
+      : await execute();
+    if (result.changed) {
+      await this.notifyAccountChange(
+        userId,
+        NotificationType.USER_DEACTIVATED,
+        `Tu cuenta fue desactivada: ${trimmedReason}`,
+        { reason: trimmedReason },
+        true,
+      );
+    }
+    return result.user;
   }
 
-  async activate(userId: string): Promise<User> {
-    const user = await this.findById(userId);
-    user.isActive = true;
-    return this.usersRepository.save(user);
+  async activate(userId: string, requestingUserId?: string): Promise<User> {
+    const execute = async (manager?: EntityManager) => {
+      const userRepository =
+        manager?.getRepository(User) ?? this.usersRepository;
+      const user = manager
+        ? await userRepository.findOne({
+            where: { id: userId },
+            lock: { mode: 'pessimistic_write' },
+          })
+        : await userRepository.findOne({ where: { id: userId } });
+      if (!user) throw new NotFoundException('Usuario no encontrado');
+      if (user.isActive) return { user, changed: false };
+
+      const content = await this.findUserContentIds(manager, userId, true);
+      for (const postId of content.posts) {
+        await this.moderationService?.restoreContent(
+          ModerationItemType.POST,
+          postId,
+          undefined,
+          requestingUserId ?? userId,
+          manager,
+          { notifyAuthor: false },
+        );
+      }
+      for (const replyId of content.replies) {
+        await this.moderationService?.restoreContent(
+          ModerationItemType.REPLY,
+          replyId,
+          undefined,
+          requestingUserId ?? userId,
+          manager,
+          { notifyAuthor: false },
+        );
+      }
+      for (const productId of content.products) {
+        await this.moderationService?.restoreContent(
+          ModerationItemType.PRODUCT,
+          productId,
+          undefined,
+          requestingUserId ?? userId,
+          manager,
+          { notifyAuthor: false },
+        );
+      }
+
+      user.isActive = true;
+      const saved = await userRepository.save(user);
+      await this.moderationActionsService?.record(
+        {
+          actorUserId: requestingUserId ?? userId,
+          targetType: MODERATION_TARGET_TYPES.USER,
+          targetId: userId,
+          action: MODERATION_ACTIONS.USER_REACTIVATED,
+          reason: null,
+          communityId: null,
+        },
+        manager,
+      );
+      return { user: saved, changed: true };
+    };
+
+    const result = this.dataSource
+      ? await this.dataSource.transaction((manager) => execute(manager))
+      : await execute();
+    if (result.changed) {
+      await this.notifyAccountChange(
+        userId,
+        NotificationType.USER_REACTIVATED,
+        'Tu cuenta fue reactivada',
+        {},
+      );
+    }
+    return result.user;
+  }
+
+  private async findUserContentIds(
+    manager: EntityManager | undefined,
+    userId: string,
+    onlyDeactivated: boolean,
+  ): Promise<{ posts: number[]; replies: number[]; products: number[] }> {
+    if (
+      !manager &&
+      (!this.postRepository || !this.replyRepository || !this.productRepository)
+    ) {
+      return { posts: [], replies: [], products: [] };
+    }
+    const postRepository = manager?.getRepository(Post) ?? this.postRepository!;
+    const replyRepository =
+      manager?.getRepository(Reply) ?? this.replyRepository!;
+    const productRepository =
+      manager?.getRepository(Product) ?? this.productRepository!;
+    const contentWhere = onlyDeactivated
+      ? 'content.is_hidden = true AND content.hidden_reason = :reason'
+      : 'content.is_hidden = false';
+    const [posts, replies, products] = await Promise.all([
+      postRepository
+        .createQueryBuilder('content')
+        .innerJoin('content.communityProfile', 'profile')
+        .select('content.id', 'id')
+        .where('profile.user_id = :userId', { userId })
+        .andWhere(contentWhere)
+        .setParameter('reason', USER_DEACTIVATED_HIDDEN_REASON)
+        .getRawMany<{ id: number }>(),
+      replyRepository
+        .createQueryBuilder('content')
+        .innerJoin('content.communityProfile', 'profile')
+        .select('content.id', 'id')
+        .where('profile.user_id = :userId', { userId })
+        .andWhere(contentWhere)
+        .setParameter('reason', USER_DEACTIVATED_HIDDEN_REASON)
+        .getRawMany<{ id: number }>(),
+      productRepository
+        .createQueryBuilder('content')
+        .innerJoin('content.seller', 'seller')
+        .select('content.id', 'id')
+        .where('seller.user_id = :userId', { userId })
+        .andWhere(contentWhere)
+        .setParameter('reason', USER_DEACTIVATED_HIDDEN_REASON)
+        .getRawMany<{ id: number }>(),
+    ]);
+    return {
+      posts: posts.map((row) => Number(row.id)),
+      replies: replies.map((row) => Number(row.id)),
+      products: products.map((row) => Number(row.id)),
+    };
+  }
+
+  private async notifyAccountChange(
+    userId: string,
+    type: NotificationType,
+    message: string,
+    data: Record<string, unknown>,
+    allowInactiveRecipient = false,
+  ): Promise<void> {
+    if (!this.notificationsService) return;
+    try {
+      await this.notificationsService.notify(
+        [{ userId, type, message, data }],
+        { allowInactiveRecipient },
+      );
+    } catch {
+      // La notificación es post-commit y no debe revertir la operación.
+    }
   }
 
   async findByEmail(email: string): Promise<User | null> {

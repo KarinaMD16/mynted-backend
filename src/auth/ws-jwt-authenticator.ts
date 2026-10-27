@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable, Optional, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import cookieParser from 'cookie-parser';
@@ -9,6 +9,7 @@ import {
   cookieExtractor,
   toAuthenticatedUser,
 } from './strategies/jwt.strategy';
+import { UsersService } from '../users/users.service';
 
 const parseCookies = cookieParser();
 
@@ -24,6 +25,7 @@ export class WsJwtAuthenticator {
   constructor(
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
+    @Optional() private readonly usersService?: UsersService,
   ) {}
 
   async authenticate(request: IncomingMessage) {
@@ -38,6 +40,10 @@ export class WsJwtAuthenticator {
         token,
         { secret: this.configService.get<string>('JWT_SECRET') },
       );
+      if (this.usersService) {
+        const user = await this.usersService.findById(payload.sub);
+        if (!user.isActive) throw new UnauthorizedException('Cuenta inactiva');
+      }
       return toAuthenticatedUser(payload);
     } catch {
       throw new UnauthorizedException('Sesión inválida o vencida');

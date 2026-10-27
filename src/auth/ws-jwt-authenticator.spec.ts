@@ -7,9 +7,16 @@ import { WsJwtAuthenticator } from './ws-jwt-authenticator';
 describe('WsJwtAuthenticator', () => {
   const secret = 'test-secret';
   const jwt = new JwtService({ secret });
-  const authenticator = new WsJwtAuthenticator(new JwtService({}), {
-    get: () => secret,
-  } as unknown as ConfigService);
+  const usersService = {
+    findById: jest.fn().mockResolvedValue({ isActive: true }),
+  };
+  const authenticator = new WsJwtAuthenticator(
+    new JwtService({}),
+    {
+      get: () => secret,
+    } as unknown as ConfigService,
+    usersService as never,
+  );
 
   const handshake = (cookie?: string) =>
     ({ headers: cookie ? { cookie } : {} }) as IncomingMessage;
@@ -22,6 +29,15 @@ describe('WsJwtAuthenticator', () => {
         handshake(`theme=dark; access_token=${token}`),
       ),
     ).resolves.toEqual({ userId: 'user-1', email: 'a@b.cr' });
+  });
+
+  it('rechaza un JWT válido de un usuario inactivo', async () => {
+    usersService.findById.mockResolvedValue({ isActive: false });
+    const token = jwt.sign({ sub: 'user-1', email: 'a@b.cr' });
+
+    await expect(
+      authenticator.authenticate(handshake(`access_token=${token}`)),
+    ).rejects.toThrow(UnauthorizedException);
   });
 
   it.each([
