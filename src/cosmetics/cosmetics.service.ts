@@ -12,8 +12,10 @@ import { ProStatusService } from '../pro-status/pro-status.service';
 import { toStaticImageUrl } from './banner-urls';
 import {
   CosmeticLike,
+  EffectiveAsset,
   EffectiveCosmetics,
   resolveCosmetics,
+  resolveEffective,
 } from './cosmetic-resolve';
 import { CosmeticDto, MyCosmeticsDto } from './dto/cosmetics-response.dto';
 import { BANNER_MAX_FILE_SIZE } from './cosmetics.config';
@@ -26,6 +28,27 @@ interface CatalogIndex {
   defaults: Record<CosmeticType, CosmeticLike>;
 }
 
+// Lo mínimo que necesita un listado para pintar a una persona: el badge Pro y
+// el marco del avatar. Sin banner ni ganso (eso solo importa en el perfil).
+export interface UserDisplaySummary {
+  isPro: boolean;
+  // Marco efectivo: el equipado si el usuario tiene derecho a usarlo y, si no,
+  // el marco por defecto. Siempre presente (los gratuitos también equipan
+  // marcos gratuitos).
+  frame: EffectiveAsset;
+}
+
+// Estado Pro y cosméticos completos efectivos (perfil y tienda).
+export interface UserCosmeticsView {
+  isPro: boolean;
+  cosmetics: EffectiveCosmetics;
+}
+
+// El catálogo casi nunca cambia: se guarda en memoria este tiempo para no
+// consultarlo en cada listado. COSMETICS_CATALOG_CACHE_TTL_MS=0 lo desactiva
+// (los e2e lo hacen para ver al instante los cambios hechos en la base).
+const DEFAULT_CATALOG_CACHE_TTL_MS = 60_000;
+
 @Injectable()
 export class CosmeticsService {
   constructor(
@@ -36,6 +59,9 @@ export class CosmeticsService {
     private readonly proStatusService: ProStatusService,
     private readonly cloudinaryService: CloudinaryService,
   ) {}
+
+  private catalogCache: { index: CatalogIndex; expiresAt: number } | null =
+    null;
 
   // ---------------------------------------------------------------------
   // Catálogo
@@ -79,9 +105,11 @@ export class CosmeticsService {
       );
     }
 
+    // El catálogo fresco: validar contra uno en caché podría aceptar un
+    // cosmético recién desactivado.
     const [isPro, catalog] = await Promise.all([
       this.proStatusService.isPro(userId),
-      this.loadCatalog(),
+      this.loadCatalog(true),
     ]);
     const row = await this.getOrCreateRow(userId);
 
@@ -196,8 +224,80 @@ export class CosmeticsService {
   }
 
   // ---------------------------------------------------------------------
-  // Lo de otros (perfil público, tienda): por lotes
+  // Lo de otros (listados, perfil público, tienda): por lotes
   // ---------------------------------------------------------------------
+
+  /**
+   * Resumen liviano (isPro + marco efectivo) de varios usuarios: el cargador
+   * único de los listados (chat, reseñas, foro, búsquedas...). Una sola
+   * resolución por lista, con como máximo 3 consultas: usuarios Pro, sus
+   * preferencias (solo la columna del marco) y el catálogo (en caché unos 60 s).
+   * Ignora ids repetidos y vacíos; quien no existe o no tiene preferencias
+   * recibe isPro=false y el marco por defecto, sin fallar.
+   */
+  async getEffectiveSummaryForUsers(
+    userIds: string[],
+  ): Promise<Map<string, UserDisplaySummary>> {
+    const result = new Map<string, UserDisplaySummary>();
+    const ids = this.uniqueIds(userIds);
+    if (ids.length === 0) return result;
+
+    const [pro, rows, catalog] = await Promise.all([
+      this.proStatusService.proUserIds(ids),
+      this.userCosmeticsRepository.find({
+        select: { userId: true, frameCosmeticId: true },
+        where: { userId: In(ids) },
+      }),
+      this.loadCatalog(),
+    ]);
+    const frameByUser = new Map(
+      rows.map((row) => [row.userId, row.frameCosmeticId]),
+    );
+    for (const id of ids) {
+      const isPro = pro.has(id);
+      const equipped = frameByUser.get(id);
+      const frame = resolveEffective(
+        equipped == null ? null : (catalog.byId.get(equipped) ?? null),
+        catalog.defaults[CosmeticType.FRAME],
+        isPro,
+      );
+      result.set(id, {
+        isPro,
+        frame: { code: frame.code, assetUrl: frame.assetUrl },
+      });
+    }
+    return result;
+  }
+
+  // Lo mismo con los cosméticos completos (banner, ganso y marco) para el
+  // perfil y la tienda. También 3 consultas como máximo por lista.
+  async getEffectiveCosmeticsForUsers(
+    userIds: string[],
+  ): Promise<Map<string, UserCosmeticsView>> {
+    const result = new Map<string, UserCosmeticsView>();
+    const ids = this.uniqueIds(userIds);
+    if (ids.length === 0) return result;
+
+    const [pro, rows, catalog] = await Promise.all([
+      this.proStatusService.proUserIds(ids),
+      this.userCosmeticsRepository.find({ where: { userId: In(ids) } }),
+      this.loadCatalog(),
+    ]);
+    const rowByUser = new Map(rows.map((row) => [row.userId, row]));
+    for (const id of ids) {
+      const isPro = pro.has(id);
+      result.set(id, {
+        isPro,
+        cosmetics: this.effective(rowByUser.get(id) ?? null, catalog, isPro),
+      });
+    }
+    return result;
+  }
+
+  // Descarta el catálogo en memoria (lo siguiente lo vuelve a consultar).
+  clearCatalogCache(): void {
+    this.catalogCache = null;
+  }
 
   // Cosméticos efectivos de varios usuarios con una consulta de preferencias y
   // una del catálogo. proUserIds permite reutilizar el lote de Pro que el
@@ -206,7 +306,7 @@ export class CosmeticsService {
     userIds: string[],
     proUserIds?: Set<string>,
   ): Promise<Map<string, EffectiveCosmetics>> {
-    const ids = [...new Set(userIds)];
+    const ids = this.uniqueIds(userIds);
     const result = new Map<string, EffectiveCosmetics>();
     if (ids.length === 0) return result;
 
@@ -240,7 +340,36 @@ export class CosmeticsService {
     return this.userCosmeticsRepository.findOneByOrFail({ userId });
   }
 
-  private async loadCatalog(): Promise<CatalogIndex> {
+  private uniqueIds(userIds: string[]): string[] {
+    return [...new Set(userIds.filter((id) => Boolean(id)))];
+  }
+
+  private catalogTtlMs(): number {
+    const raw = process.env.COSMETICS_CATALOG_CACHE_TTL_MS;
+    const parsed = raw === undefined ? NaN : Number(raw);
+    return Number.isFinite(parsed) && parsed >= 0
+      ? parsed
+      : DEFAULT_CATALOG_CACHE_TTL_MS;
+  }
+
+  // fresh=true ignora la caché (validaciones al equipar).
+  private async loadCatalog(fresh = false): Promise<CatalogIndex> {
+    const ttl = this.catalogTtlMs();
+    const now = Date.now();
+    if (
+      !fresh &&
+      ttl > 0 &&
+      this.catalogCache &&
+      this.catalogCache.expiresAt > now
+    ) {
+      return this.catalogCache.index;
+    }
+    const index = await this.buildCatalog();
+    this.catalogCache = ttl > 0 ? { index, expiresAt: now + ttl } : null;
+    return index;
+  }
+
+  private async buildCatalog(): Promise<CatalogIndex> {
     const cosmetics = await this.cosmeticRepository.find();
     const byId = new Map(cosmetics.map((cosmetic) => [cosmetic.id, cosmetic]));
     const defaultOf = (type: CosmeticType): CosmeticLike =>
