@@ -43,7 +43,7 @@ describe('ReportsService community reports', () => {
   const productRepository = { find: jest.fn(), findOne: jest.fn() };
   const conversationRepository = { find: jest.fn(), findOne: jest.fn() };
   const messageRepository = { find: jest.fn() };
-  const communityRepository = { findOne: jest.fn() };
+  const communityRepository = { findOne: jest.fn(), find: jest.fn() };
   const communityProfileRepository = { createQueryBuilder: jest.fn() };
   const userRepository = { find: jest.fn() };
   const dataSource = { transaction: jest.fn() };
@@ -70,6 +70,8 @@ describe('ReportsService community reports', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     communityRepository.findOne.mockResolvedValue({ id: 7 });
+    communityRepository.find.mockResolvedValue([]);
+    productRepository.find.mockResolvedValue([]);
   });
 
   it('lists paginated reports, counts all statuses and batches post targets', async () => {
@@ -176,6 +178,80 @@ describe('ReportsService community reports', () => {
     expect(moderatorsQb.andWhere).toHaveBeenCalledWith(
       'profile.role IN (:...roles)',
       expect.any(Object),
+    );
+  });
+
+  it('lists global reports with null and soft-deleted community summaries', async () => {
+    const listQb = chain();
+    const countsQb = chain();
+    const deletedAt = new Date();
+    reportRepository.createQueryBuilder
+      .mockReturnValueOnce(listQb)
+      .mockReturnValueOnce(countsQb);
+    listQb.getManyAndCount.mockResolvedValue([
+      [
+        {
+          id: 1,
+          communityId: 4,
+          reason: ReportReason.SPAM,
+          status: ReportStatus.RESOLVED,
+          itemType: ReportItemType.PRODUCT,
+          itemId: 10,
+          reporter: null,
+          createdAt: new Date(),
+        },
+        {
+          id: 2,
+          communityId: null,
+          reason: ReportReason.OTHER,
+          status: ReportStatus.PENDING,
+          itemType: ReportItemType.PRODUCT,
+          itemId: 11,
+          reporter: null,
+          createdAt: new Date(),
+        },
+      ],
+      2,
+    ]);
+    countsQb.getRawMany.mockResolvedValue([
+      { status: ReportStatus.PENDING, count: '1' },
+      { status: ReportStatus.RESOLVED, count: '1' },
+    ]);
+    communityRepository.find.mockResolvedValue([
+      {
+        id: 4,
+        name: 'Eliminada',
+        slug: 'eliminada',
+        deletedAt,
+      },
+    ]);
+
+    const result = await service.listGlobalReports({
+      page: 1,
+      limit: 20,
+      itemType: ReportItemType.PRODUCT,
+    });
+
+    expect(result.data).toEqual([
+      expect.objectContaining({
+        communityId: 4,
+        community: {
+          id: 4,
+          name: 'Eliminada',
+          slug: 'eliminada',
+          deletedAt,
+        },
+        reporter: null,
+        contentUnavailable: true,
+      }),
+      expect.objectContaining({
+        communityId: null,
+        community: null,
+      }),
+    ]);
+    expect(result.counts).toEqual({ pending: 1, resolved: 1, dismissed: 0 });
+    expect(communityRepository.find).toHaveBeenCalledWith(
+      expect.objectContaining({ withDeleted: true }),
     );
   });
 });

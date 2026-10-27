@@ -6,6 +6,9 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 describe('CommunityReportsController', () => {
   const service = {
+    listGlobalReports: jest.fn(),
+    resolveGlobalReport: jest.fn(),
+    dismissGlobalReport: jest.fn(),
     listCommunityReports: jest.fn(),
     getCommunityReportDetail: jest.fn(),
     getModerationStats: jest.fn(),

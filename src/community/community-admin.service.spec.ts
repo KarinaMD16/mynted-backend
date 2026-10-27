@@ -228,16 +228,15 @@ describe('CommunityService administrative community actions', () => {
       orderBy: jest.fn().mockReturnThis(),
       addOrderBy: jest.fn().mockReturnThis(),
     };
-    (service as unknown as { communityRepository: unknown }).communityRepository = {
+    const internals = service as unknown as {
+      communityRepository: { createQueryBuilder: jest.Mock };
+      buildAdminCommunityListQuery: (query: Record<string, unknown>) => unknown;
+    };
+    internals.communityRepository = {
       createQueryBuilder: jest.fn().mockReturnValue(queryBuilder),
     };
 
-    const buildAdminCommunityListQuery = (
-      service as unknown as {
-        buildAdminCommunityListQuery: (query: Record<string, unknown>) => unknown;
-      }
-    ).buildAdminCommunityListQuery.bind(service);
-    buildAdminCommunityListQuery({});
+    internals.buildAdminCommunityListQuery.call(service, {});
 
     expect(queryBuilder.withDeleted).toHaveBeenCalled();
 

@@ -45,7 +45,7 @@ describe('ReportsService', () => {
     findOne: jest.fn(),
   };
   const messageRepository = { find: jest.fn() };
-  const communityRepository = { findOne: jest.fn() };
+  const communityRepository = { findOne: jest.fn(), find: jest.fn() };
   const communityProfileRepository = { createQueryBuilder: jest.fn() };
   const userRepository = { find: jest.fn() };
   const dataSource = { transaction: jest.fn() };
@@ -89,6 +89,7 @@ describe('ReportsService', () => {
       Promise.resolve(report),
     );
     communityRepository.findOne.mockResolvedValue({ id: 12 });
+    communityRepository.find.mockResolvedValue([]);
   });
 
   it('creates a pending post report with reporter and community derived from the post', async () => {

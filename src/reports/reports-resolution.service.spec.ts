@@ -291,6 +291,46 @@ describe('ReportsService resolution', () => {
     expect(updateQuery.execute).not.toHaveBeenCalled();
   });
 
+  it('resolves a global report without requiring a community', async () => {
+    const report = pendingReport({ communityId: null });
+    reportRepository.findOne.mockResolvedValue(report);
+
+    await service.resolveGlobalReport(
+      report.id,
+      { note: 'Nota global' },
+      'superadmin-id',
+    );
+
+    expect(communityRepository.findOne).not.toHaveBeenCalled();
+    expect(report.resolvedByUserId).toBe('superadmin-id');
+    expect(moderationActionsService.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'report_resolved',
+        communityId: null,
+        actorUserId: 'superadmin-id',
+      }),
+      manager,
+    );
+  });
+
+  it('dismisses a global report from a soft-deleted community', async () => {
+    const report = pendingReport({ communityId: 99 });
+    reportRepository.findOne.mockResolvedValue(report);
+
+    await service.dismissGlobalReport(report.id, 'superadmin-id');
+
+    expect(communityRepository.findOne).not.toHaveBeenCalled();
+    expect(report.status).toBe(ReportStatus.DISMISSED);
+    expect(moderationActionsService.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'report_dismissed',
+        communityId: 99,
+        actorUserId: 'superadmin-id',
+      }),
+      manager,
+    );
+  });
+
   it.each([
     {},
     { hideContent: false, warnAuthor: false },

@@ -16,6 +16,8 @@ import { User } from '../users/entities/user.entity';
 import { ModerationModule } from '../moderation/moderation.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { ModerationActionsModule } from '../moderation-actions/moderation-actions.module';
+import { UsersModule } from '../users/users.module';
+import { SuperAdminGuard } from '../auth/guards/super-admin.guard';
 
 @Module({
   imports: [
@@ -34,8 +36,9 @@ import { ModerationActionsModule } from '../moderation-actions/moderation-action
     ModerationModule,
     NotificationsModule,
     ModerationActionsModule,
+    UsersModule,
   ],
   controllers: [ReportsController, CommunityReportsController],
-  providers: [ReportsService],
+  providers: [ReportsService, SuperAdminGuard],
 })
 export class ReportsModule {}

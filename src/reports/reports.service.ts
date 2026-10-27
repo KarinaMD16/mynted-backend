@@ -29,6 +29,7 @@ import {
 import { User } from '../users/entities/user.entity';
 import { CreateReportDto } from './dto/create-report.dto';
 import { CommunityReportsQueryDto } from './dto/community-reports-query.dto';
+import { GetReportsQueryDto } from './dto/get-reports-query.dto';
 import { Report } from './entities/report.entity';
 import { ReportItemType } from './enums/report-item-type.enum';
 import { ReportStatus } from './enums/report-status.enum';
@@ -140,17 +141,52 @@ export class ReportsService {
   ) {
     await this.ensureCommunityExists(communityId);
 
+    return this.listReports(
+      {
+        page: query.page,
+        limit: query.limit,
+        status: query.status,
+      },
+      communityId,
+      false,
+    );
+  }
+
+  async listGlobalReports(query: GetReportsQueryDto) {
+    return this.listReports(query, query.communityId, true);
+  }
+
+  private async listReports(
+    query: {
+      page: number;
+      limit: number;
+      status?: ReportStatus;
+      itemType?: ReportItemType;
+    },
+    communityId?: number,
+    includeCommunity = false,
+  ) {
     const reportQuery = this.reportRepository.createQueryBuilder('report');
     if (typeof reportQuery.withDeleted === 'function') {
       reportQuery.withDeleted();
     }
     reportQuery
       .leftJoinAndSelect('report.reporter', 'reporter')
-      .where('report.community_id = :communityId', { communityId });
+      .where(
+        communityId === undefined
+          ? '1 = 1'
+          : 'report.community_id = :communityId',
+        communityId === undefined ? {} : { communityId },
+      );
 
     if (query.status) {
       reportQuery.andWhere('report.status = :status', {
         status: query.status,
+      });
+    }
+    if (query.itemType) {
+      reportQuery.andWhere('report.item_type = :itemType', {
+        itemType: query.itemType,
       });
     }
 
@@ -162,7 +198,13 @@ export class ReportsService {
       .getManyAndCount();
 
     const targets = await this.loadReportTargets(reports);
-    const counts = await this.countReportsByStatus(communityId);
+    const communities = includeCommunity
+      ? await this.loadReportCommunities(reports)
+      : new Map<
+          number,
+          { id: number; name: string; slug: string; deletedAt: Date | null }
+        >();
+    const counts = await this.countReportsByStatus(communityId, query.itemType);
 
     return {
       data: reports.map((report) => {
@@ -178,6 +220,12 @@ export class ReportsService {
           excerpt: target ? this.buildExcerpt(target) : null,
           contentUnavailable: !target,
           reporter: this.toUserSummary(report.reporter),
+          ...(includeCommunity
+            ? {
+                communityId: report.communityId,
+                community: communities.get(report.communityId ?? -1) ?? null,
+              }
+            : {}),
           createdAt: report.createdAt,
         };
       }),
@@ -189,6 +237,40 @@ export class ReportsService {
       },
       counts,
     };
+  }
+
+  private async loadReportCommunities(
+    reports: Report[],
+  ): Promise<
+    Map<
+      number,
+      { id: number; name: string; slug: string; deletedAt: Date | null }
+    >
+  > {
+    const communityIds = [
+      ...new Set(
+        reports
+          .map((report) => report.communityId)
+          .filter((id): id is number => id !== null),
+      ),
+    ];
+    if (communityIds.length === 0) return new Map();
+
+    const communities = await this.communityRepository.find({
+      where: { id: In(communityIds) },
+      withDeleted: true,
+    });
+    return new Map(
+      communities.map((community) => [
+        community.id,
+        {
+          id: community.id,
+          name: community.name,
+          slug: community.slug,
+          deletedAt: community.deletedAt,
+        },
+      ]),
+    );
   }
 
   async getCommunityReportDetail(communityId: number, reportId: number) {
@@ -251,13 +333,33 @@ export class ReportsService {
     dto: ResolveReportDto,
     actorUserId: string,
   ): Promise<Report> {
-    const actions = this.buildResolutionActions(dto);
     await this.ensureCommunityExists(communityId);
+    return this.resolveReportInternal(reportId, dto, actorUserId, communityId);
+  }
+
+  async resolveGlobalReport(
+    reportId: number,
+    dto: ResolveReportDto,
+    actorUserId: string,
+  ): Promise<Report> {
+    return this.resolveReportInternal(reportId, dto, actorUserId);
+  }
+
+  private async resolveReportInternal(
+    reportId: number,
+    dto: ResolveReportDto,
+    actorUserId: string,
+    communityId?: number,
+  ): Promise<Report> {
+    const actions = this.buildResolutionActions(dto);
 
     const result = await this.dataSource.transaction(async (manager) => {
       const reportRepository = manager.getRepository(Report);
       const report = await reportRepository.findOne({
-        where: { id: reportId, communityId },
+        where: {
+          id: reportId,
+          ...(communityId === undefined ? {} : { communityId }),
+        },
         lock: { mode: 'pessimistic_write' },
       });
 
@@ -368,11 +470,28 @@ export class ReportsService {
     actorUserId: string,
   ): Promise<Report> {
     await this.ensureCommunityExists(communityId);
+    return this.dismissReportInternal(reportId, actorUserId, communityId);
+  }
 
+  async dismissGlobalReport(
+    reportId: number,
+    actorUserId: string,
+  ): Promise<Report> {
+    return this.dismissReportInternal(reportId, actorUserId);
+  }
+
+  private async dismissReportInternal(
+    reportId: number,
+    actorUserId: string,
+    communityId?: number,
+  ): Promise<Report> {
     return this.dataSource.transaction(async (manager) => {
       const reportRepository = manager.getRepository(Report);
       const report = await reportRepository.findOne({
-        where: { id: reportId, communityId },
+        where: {
+          id: reportId,
+          ...(communityId === undefined ? {} : { communityId }),
+        },
         lock: { mode: 'pessimistic_write' },
       });
 
@@ -849,12 +968,24 @@ export class ReportsService {
     return text.length > 160 ? `${text.slice(0, 157)}...` : text;
   }
 
-  private async countReportsByStatus(communityId: number) {
-    const rows = await this.reportRepository
+  private async countReportsByStatus(
+    communityId?: number,
+    itemType?: ReportItemType,
+  ) {
+    const query = this.reportRepository
       .createQueryBuilder('report')
       .select('report.status', 'status')
       .addSelect('COUNT(*)', 'count')
-      .where('report.community_id = :communityId', { communityId })
+      .where(
+        communityId === undefined
+          ? '1 = 1'
+          : 'report.community_id = :communityId',
+        communityId === undefined ? {} : { communityId },
+      );
+    if (itemType) {
+      query.andWhere('report.item_type = :itemType', { itemType });
+    }
+    const rows = await query
       .groupBy('report.status')
       .getRawMany<{ status: ReportStatus; count: string }>();
 
