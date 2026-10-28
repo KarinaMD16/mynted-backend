@@ -501,7 +501,9 @@ export class ReportsService {
       return { report: updated, recipientId };
     });
 
-    if (result.recipientId) {
+    if (result.report.itemType === ReportItemType.COMMUNITY) {
+      await this.notifyCommunityReportResolved(result.report);
+    } else if (result.recipientId) {
       await this.notifyModeration(result.report, result.recipientId, dto);
     }
     return result.report;
@@ -735,6 +737,48 @@ export class ReportsService {
     } catch (error: unknown) {
       this.logger.warn(
         `No se pudo notificar la moderaciÃ³n del reporte ${report.id}`,
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  }
+
+  private async notifyCommunityReportResolved(report: Report): Promise<void> {
+    if (!report.communityId) return;
+
+    try {
+      const [ownerProfile, community] = await Promise.all([
+        this.communityProfileRepository.findOne({
+          where: {
+            communityId: report.communityId,
+            role: CommunityProfileRole.OWNER,
+          },
+          relations: { user: true },
+        }),
+        this.communityRepository.findOne({
+          where: { id: report.communityId },
+          withDeleted: true,
+          select: { id: true, name: true },
+        }),
+      ]);
+
+      const owner = ownerProfile?.user;
+      if (!owner || !owner.isActive || owner.deletedAt || !community) return;
+
+      await this.notificationsService.notify([
+        {
+          userId: owner.id,
+          type: NotificationType.COMMUNITY_MODERATION_WARNING,
+          data: {
+            communityId: community.id,
+            communityName: community.name,
+          },
+          message:
+            'Tu comunidad recibió una advertencia de moderación después de una revisión. Revisa que su contenido y actividad cumplan con las normas de la plataforma.',
+        },
+      ]);
+    } catch (error: unknown) {
+      this.logger.warn(
+        `No se pudo notificar la resolución del reporte de comunidad ${report.id}`,
         error instanceof Error ? error.message : String(error),
       );
     }

@@ -35,7 +35,10 @@ describe('ReportsService resolution', () => {
   const conversationRepository = { findOne: jest.fn() };
   const messageRepository = { find: jest.fn() };
   const communityRepository = { findOne: jest.fn() };
-  const communityProfileRepository = { createQueryBuilder: jest.fn() };
+  const communityProfileRepository = {
+    createQueryBuilder: jest.fn(),
+    findOne: jest.fn(),
+  };
   const userRepository = { find: jest.fn() };
   const moderationService = { hideContent: jest.fn() };
   const notificationsService = { notify: jest.fn() };
@@ -376,6 +379,134 @@ describe('ReportsService resolution', () => {
       }),
     );
     expect(moderationService.hideContent).not.toHaveBeenCalled();
+  });
+
+  it('notifies only the active owner when SUPERADMIN resolves a community report', async () => {
+    const report = pendingReport({
+      itemType: ReportItemType.COMMUNITY,
+      itemId: communityId,
+    });
+    reportRepository.findOne.mockResolvedValue(report);
+    communityProfileRepository.findOne.mockResolvedValue({
+      communityId,
+      role: 'owner',
+      user: { id: 'owner-id', isActive: true, deletedAt: null },
+    });
+    communityRepository.findOne.mockResolvedValue({
+      id: communityId,
+      name: 'Comunidad de prueba',
+    });
+
+    const result = await service.resolveGlobalReport(
+      report.id,
+      { note: 'Revisión administrativa' },
+      'superadmin-id',
+    );
+
+    expect(result.status).toBe(ReportStatus.RESOLVED);
+    expect(moderationActionsService.record).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'report_resolved' }),
+      manager,
+    );
+    expect(communityProfileRepository.findOne).toHaveBeenCalledWith({
+      where: { communityId, role: 'owner' },
+      relations: { user: true },
+    });
+    expect(notificationsService.notify).toHaveBeenCalledTimes(1);
+    expect(notificationsService.notify).toHaveBeenCalledWith([
+      {
+        userId: 'owner-id',
+        type: 'community_moderation_warning',
+        data: {
+          communityId,
+          communityName: 'Comunidad de prueba',
+        },
+        message:
+          'Tu comunidad recibió una advertencia de moderación después de una revisión. Revisa que su contenido y actividad cumplan con las normas de la plataforma.',
+      },
+    ]);
+    const notificationPayload = JSON.stringify(
+      notificationsService.notify.mock.calls[0],
+    );
+    expect(notificationPayload).not.toContain('reportId');
+    expect(notificationPayload).not.toContain('reporterId');
+    expect(notificationPayload).not.toContain('reason');
+    expect(notificationPayload).not.toContain('resolutionNote');
+  });
+
+  it('resolves a community report without an owner and does not notify', async () => {
+    const report = pendingReport({
+      itemType: ReportItemType.COMMUNITY,
+      itemId: communityId,
+    });
+    reportRepository.findOne.mockResolvedValue(report);
+    communityProfileRepository.findOne.mockResolvedValue(null);
+    communityRepository.findOne.mockResolvedValue({
+      id: communityId,
+      name: 'Sin owner',
+    });
+
+    await expect(
+      service.resolveGlobalReport(report.id, { note: 'Revisado' }, actorId),
+    ).resolves.toEqual(
+      expect.objectContaining({ status: ReportStatus.RESOLVED }),
+    );
+    expect(notificationsService.notify).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { isActive: false, deletedAt: null },
+    { isActive: true, deletedAt: new Date() },
+  ])('does not notify an inactive or soft-deleted owner: %j', async (user) => {
+    const report = pendingReport({
+      itemType: ReportItemType.COMMUNITY,
+      itemId: communityId,
+    });
+    reportRepository.findOne.mockResolvedValue(report);
+    communityProfileRepository.findOne.mockResolvedValue({
+      communityId,
+      role: 'owner',
+      user: { id: 'owner-id', ...user },
+    });
+    communityRepository.findOne.mockResolvedValue({
+      id: communityId,
+      name: 'Comunidad de prueba',
+    });
+
+    await service.resolveGlobalReport(report.id, { note: 'Revisado' }, actorId);
+
+    expect(notificationsService.notify).not.toHaveBeenCalled();
+  });
+
+  it('does not roll back the resolved report when owner notification fails', async () => {
+    const report = pendingReport({
+      itemType: ReportItemType.COMMUNITY,
+      itemId: communityId,
+    });
+    reportRepository.findOne.mockResolvedValue(report);
+    communityProfileRepository.findOne.mockResolvedValue({
+      communityId,
+      role: 'owner',
+      user: { id: 'owner-id', isActive: true, deletedAt: null },
+    });
+    communityRepository.findOne.mockResolvedValue({
+      id: communityId,
+      name: 'Comunidad de prueba',
+    });
+    notificationsService.notify.mockRejectedValue(
+      new Error('notification failed'),
+    );
+
+    await expect(
+      service.resolveGlobalReport(report.id, { note: 'Revisado' }, actorId),
+    ).resolves.toEqual(
+      expect.objectContaining({ status: ReportStatus.RESOLVED }),
+    );
+    expect(report.status).toBe(ReportStatus.RESOLVED);
+    expect(moderationActionsService.record).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'report_resolved' }),
+      manager,
+    );
   });
 
   it('dismisses a global report from a soft-deleted community', async () => {

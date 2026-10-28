@@ -32,6 +32,7 @@ export enum NotificationType {
   REPLY_REPLIED = 'reply_replied',
   CONTENT_HIDDEN = 'content_hidden',
   CONTENT_RESTORED = 'content_restored',
+  COMMUNITY_MODERATION_WARNING = 'community_moderation_warning',
   PRODUCT_DEACTIVATED = 'product_deactivated',
   PRODUCT_ACTIVATED = 'product_activated',
   PRODUCT_DELETED = 'product_deleted',

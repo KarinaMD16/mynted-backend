@@ -287,6 +287,15 @@ JWT + SuperAdminGuard. Tiene el mismo body y reglas. Permite resolver reports de
 
 JWT + SuperAdminGuard. No requiere communityId en la URL y permite descartar reports normales o históricos.
 
+### Notificaciones de Community Reports
+
+- Mientras un Community Report está `pending`, el OWNER no recibe ninguna notificación.
+- Si el SUPERADMIN descarta el reporte, no se envía ninguna notificación.
+- Si el SUPERADMIN lo resuelve con una nota válida, el OWNER recibe una notificación `community_moderation_warning`.
+- La notificación es genérica y contiene únicamente `communityId` y `communityName`.
+- No incluye `reportId`, `reporter`, `reporterId`, `reason`, `description` ni `resolutionNote`.
+- El OWNER no obtiene acceso al reporte; los Community Reports siguen siendo gestionables exclusivamente por SUPERADMIN.
+
 ## Moderation log
 
 ### GET /moderation-log
