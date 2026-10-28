@@ -147,7 +147,7 @@ Orden: createdAt DESC, luego id DESC.
 }
 ~~~
 
-counts contiene totales por estado de la comunidad. Un report community aparece por su communityId.
+counts contiene totales por estado de la comunidad. Los reports cuyo itemType es community no aparecen en este listado ni en sus counts; este panel solo muestra contenido que OWNER/MODERATOR pueden gestionar.
 
 ### GET /communities/:communityId/reports/:id
 
@@ -511,7 +511,7 @@ Defaults de paginación:
 1. Reportar post/reply/product: POST /reports; confirmar 201 y manejar 409.
 2. Panel comunitario: GET /communities/:id/reports; usar counts, excerpt y contentUnavailable.
 3. Resolver contenido: ruta comunitaria de resolve; refrescar porque pueden cambiar varios reports.
-4. Revisar community report: ofrecer solo nota y dismiss.
+4. Revisar community report: hacerlo desde GET /reports como SUPERADMIN; ofrecer solo nota y dismiss.
 5. Panel SUPERADMIN: GET /reports, GET /moderation-log y GET /users/stats.
 6. Acciones sobre community: usar endpoints de community, no hideContent.
 
@@ -527,7 +527,7 @@ Defaults de paginación:
 - communityId puede ser null.
 - warnAuthor no aplica a communities.
 - No mostrar hideContent para itemType community.
-- Reports globales y comunitarios tienen permisos distintos.
+- Reports globales y comunitarios tienen permisos distintos. Los Community Reports son exclusivos del panel global de SUPERADMIN.
 - GET /users no declara paginación en su DTO actual.
 - ReportItemType usa enum PostgreSQL y se sincroniza con synchronize true; no hay migration.
 

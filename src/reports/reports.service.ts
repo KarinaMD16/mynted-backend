@@ -179,6 +179,12 @@ export class ReportsService {
         communityId === undefined ? {} : { communityId },
       );
 
+    if (communityId !== undefined && !includeCommunity) {
+      reportQuery.andWhere('report.item_type != :communityItemType', {
+        communityItemType: ReportItemType.COMMUNITY,
+      });
+    }
+
     if (query.status) {
       reportQuery.andWhere('report.status = :status', {
         status: query.status,
@@ -204,7 +210,11 @@ export class ReportsService {
           number,
           { id: number; name: string; slug: string; deletedAt: Date | null }
         >();
-    const counts = await this.countReportsByStatus(communityId, query.itemType);
+    const counts = await this.countReportsByStatus(
+      communityId,
+      query.itemType,
+      communityId !== undefined && !includeCommunity,
+    );
 
     return {
       data: reports.map((report) => {
@@ -286,6 +296,10 @@ export class ReportsService {
       throw new NotFoundException('Reporte no encontrado');
     }
 
+    if (report.itemType === ReportItemType.COMMUNITY) {
+      throw new NotFoundException('Reporte no encontrado');
+    }
+
     const content = await this.loadReportDetailContent(report);
 
     return {
@@ -312,7 +326,11 @@ export class ReportsService {
     const [pendingReports, resolvedToday, activeMembers, activeModerators] =
       await Promise.all([
         this.reportRepository.count({
-          where: { communityId, status: ReportStatus.PENDING },
+          where: {
+            communityId,
+            status: ReportStatus.PENDING,
+            itemType: Not(ReportItemType.COMMUNITY),
+          },
         }),
         this.countResolvedToday(communityId),
         this.countActiveProfiles(communityId),
@@ -364,6 +382,12 @@ export class ReportsService {
       });
 
       if (!report) throw new NotFoundException('Reporte no encontrado');
+      if (
+        communityId !== undefined &&
+        report.itemType === ReportItemType.COMMUNITY
+      ) {
+        throw new NotFoundException('Reporte no encontrado');
+      }
       this.ensurePendingReport(report);
 
       if (
@@ -507,6 +531,12 @@ export class ReportsService {
       });
 
       if (!report) throw new NotFoundException('Reporte no encontrado');
+      if (
+        communityId !== undefined &&
+        report.itemType === ReportItemType.COMMUNITY
+      ) {
+        throw new NotFoundException('Reporte no encontrado');
+      }
       this.ensurePendingReport(report);
 
       report.status = ReportStatus.DISMISSED;
@@ -1046,6 +1076,7 @@ export class ReportsService {
   private async countReportsByStatus(
     communityId?: number,
     itemType?: ReportItemType,
+    excludeCommunityReports = false,
   ) {
     const query = this.reportRepository
       .createQueryBuilder('report')
@@ -1059,6 +1090,11 @@ export class ReportsService {
       );
     if (itemType) {
       query.andWhere('report.item_type = :itemType', { itemType });
+    }
+    if (excludeCommunityReports) {
+      query.andWhere('report.item_type != :communityItemType', {
+        communityItemType: ReportItemType.COMMUNITY,
+      });
     }
     const rows = await query
       .groupBy('report.status')
