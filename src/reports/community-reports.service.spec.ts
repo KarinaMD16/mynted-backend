@@ -254,4 +254,62 @@ describe('ReportsService community reports', () => {
       expect.objectContaining({ withDeleted: true }),
     );
   });
+
+  it('loads community report targets in batch and builds their excerpt', async () => {
+    const listQb = chain();
+    const countsQb = chain();
+    reportRepository.createQueryBuilder
+      .mockReturnValueOnce(listQb)
+      .mockReturnValueOnce(countsQb);
+    listQb.getManyAndCount.mockResolvedValue([
+      [
+        {
+          id: 3,
+          communityId: 2,
+          reason: ReportReason.SPAM,
+          status: ReportStatus.PENDING,
+          itemType: ReportItemType.COMMUNITY,
+          itemId: 2,
+          reporter: null,
+          createdAt: new Date(),
+        },
+      ],
+      1,
+    ]);
+    countsQb.getRawMany.mockResolvedValue([
+      { status: ReportStatus.PENDING, count: '1' },
+    ]);
+    const community = Object.assign(new Community(), {
+      id: 2,
+      name: 'Comunidad reportada',
+      description: 'Descripción de la comunidad',
+      isActive: true,
+      isPrivate: false,
+      deletedAt: null,
+    });
+    communityRepository.find
+      .mockResolvedValueOnce([community])
+      .mockResolvedValueOnce([
+        { id: 2, name: community.name, slug: 'reportada', deletedAt: null },
+      ]);
+
+    const result = await service.listGlobalReports({
+      page: 1,
+      limit: 20,
+      itemType: ReportItemType.COMMUNITY,
+    });
+
+    expect(result.data[0]).toEqual(
+      expect.objectContaining({
+        itemType: ReportItemType.COMMUNITY,
+        itemId: 2,
+        excerpt: {
+          title: 'Comunidad reportada',
+          text: 'Descripción de la comunidad',
+        },
+        contentUnavailable: false,
+      }),
+    );
+    expect(communityRepository.find).toHaveBeenCalledTimes(2);
+  });
 });

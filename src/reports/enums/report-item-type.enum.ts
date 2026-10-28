@@ -3,4 +3,5 @@ export enum ReportItemType {
   REPLY = 'reply',
   PRODUCT = 'product',
   CONVERSATION = 'conversation',
+  COMMUNITY = 'community',
 }

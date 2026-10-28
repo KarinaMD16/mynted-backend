@@ -45,6 +45,7 @@ describe('Report entity metadata', () => {
       'reply',
       'product',
       'conversation',
+      'community',
     ]);
     expect(Object.values(ReportReason)).toEqual([
       'spam',

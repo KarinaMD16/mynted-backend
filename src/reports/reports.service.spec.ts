@@ -46,7 +46,10 @@ describe('ReportsService', () => {
   };
   const messageRepository = { find: jest.fn() };
   const communityRepository = { findOne: jest.fn(), find: jest.fn() };
-  const communityProfileRepository = { createQueryBuilder: jest.fn() };
+  const communityProfileRepository = {
+    createQueryBuilder: jest.fn(),
+    findOne: jest.fn(),
+  };
   const userRepository = { find: jest.fn() };
   const dataSource = { transaction: jest.fn() };
   const moderationService = { hideContent: jest.fn() };
@@ -90,6 +93,7 @@ describe('ReportsService', () => {
     );
     communityRepository.findOne.mockResolvedValue({ id: 12 });
     communityRepository.find.mockResolvedValue([]);
+    communityProfileRepository.findOne.mockResolvedValue(null);
   });
 
   it('creates a pending post report with reporter and community derived from the post', async () => {
@@ -126,6 +130,100 @@ describe('ReportsService', () => {
     );
 
     expect(result.communityId).toBe(14);
+  });
+
+  it('creates a report for a public community without an owner', async () => {
+    communityRepository.findOne.mockResolvedValue({
+      id: 2,
+      isPrivate: false,
+    });
+
+    const result = await service.createReport(
+      reporterId,
+      dto(ReportItemType.COMMUNITY, 2),
+    );
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        itemType: ReportItemType.COMMUNITY,
+        itemId: 2,
+        communityId: 2,
+        status: ReportStatus.PENDING,
+      }),
+    );
+  });
+
+  it('allows reporting an inactive community that is not soft-deleted', async () => {
+    communityRepository.findOne.mockResolvedValue({
+      id: 2,
+      isActive: false,
+      isPrivate: false,
+    });
+
+    await expect(
+      service.createReport(reporterId, dto(ReportItemType.COMMUNITY, 2)),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        itemType: ReportItemType.COMMUNITY,
+        communityId: 2,
+      }),
+    );
+    expect(communityRepository.findOne).toHaveBeenCalledWith({
+      where: { id: 2 },
+    });
+  });
+
+  it('allows a member to report a private community', async () => {
+    communityRepository.findOne.mockResolvedValue({
+      id: 2,
+      isPrivate: true,
+    });
+    communityProfileRepository.findOne.mockResolvedValue({
+      communityProfileId: 10,
+    });
+
+    await expect(
+      service.createReport(reporterId, dto(ReportItemType.COMMUNITY, 2)),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        itemType: ReportItemType.COMMUNITY,
+        communityId: 2,
+      }),
+    );
+  });
+
+  it('rejects a private community report from a non-member', async () => {
+    communityRepository.findOne.mockResolvedValue({
+      id: 2,
+      isPrivate: true,
+    });
+    communityProfileRepository.findOne.mockResolvedValue(null);
+
+    await expect(
+      service.createReport(reporterId, dto(ReportItemType.COMMUNITY, 2)),
+    ).rejects.toThrow(ForbiddenException);
+    expect(reportRepository.save).not.toHaveBeenCalled();
+  });
+
+  it('rejects a missing community report target', async () => {
+    communityRepository.findOne.mockResolvedValue(null);
+
+    await expect(
+      service.createReport(reporterId, dto(ReportItemType.COMMUNITY, 999)),
+    ).rejects.toThrow(NotFoundException);
+  });
+
+  it('rejects a duplicate report for the same community and reporter', async () => {
+    communityRepository.findOne.mockResolvedValue({
+      id: 2,
+      isPrivate: false,
+    });
+    reportRepository.findOne.mockResolvedValue({ id: 8 });
+
+    await expect(
+      service.createReport(reporterId, dto(ReportItemType.COMMUNITY, 2)),
+    ).rejects.toThrow(ConflictException);
+    expect(reportRepository.save).not.toHaveBeenCalled();
   });
 
   it('derives the owner and nullable community from a product', async () => {
