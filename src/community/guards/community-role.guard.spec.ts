@@ -12,15 +12,18 @@ import {
   CommunityProfileRole,
 } from '../entities/community-profile.entity';
 import { Community } from '../entities/community.entity';
+import { User, UserRole } from '../../users/entities/user.entity';
 
 describe('CommunityRoleGuard', () => {
   const communityProfileRepository = { findOne: jest.fn() };
   const communityRepository = { findOne: jest.fn() };
   const reflector = { get: jest.fn() };
+  const userRepository = { findOne: jest.fn() };
   const guard = new CommunityRoleGuard(
     reflector as unknown as Reflector,
     communityProfileRepository as unknown as Repository<CommunityProfile>,
     communityRepository as unknown as Repository<Community>,
+    userRepository as unknown as Repository<User>,
   );
 
   const buildContext = (
@@ -39,6 +42,7 @@ describe('CommunityRoleGuard', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    userRepository.findOne.mockResolvedValue({ role: UserRole.USER });
   });
 
   it('allows the request through when no @RequireCommunityRole is set', async () => {
@@ -49,6 +53,27 @@ describe('CommunityRoleGuard', () => {
     );
     expect(communityProfileRepository.findOne).not.toHaveBeenCalled();
     expect(communityRepository.findOne).not.toHaveBeenCalled();
+  });
+
+  it('allows SUPERADMIN without a community profile and validates the community', async () => {
+    reflector.get.mockReturnValue([CommunityProfileRole.MODERATOR]);
+    userRepository.findOne.mockResolvedValue({ role: UserRole.SUPERADMIN });
+    communityRepository.findOne.mockResolvedValue({ id: 5 });
+
+    await expect(guard.canActivate(buildContext('admin', '5'))).resolves.toBe(
+      true,
+    );
+    expect(communityProfileRepository.findOne).not.toHaveBeenCalled();
+  });
+
+  it('does not allow SUPERADMIN for a missing community', async () => {
+    reflector.get.mockReturnValue([CommunityProfileRole.MODERATOR]);
+    userRepository.findOne.mockResolvedValue({ role: UserRole.SUPERADMIN });
+    communityRepository.findOne.mockResolvedValue(null);
+
+    await expect(
+      guard.canActivate(buildContext('admin', '999')),
+    ).rejects.toThrow(NotFoundException);
   });
 
   it('allows a user whose role is in the allowed list', async () => {

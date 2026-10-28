@@ -25,6 +25,14 @@ import { CommissionService } from '../payments/commission/commission.service';
 import { CommissionEstimateResponseDto } from './dto/commission-estimate-response.dto';
 import { CommissionProfileResponseDto } from './dto/seller-commission-response.dto';
 import { CommissionCatalogService } from '../payments/commission/commission-catalog.service';
+import { Product, ProductStatus } from '../products/entities/product.entity';
+import { ModerationActionsService } from '../moderation-actions/moderation-actions.service';
+import {
+  MODERATION_ACTIONS,
+  MODERATION_TARGET_TYPES,
+} from '../moderation-actions/constants/moderation-action.constants';
+import { NotificationsService } from '../notifications/notifications.service';
+import { NotificationType } from '../notifications/enums/notification-type.enum';
 
 interface PostgresError {
   code?: string;
@@ -42,6 +50,10 @@ export class SellersService {
     private readonly eventEmitter?: EventEmitter2,
     @Optional()
     private readonly commissionCatalogService?: CommissionCatalogService,
+    @Optional()
+    private readonly moderationActionsService?: ModerationActionsService,
+    @Optional()
+    private readonly notificationsService?: NotificationsService,
   ) {}
 
   async estimateCommission(
@@ -245,8 +257,59 @@ export class SellersService {
   async updateSellerStatus(
     targetUserId: string,
     dto: UpdateSellerStatusDto,
+    actorUserId: string,
   ): Promise<User> {
     const user = await this.usersService.findById(targetUserId);
+
+    if (
+      dto.status === SellerRequestStatus.REVOKED &&
+      user.sellerRequestStatus === SellerRequestStatus.APPROVED
+    ) {
+      const reason = typeof dto.reason === 'string' ? dto.reason.trim() : '';
+      if (!reason || reason.length > 500) {
+        throw new BadRequestException(
+          'reason es obligatorio al revocar un vendedor y no puede superar 500 caracteres',
+        );
+      }
+      const updated = await this.revokeApprovedSeller(
+        targetUserId,
+        reason,
+        actorUserId,
+      );
+      await this.notifySellerStatusChange(
+        targetUserId,
+        NotificationType.SELLER_REVOKED,
+        `Tus privilegios de vendedor fueron revocados: ${reason}`,
+        { reason },
+      );
+      return updated;
+    }
+
+    if (
+      dto.status === SellerRequestStatus.APPROVED &&
+      user.sellerRequestStatus === SellerRequestStatus.REVOKED
+    ) {
+      const updated = await this.restoreRevokedSeller(
+        targetUserId,
+        actorUserId,
+      );
+      await this.notifySellerStatusChange(
+        targetUserId,
+        NotificationType.SELLER_RESTORED,
+        'Tus privilegios de vendedor fueron restaurados. Ya puedes volver a vender.',
+        {},
+      );
+      return updated;
+    }
+
+    if (
+      (dto.status === SellerRequestStatus.REVOKED &&
+        user.sellerRequestStatus === SellerRequestStatus.REVOKED) ||
+      (dto.status === SellerRequestStatus.APPROVED &&
+        user.sellerRequestStatus === SellerRequestStatus.APPROVED)
+    ) {
+      throw new ConflictException('El usuario ya tiene ese estado de vendedor');
+    }
 
     if (user.sellerRequestStatus !== SellerRequestStatus.PENDING) {
       throw new BadRequestException(
@@ -306,5 +369,167 @@ export class SellersService {
     }
 
     return updated;
+  }
+
+  private async revokeApprovedSeller(
+    targetUserId: string,
+    reason: string,
+    actorUserId: string,
+  ): Promise<User> {
+    return this.dataSource.transaction(async (manager) => {
+      const lockedUser = await manager.getRepository(User).findOne({
+        where: { id: targetUserId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!lockedUser) {
+        throw new NotFoundException('Usuario no encontrado');
+      }
+      if (lockedUser.sellerRequestStatus !== SellerRequestStatus.APPROVED) {
+        if (lockedUser.sellerRequestStatus === SellerRequestStatus.REVOKED) {
+          throw new ConflictException(
+            'El usuario ya tiene ese estado de vendedor',
+          );
+        }
+        throw new BadRequestException(
+          'Solo se puede revocar un vendedor aprobado',
+        );
+      }
+
+      const seller = await manager.getRepository(Seller).findOne({
+        where: { userId: targetUserId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!seller) {
+        throw new NotFoundException(
+          'No se encontrÃ³ el registro de vendedor para este usuario',
+        );
+      }
+
+      await manager.update(Seller, seller.sellerId, { isVerified: false });
+      await manager.update(User, targetUserId, {
+        sellerRequestStatus: SellerRequestStatus.REVOKED,
+      });
+      await manager
+        .getRepository(Product)
+        .createQueryBuilder()
+        .update(Product)
+        .set({ status: ProductStatus.INACTIVE })
+        .where(
+          'seller_id = :sellerId AND status = :active AND deleted_at IS NULL',
+          { sellerId: seller.sellerId, active: ProductStatus.ACTIVE },
+        )
+        .execute();
+
+      if (!this.moderationActionsService) {
+        throw new InternalServerErrorException(
+          'El servicio de auditorÃ­a de moderaciÃ³n no estÃ¡ disponible',
+        );
+      }
+      await this.moderationActionsService.record(
+        {
+          actorUserId,
+          targetType: MODERATION_TARGET_TYPES.USER,
+          targetId: targetUserId,
+          action: MODERATION_ACTIONS.SELLER_REVOKED,
+          reason: reason.trim(),
+          communityId: null,
+        },
+        manager,
+      );
+
+      const updatedUser = await manager.findOne(User, {
+        where: { id: targetUserId },
+      });
+      if (!updatedUser) {
+        throw new InternalServerErrorException(
+          'No fue posible recuperar el usuario actualizado',
+        );
+      }
+      return updatedUser;
+    });
+  }
+
+  private async restoreRevokedSeller(
+    targetUserId: string,
+    actorUserId: string,
+  ): Promise<User> {
+    return this.dataSource.transaction(async (manager) => {
+      const lockedUser = await manager.getRepository(User).findOne({
+        where: { id: targetUserId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!lockedUser) {
+        throw new NotFoundException('Usuario no encontrado');
+      }
+      if (lockedUser.sellerRequestStatus !== SellerRequestStatus.REVOKED) {
+        if (lockedUser.sellerRequestStatus === SellerRequestStatus.APPROVED) {
+          throw new ConflictException(
+            'El usuario ya tiene ese estado de vendedor',
+          );
+        }
+        throw new BadRequestException(
+          'Solo se puede restaurar un vendedor revocado',
+        );
+      }
+
+      const seller = await manager.getRepository(Seller).findOne({
+        where: { userId: targetUserId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!seller) {
+        throw new NotFoundException(
+          'No se encontrÃ³ el registro de vendedor para este usuario',
+        );
+      }
+
+      await manager.update(Seller, seller.sellerId, { isVerified: true });
+      await manager.update(User, targetUserId, {
+        sellerRequestStatus: SellerRequestStatus.APPROVED,
+      });
+
+      if (!this.moderationActionsService) {
+        throw new InternalServerErrorException(
+          'El servicio de auditorÃ­a de moderaciÃ³n no estÃ¡ disponible',
+        );
+      }
+      await this.moderationActionsService.record(
+        {
+          actorUserId,
+          targetType: MODERATION_TARGET_TYPES.USER,
+          targetId: targetUserId,
+          action: MODERATION_ACTIONS.SELLER_RESTORED,
+          reason: null,
+          communityId: null,
+        },
+        manager,
+      );
+
+      const updatedUser = await manager.findOne(User, {
+        where: { id: targetUserId },
+      });
+      if (!updatedUser) {
+        throw new InternalServerErrorException(
+          'No fue posible recuperar el usuario actualizado',
+        );
+      }
+      return updatedUser;
+    });
+  }
+
+  private async notifySellerStatusChange(
+    userId: string,
+    type: NotificationType,
+    message: string,
+    data: Record<string, unknown>,
+  ): Promise<void> {
+    if (!this.notificationsService) return;
+    try {
+      await this.notificationsService.notify(
+        [{ userId, type, data, message }],
+        { allowInactiveRecipient: true },
+      );
+    } catch {
+      // Las notificaciones son post-commit y no deben revertir el cambio.
+    }
   }
 }

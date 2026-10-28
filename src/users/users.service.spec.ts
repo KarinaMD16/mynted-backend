@@ -256,10 +256,43 @@ describe('UsersService', () => {
     const user = { id: 'user-id', isActive: true } as User;
     usersRepository.findOne.mockResolvedValue(user);
 
-    const result = await service.deactivate(user.id, 'admin-id');
+    const result = await service.deactivate(
+      user.id,
+      'admin-id',
+      'Incumplimiento de normas',
+    );
 
     expect(result.isActive).toBe(false);
     expect(usersRepository.save).toHaveBeenCalledWith(user);
+  });
+
+  it('bloquea desactivar cualquier otro superadministrador', async () => {
+    const user = {
+      id: 'other-admin',
+      role: 'superadmin',
+      isActive: true,
+    } as User;
+    usersRepository.findOne.mockResolvedValue(user);
+
+    await expect(
+      service.deactivate('other-admin', 'admin-id', 'Motivo'),
+    ).rejects.toThrow(ForbiddenException);
+    expect(usersRepository.save).not.toHaveBeenCalled();
+  });
+
+  it('mantiene idempotente la desactivación y activación', async () => {
+    const inactive = { id: 'user-id', isActive: false } as User;
+    usersRepository.findOne.mockResolvedValue(inactive);
+
+    await expect(
+      service.deactivate('user-id', 'admin-id', 'Motivo'),
+    ).resolves.toBe(inactive);
+    expect(usersRepository.save).not.toHaveBeenCalled();
+
+    const active = { id: 'user-id', isActive: true } as User;
+    usersRepository.findOne.mockResolvedValue(active);
+    await expect(service.activate('user-id', 'admin-id')).resolves.toBe(active);
+    expect(usersRepository.save).not.toHaveBeenCalled();
   });
 
   it('activa al usuario indicado', async () => {

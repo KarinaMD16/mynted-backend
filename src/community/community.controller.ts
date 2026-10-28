@@ -7,6 +7,7 @@ import {
   HttpStatus,
   Param,
   ParseIntPipe,
+  ParseEnumPipe,
   Patch,
   Post,
   Query,
@@ -34,11 +35,13 @@ import { CommunityService } from './community.service';
 import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
 import { OptionalAuthenticatedRequest } from '../auth/types/authenticated-request';
 import { CreateCommunityDto } from './dto/create-community.dto';
+import { DeleteCommunityDto } from './dto/delete-community.dto';
 import { CreateCommunityRuleDto } from './dto/create-community-rule.dto';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { CreateTagDto } from './dto/create-tag.dto';
 import { GetTagsQueryDto } from './dto/get-tags-query.dto';
 import { GetCommunitiesQueryDto } from './dto/get-communities-query.dto';
+import { GetAdminCommunitiesQueryDto } from './dto/get-admin-communities-query.dto';
 import { UpdateCommunityDto } from './dto/update-community.dto';
 import { UpdateCommunityRuleDto } from './dto/update-community-rule.dto';
 import { UpdateTagDto } from './dto/update-tag.dto';
@@ -46,6 +49,8 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { SuperAdminGuard } from '../auth/guards/super-admin.guard';
 import { AuthenticatedRequest } from '../auth/types/authenticated-request';
 import { CommunityRoleGuard } from './guards/community-role.guard';
+import { ModerationService } from '../moderation/moderation.service';
+import { ModerationItemType } from '../moderation/enums/moderation-item-type.enum';
 import { RequireCommunityRole } from './decorators/require-community-role.decorator';
 import { CommunityProfileRole } from './entities/community-profile.entity';
 
@@ -57,7 +62,10 @@ interface CommunityFiles {
 @ApiTags('community')
 @Controller()
 export class CommunityController {
-  constructor(private readonly communityService: CommunityService) {}
+  constructor(
+    private readonly communityService: CommunityService,
+    private readonly moderationService: ModerationService,
+  ) {}
 
   @Post('communities')
   @UseGuards(JwtAuthGuard)
@@ -83,6 +91,11 @@ export class CommunityController {
         'rules',
       ],
       properties: {
+        ownerId: {
+          type: 'string',
+          format: 'uuid',
+          description: 'Solo SUPERADMIN; owner comunitario opcional',
+        },
         name: {
           type: 'string',
           example: 'My Little Pony Collectors MX',
@@ -221,6 +234,44 @@ export class CommunityController {
     query: GetCommunitiesQueryDto,
   ) {
     return this.communityService.findAllCommunities(query);
+  }
+
+  @Get('communities/all')
+  @UseGuards(JwtAuthGuard, SuperAdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: '[Superadmin] Listar todas las comunidades' })
+  findAllCommunitiesForAdmin(
+    @Query(
+      new ValidationPipe({
+        transform: true,
+        whitelist: true,
+        forbidNonWhitelisted: true,
+      }),
+    )
+    query: GetAdminCommunitiesQueryDto,
+  ) {
+    return this.communityService.findAllCommunitiesForAdmin(query);
+  }
+
+  @Delete('communities/:id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @UseGuards(JwtAuthGuard, SuperAdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: '[Superadmin] Eliminar lógicamente una comunidad' })
+  @ApiParam({ name: 'id', type: Number, example: 5 })
+  deleteCommunity(
+    @Param('id', ParseIntPipe) id: number,
+    @Body(
+      new ValidationPipe({
+        transform: true,
+        whitelist: true,
+        forbidNonWhitelisted: true,
+      }),
+    )
+    dto: DeleteCommunityDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.communityService.deleteCommunity(id, request.user.userId, dto);
   }
 
   @Get('communities/by-slug/:slug')
@@ -542,8 +593,11 @@ export class CommunityController {
   @ApiOkResponse({
     schema: { example: { message: 'Comunidad desactivada exitosamente' } },
   })
-  deactivate(@Param('communityId', ParseIntPipe) communityId: number) {
-    return this.communityService.deactivate(communityId);
+  deactivate(
+    @Param('communityId', ParseIntPipe) communityId: number,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.communityService.deactivate(communityId, request.user.userId);
   }
 
   @Patch('communities/:communityId/activate')
@@ -554,8 +608,11 @@ export class CommunityController {
   @ApiOkResponse({
     schema: { example: { message: 'Comunidad activada exitosamente' } },
   })
-  activate(@Param('communityId', ParseIntPipe) communityId: number) {
-    return this.communityService.activate(communityId);
+  activate(
+    @Param('communityId', ParseIntPipe) communityId: number,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.communityService.activate(communityId, request.user.userId);
   }
 
   @Patch('communities/:communityId/public')
@@ -568,8 +625,11 @@ export class CommunityController {
       example: { message: 'Comunidad configurada como pública exitosamente' },
     },
   })
-  makePublic(@Param('communityId', ParseIntPipe) communityId: number) {
-    return this.communityService.makePublic(communityId);
+  makePublic(
+    @Param('communityId', ParseIntPipe) communityId: number,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.communityService.makePublic(communityId, request.user.userId);
   }
 
   @Patch('communities/:communityId/private')
@@ -582,8 +642,40 @@ export class CommunityController {
       example: { message: 'Comunidad configurada como privada exitosamente' },
     },
   })
-  makePrivate(@Param('communityId', ParseIntPipe) communityId: number) {
-    return this.communityService.makePrivate(communityId);
+  makePrivate(
+    @Param('communityId', ParseIntPipe) communityId: number,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.communityService.makePrivate(communityId, request.user.userId);
+  }
+
+  @Patch('communities/:communityId/moderation/:itemType/:itemId/restore')
+  @UseGuards(JwtAuthGuard, CommunityRoleGuard)
+  @RequireCommunityRole(
+    CommunityProfileRole.MODERATOR,
+    CommunityProfileRole.OWNER,
+  )
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Restaurar contenido oculto de una comunidad' })
+  @ApiParam({ name: 'communityId', type: Number, example: 5 })
+  @ApiParam({ name: 'itemType', enum: ModerationItemType, example: 'post' })
+  @ApiParam({ name: 'itemId', type: Number, example: 42 })
+  @ApiOkResponse({ description: 'Contenido restaurado' })
+  @ApiBadRequestResponse({ description: 'Tipo o identificador inválido' })
+  @ApiNotFoundResponse({ description: 'Contenido no encontrado' })
+  restoreModeratedContent(
+    @Param('communityId', ParseIntPipe) communityId: number,
+    @Param('itemType', new ParseEnumPipe(ModerationItemType))
+    itemType: ModerationItemType,
+    @Param('itemId', ParseIntPipe) itemId: number,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.moderationService.restoreContent(
+      itemType,
+      itemId,
+      communityId,
+      request.user.userId,
+    );
   }
 
   @Post('communities/:communityId/moderators/:profileId')

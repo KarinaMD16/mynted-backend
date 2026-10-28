@@ -76,7 +76,7 @@ describe('CommunityService.getStats', () => {
       'post_profile.community_profile_id = post.community_profile_id',
     );
     expect(postQueryBuilders[0].where).toHaveBeenCalledWith(
-      'post_profile.community_id = :communityId',
+      'post_profile.community_id = :communityId AND post.is_hidden = false',
       { communityId: 7 },
     );
   });
@@ -95,11 +95,13 @@ describe('CommunityService.getStats', () => {
     await service.getStats(7);
 
     expect(postQueryBuilders[0].where).toHaveBeenCalledWith(
-      'post_profile.community_id = :communityId',
+      'post_profile.community_id = :communityId AND post.is_hidden = false',
       { communityId: 7 },
     );
     expect(postQueryBuilders[1].where).toHaveBeenCalledWith(
-      'recent_post_profile.community_id = :communityId',
+      expect.stringContaining(
+        'recent_post_profile.community_id = :communityId',
+      ),
       { communityId: 7 },
     );
   });

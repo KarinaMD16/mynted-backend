@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   forwardRef,
   Get,
   Inject,
@@ -23,6 +24,10 @@ import {
   ApiConsumes,
   ApiOkResponse,
   ApiOperation,
+  ApiBadRequestResponse,
+  ApiForbiddenResponse,
+  ApiNotFoundResponse,
+  ApiUnauthorizedResponse,
   ApiTags,
 } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
@@ -32,12 +37,14 @@ import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { PublicUserDto } from './dto/public-user.dto';
 import { SearchUsersQueryDto } from './dto/search-users-query.dto';
-import { UserRole } from './entities/user.entity';
+import { User, UserRole } from './entities/user.entity';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { SuperAdminGuard } from '../auth/guards/super-admin.guard';
 import { AuthenticatedRequest } from '../auth/types/authenticated-request';
 import { AuthService } from '../auth/auth.service';
 import { setAuthCookies } from '../auth/auth-cookies.util';
+import { DeactivateUserDto } from './dto/deactivate-user.dto';
+import { GetUsersQueryDto } from './dto/get-users-query.dto';
 
 @ApiTags('users')
 @Controller('users')
@@ -68,8 +75,8 @@ export class UsersController {
   @UseGuards(JwtAuthGuard, SuperAdminGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: '[Superadmin] Obtener todos los usuarios' })
-  findAll() {
-    return this.usersService.findAll();
+  findAll(@Query() query: GetUsersQueryDto) {
+    return this.usersService.findAll(query);
   }
 
   @Get('me')
@@ -159,19 +166,117 @@ export class UsersController {
   @UseGuards(JwtAuthGuard, SuperAdminGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: '[Superadmin] Desactivar un usuario' })
+  @ApiBadRequestResponse({ description: 'Motivo inválido' })
+  @ApiForbiddenResponse({ description: 'Operación no permitida' })
+  @ApiNotFoundResponse({ description: 'Usuario no encontrado' })
+  @ApiUnauthorizedResponse({ description: 'Se requiere autenticación' })
+  @ApiOkResponse({
+    schema: {
+      example: {
+        id: 'uuid',
+        username: 'usuario',
+        role: 'user',
+        isActive: false,
+      },
+    },
+  })
   deactivate(
     @Param('id', ParseUUIDPipe) id: string,
     @Req() request: AuthenticatedRequest,
+    @Body() dto: DeactivateUserDto,
   ) {
-    return this.usersService.deactivate(id, request.user.userId);
+    return this.toStatusUser(
+      this.usersService.deactivate(id, request.user.userId, dto.reason),
+    );
   }
 
   @Patch(':id/activate')
   @UseGuards(JwtAuthGuard, SuperAdminGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: '[Superadmin] Activar un usuario' })
-  activate(@Param('id', ParseUUIDPipe) id: string) {
-    return this.usersService.activate(id);
+  @ApiForbiddenResponse({ description: 'Operación no permitida' })
+  @ApiNotFoundResponse({ description: 'Usuario no encontrado' })
+  @ApiUnauthorizedResponse({ description: 'Se requiere autenticación' })
+  @ApiOkResponse({
+    schema: {
+      example: {
+        id: 'uuid',
+        username: 'usuario',
+        role: 'user',
+        isActive: true,
+      },
+    },
+  })
+  activate(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.toStatusUser(
+      this.usersService.activate(id, request.user.userId),
+    );
+  }
+
+  @Delete(':id')
+  @UseGuards(JwtAuthGuard, SuperAdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: '[Superadmin] Eliminar lógicamente un usuario' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['reason'],
+      properties: {
+        reason: {
+          type: 'string',
+          maxLength: 500,
+          example: 'Incumplimiento grave de normas',
+        },
+      },
+    },
+  })
+  @ApiBadRequestResponse({ description: 'Motivo inválido' })
+  @ApiForbiddenResponse({ description: 'Operación no permitida' })
+  @ApiNotFoundResponse({ description: 'Usuario no encontrado' })
+  @ApiUnauthorizedResponse({ description: 'Se requiere autenticación' })
+  @ApiOkResponse({
+    schema: {
+      example: {
+        id: 'uuid',
+        username: 'usuario',
+        role: 'user',
+        isActive: false,
+        deletedAt: '2026-10-27T04:00:00.000Z',
+      },
+    },
+  })
+  remove(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() request: AuthenticatedRequest,
+    @Body() dto: DeactivateUserDto,
+  ) {
+    return this.toDeletedUser(
+      this.usersService.softDelete(id, request.user.userId, dto.reason),
+    );
+  }
+
+  private async toStatusUser(userPromise: Promise<User>) {
+    const user = await userPromise;
+    return {
+      id: user.id,
+      username: user.username,
+      role: user.role,
+      isActive: user.isActive,
+    };
+  }
+
+  private async toDeletedUser(userPromise: Promise<User>) {
+    const user = await userPromise;
+    return {
+      id: user.id,
+      username: user.username,
+      role: user.role,
+      isActive: user.isActive,
+      deletedAt: user.deletedAt,
+    };
   }
 
   // Las rutas literales (search, by-username) van antes de ':id'.
@@ -197,6 +302,29 @@ export class UsersController {
     return this.usersService.findPublicByUsername(username);
   }
 
+  @Get('stats')
+  @UseGuards(JwtAuthGuard, SuperAdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: '[Superadmin] Obtener estadÃ­sticas del resumen' })
+  @ApiOkResponse({
+    schema: {
+      example: {
+        totalUsers: 0,
+        approvedSellers: 0,
+        activeCommunities: 0,
+        activeProducts: 0,
+        pendingReports: 0,
+      },
+    },
+  })
+  @ApiForbiddenResponse({
+    description: 'Requiere permisos de superadministrador',
+  })
+  @ApiUnauthorizedResponse({ description: 'Se requiere autenticaciÃ³n' })
+  getStats() {
+    return this.usersService.getStats();
+  }
+
   @Get(':id')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
@@ -211,7 +339,7 @@ export class UsersController {
   ) {
     const requester = await this.usersService.findById(request.user.userId);
     if (requester.role === UserRole.SUPERADMIN) {
-      return this.usersService.findById(id);
+      return this.usersService.findAdminById(id);
     }
     return this.usersService.findPublicById(id);
   }

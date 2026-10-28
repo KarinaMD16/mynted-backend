@@ -184,6 +184,7 @@ export class ReviewsService {
 
     const [reviews, total] = await this.reviewRepository.findAndCount({
       where: { productId },
+      withDeleted: true,
       relations: { author: true },
       order: { createdAt: 'DESC', id: 'DESC' },
       skip: (query.page - 1) * query.limit,
@@ -300,6 +301,7 @@ export class ReviewsService {
   private async findOneMapped(id: number, viewerId: string) {
     const review = await this.reviewRepository.findOneOrFail({
       where: { id },
+      withDeleted: true,
       relations: { author: true },
     });
     const displays = await this.cosmeticsService.getEffectiveSummaryForUsers([

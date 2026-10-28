@@ -90,16 +90,25 @@ export class AuthService {
     provider: OAuthProvider,
     profile: SocialProfile,
   ): Promise<{ user: User; isNewUser: boolean }> {
-    const existingLink = await this.usersService.findByOAuthAccount(
-      provider,
-      profile.providerUserId,
-    );
+    const existingLink =
+      await this.usersService.findByOAuthAccountIncludingDeleted(
+        provider,
+        profile.providerUserId,
+      );
     if (existingLink) {
+      if (existingLink.deletedAt || !existingLink.isActive) {
+        throw new UnauthorizedException('La cuenta estÃ¡ desactivada');
+      }
       return { user: existingLink, isNewUser: false };
     }
 
-    const existingByEmail = await this.usersService.findByEmail(profile.email);
+    const existingByEmail = await this.usersService.findByEmailIncludingDeleted(
+      profile.email,
+    );
     if (existingByEmail) {
+      if (existingByEmail.deletedAt || !existingByEmail.isActive) {
+        throw new UnauthorizedException('La cuenta estÃ¡ desactivada');
+      }
       await this.usersService.linkOAuthAccount(
         existingByEmail.id,
         provider,
@@ -129,6 +138,9 @@ export class AuthService {
    * usuario recién registrado.
    */
   buildSession(user: User) {
+    if (user.isActive === false || user.deletedAt) {
+      throw new UnauthorizedException('La cuenta está desactivada');
+    }
     const payload = { sub: user.id, email: user.email };
     const accessToken = this.jwtService.sign(payload);
 
@@ -151,7 +163,7 @@ export class AuthService {
   async refreshSession(userId: string) {
     const user = await this.usersService.findById(userId).catch(() => null);
 
-    if (!user || !user.isActive) {
+    if (!user || !user.isActive || user.deletedAt) {
       throw new UnauthorizedException('Sesión inválida');
     }
 

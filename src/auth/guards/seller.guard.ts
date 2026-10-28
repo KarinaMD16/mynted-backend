@@ -5,7 +5,10 @@ import {
   Injectable,
 } from '@nestjs/common';
 import { UsersService } from '../../users/users.service';
-import { UserRole } from '../../users/entities/user.entity';
+import {
+  SellerRequestStatus,
+  UserRole,
+} from '../../users/entities/user.entity';
 import { AuthenticatedRequest } from '../types/authenticated-request';
 
 /**
@@ -22,7 +25,10 @@ export class SellerGuard implements CanActivate {
     const req = context.switchToHttp().getRequest<AuthenticatedRequest>();
     const user = await this.usersService.findById(req.user.userId);
 
-    if (user.role !== UserRole.SELLER) {
+    if (
+      user.role !== UserRole.SELLER ||
+      user.sellerRequestStatus !== SellerRequestStatus.APPROVED
+    ) {
       throw new ForbiddenException('Requiere ser un vendedor aprobado');
     }
 

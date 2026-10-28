@@ -9,6 +9,7 @@ import {
 } from 'typeorm';
 import { CommunityProfile } from './community-profile.entity';
 import { Post } from './post.entity';
+import { User } from '../../users/entities/user.entity';
 
 @Entity('reply')
 export class Reply {
@@ -33,6 +34,26 @@ export class Reply {
 
   @Column({ name: 'community_profile_id' })
   communityProfileId!: number;
+
+  @Column({ name: 'is_hidden', type: 'boolean', default: false })
+  isHidden!: boolean;
+
+  @Column({
+    name: 'hidden_at',
+    type: 'timestamp with time zone',
+    nullable: true,
+  })
+  hiddenAt!: Date | null;
+
+  @Column({ name: 'hidden_by_user_id', type: 'uuid', nullable: true })
+  hiddenByUserId!: string | null;
+
+  @ManyToOne(() => User, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'hidden_by_user_id', referencedColumnName: 'id' })
+  hiddenByUser!: User | null;
+
+  @Column({ name: 'hidden_reason', type: 'text', nullable: true })
+  hiddenReason!: string | null;
 
   @ManyToOne(() => CommunityProfile, { nullable: false, onDelete: 'CASCADE' })
   @JoinColumn({

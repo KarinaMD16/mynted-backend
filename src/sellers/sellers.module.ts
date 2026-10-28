@@ -9,12 +9,16 @@ import { SellersController } from './sellers.controller';
 import { SellerCommissionController } from './seller-commission.controller';
 import { SellerGuard } from '../auth/guards/seller.guard';
 import { PaymentsModule } from '../payments/payments.module';
+import { ModerationActionsModule } from '../moderation-actions/moderation-actions.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Seller, PaymentInfo]),
     UsersModule,
     PaymentsModule,
+    ModerationActionsModule,
+    NotificationsModule,
   ],
   providers: [SellersService, SuperAdminGuard, SellerGuard],
   controllers: [SellersController, SellerCommissionController],

@@ -23,6 +23,8 @@ import { ProductsController } from './products.controller';
 import { ReviewsController } from './reviews.controller';
 import { ReviewsService } from './reviews.service';
 import { ProductsService } from './products.service';
+import { ModerationActionsModule } from '../moderation-actions/moderation-actions.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
@@ -46,6 +48,8 @@ import { ProductsService } from './products.service';
     PricingModule,
     ProStatusModule,
     CosmeticsModule,
+    ModerationActionsModule,
+    NotificationsModule,
   ],
   controllers: [ProductsController, ReviewsController],
   providers: [ProductsService, ReviewsService, SellerGuard],

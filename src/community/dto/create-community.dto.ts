@@ -7,7 +7,9 @@ import {
   IsBoolean,
   IsInt,
   IsNotEmpty,
+  IsOptional,
   IsString,
+  IsUUID,
   Matches,
   Min,
 } from 'class-validator';
@@ -75,6 +77,11 @@ export function parseIntegerArray(value: unknown): unknown {
 }
 
 export class CreateCommunityDto {
+  @ApiProperty({ example: 'uuid-del-owner', required: false })
+  @IsOptional()
+  @IsUUID()
+  ownerId?: string;
+
   @ApiProperty({ example: 'My Little Pony Collectors MX' })
   @IsString()
   @IsNotEmpty()

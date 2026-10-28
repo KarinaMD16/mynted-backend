@@ -12,6 +12,7 @@ import { AuthenticatedRequest } from '../../auth/types/authenticated-request';
 import { COMMUNITY_ROLES_KEY } from '../decorators/require-community-role.decorator';
 import { CommunityProfile } from '../entities/community-profile.entity';
 import { Community } from '../entities/community.entity';
+import { User, UserRole } from '../../users/entities/user.entity';
 
 /**
  * Debe usarse después de JwtAuthGuard (@UseGuards(JwtAuthGuard, CommunityRoleGuard))
@@ -29,6 +30,8 @@ export class CommunityRoleGuard implements CanActivate {
     private readonly communityProfileRepository: Repository<CommunityProfile>,
     @InjectRepository(Community)
     private readonly communityRepository: Repository<Community>,
+    @InjectRepository(User)
+    private readonly userRepository: Repository<User>,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -43,6 +46,24 @@ export class CommunityRoleGuard implements CanActivate {
 
     const req = context.switchToHttp().getRequest<AuthenticatedRequest>();
     const communityId = Number(req.params.communityId);
+
+    const user = await this.userRepository.findOne({
+      where: { id: req.user.userId },
+      select: { id: true, role: true },
+    });
+    if (!user) {
+      throw new ForbiddenException('Usuario no encontrado');
+    }
+    if (user.role === UserRole.SUPERADMIN) {
+      const community = await this.communityRepository.findOne({
+        where: { id: communityId },
+        select: { id: true },
+      });
+      if (!community) {
+        throw new NotFoundException('Comunidad no encontrada');
+      }
+      return true;
+    }
 
     const profile = await this.communityProfileRepository.findOne({
       where: { userId: req.user.userId, communityId },
