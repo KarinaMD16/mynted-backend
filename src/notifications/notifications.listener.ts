@@ -25,6 +25,11 @@ import {
 } from '../products/product-events';
 import { ReviewCreatedEvent, ReviewEvents } from '../products/review-events';
 import { SellerEvents, SellerRejectedEvent } from '../sellers/seller-events';
+import {
+  SubscriptionEvents,
+  SubscriptionPaymentCompletedEvent,
+} from '../subscriptions/subscription-events';
+import { paymentConfirmedNotification } from '../subscriptions/subscription-notifications';
 import { NotificationInput } from './notifications.service';
 import { NotificationType } from './enums/notification-type.enum';
 import { NotificationsService } from './notifications.service';
@@ -194,6 +199,16 @@ export class NotificationsListener {
         },
       ]);
     });
+  }
+
+  // Pago de Pro aprobado (no se repite al reintentar la misma
+  // Idempotency-Key: el evento solo sale del pago nuevo). Los avisos de
+  // vencimiento los envía SubscriptionsCronService.
+  @OnEvent(SubscriptionEvents.PAYMENT_COMPLETED, { async: true })
+  onSubscriptionPaymentCompleted(event: SubscriptionPaymentCompletedEvent) {
+    return this.safely(SubscriptionEvents.PAYMENT_COMPLETED, () =>
+      this.notificationsService.notify([paymentConfirmedNotification(event)]),
+    );
   }
 
   @OnEvent(SellerEvents.REJECTED, { async: true })

@@ -2,8 +2,10 @@ import { CloudinaryService } from '../cloudinary/cloudinary.service';
 import { CreateTextMessageDto } from './dto/create-text-message.dto';
 import { MessageType } from './enums/message-type.enum';
 
-export type CloudinaryUploadResult = Awaited<
-  ReturnType<CloudinaryService['uploadImage']>
+// Solo se usa la URL de la subida (uploadImage devuelve además publicId, etc.).
+export type CloudinaryUploadResult = Pick<
+  Awaited<ReturnType<CloudinaryService['uploadImage']>>,
+  'url'
 >;
 
 /**

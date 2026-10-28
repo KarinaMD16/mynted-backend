@@ -37,6 +37,9 @@ import { NotificationType } from '../notifications/enums/notification-type.enum'
 import { Review } from '../products/entities/review.entity';
 import { escapeLike } from '../common/escape-like';
 import { PublicSellerDto, PublicUserDto } from './dto/public-user.dto';
+import { CosmeticsService } from '../cosmetics/cosmetics.service';
+import { EffectiveCosmetics } from '../cosmetics/cosmetic-resolve';
+import { FALLBACK_USER_COSMETICS } from '../cosmetics/user-display-summary';
 import { ResponseTimeService } from '../response-time/response-time.service';
 import { SearchUsersQueryDto } from './dto/search-users-query.dto';
 import { GetUsersQueryDto } from './dto/get-users-query.dto';
@@ -61,6 +64,7 @@ export class UsersService {
     @InjectRepository(Seller)
     private readonly sellersRepository: Repository<Seller>,
     private readonly responseTimeService: ResponseTimeService,
+    private readonly cosmeticsService: CosmeticsService,
     @Optional() private readonly eventEmitter?: EventEmitter2,
     @Optional()
     @InjectRepository(Post)
@@ -188,17 +192,28 @@ export class UsersService {
     return user;
   }
 
-  // GET /users/me: la entidad completa (mismos campos de siempre) más el
-  // objeto seller si es vendedor aprobado. Se agrega sobre la instancia para
-  // que el serializador siga ocultando los campos @Exclude.
-  async findMe(id: string): Promise<User & { seller?: PublicSellerDto }> {
+  // GET /users/me: la entidad completa (mismos campos de siempre) más isPro y
+  // el objeto seller si es vendedor aprobado. Se agrega sobre la instancia
+  // para que el serializador siga ocultando los campos @Exclude.
+  async findMe(id: string): Promise<
+    User & {
+      isPro: boolean;
+      cosmetics: EffectiveCosmetics;
+      seller?: PublicSellerDto;
+    }
+  > {
     const user = await this.findById(id);
-    const seller = await this.sellersRepository.findOne({
-      where: { userId: id, isVerified: true },
-    });
-    if (!seller) return user;
+    // Una sola resolución trae el estado Pro y los cosméticos efectivos.
+    const [seller, views] = await Promise.all([
+      this.sellersRepository.findOne({
+        where: { userId: id, isVerified: true },
+      }),
+      this.cosmeticsService.getEffectiveCosmeticsForUsers([id]),
+    ]);
+    const { isPro, cosmetics } = views.get(id) ?? FALLBACK_USER_COSMETICS;
+    if (!seller) return Object.assign(user, { isPro, cosmetics });
     const [publicSeller] = await this.toPublicSellers([seller]);
-    return Object.assign(user, { seller: publicSeller });
+    return Object.assign(user, { isPro, cosmetics, seller: publicSeller });
   }
 
   // Perfil público por id. Las cuentas desactivadas se tratan como inexistentes.
@@ -251,13 +266,21 @@ export class UsersService {
           },
         })
       : [];
-    const publicSellers = await this.toPublicSellers(sellers);
+    // Una resolución por lotes para toda la lista (Pro y cosméticos), no una
+    // por usuario.
+    const [publicSellers, viewsByUser] = await Promise.all([
+      this.toPublicSellers(sellers),
+      this.cosmeticsService.getEffectiveCosmeticsForUsers(
+        users.map((user) => user.id),
+      ),
+    ]);
     const sellerByUserId = new Map(
       sellers.map((seller, index) => [seller.userId, publicSellers[index]]),
     );
 
     return users.map((user) => {
       const seller = sellerByUserId.get(user.id);
+      const view = viewsByUser.get(user.id) ?? FALLBACK_USER_COSMETICS;
       return {
         id: user.id,
         username: user.username,
@@ -266,6 +289,9 @@ export class UsersService {
         location: user.location,
         role: user.role,
         createdAt: user.createdAt,
+        isPro: view.isPro,
+        frame: view.cosmetics.frame,
+        cosmetics: view.cosmetics,
         ...(seller ? { seller } : {}),
       };
     });

@@ -13,6 +13,9 @@ describe('ProductsService.findDetail', () => {
   let service: ProductsService;
   let productRepository: { findOne: jest.Mock };
   let favoriteRepository: { find: jest.Mock };
+  let proStatusService: { isPro: jest.Mock };
+  let cosmeticsService: { getEffectiveSummaryForUsers: jest.Mock };
+  let dataSource: { query: jest.Mock };
   let reviewsService: {
     getProductRating: jest.Mock;
     getReviewStatus: jest.Mock;
@@ -55,6 +58,22 @@ describe('ProductsService.findDetail', () => {
           new Map([[7, { ratingAverage: 4.7, reviewsCount: 12 }]]),
         ),
     };
+    proStatusService = { isPro: jest.fn().mockResolvedValue(false) };
+    cosmeticsService = {
+      getEffectiveSummaryForUsers: jest.fn().mockResolvedValue(
+        new Map([
+          [
+            ownerId,
+            {
+              isPro: false,
+              frame: { code: 'frame_default', assetUrl: null },
+            },
+          ],
+        ]),
+      ),
+    };
+    // ids de los destacados efectivos (ninguno por defecto)
+    dataSource = { query: jest.fn().mockResolvedValue([]) };
     const repo = {} as Repository<never>;
 
     service = new ProductsService(
@@ -69,8 +88,10 @@ describe('ProductsService.findDetail', () => {
       usersService as unknown as UsersService,
       reviewsService as unknown as ReviewsService,
       {} as never,
-      {} as never,
+      dataSource as never,
       {} as PriceDisplayService,
+      proStatusService as never,
+      cosmeticsService as never,
     );
   });
 
@@ -94,10 +115,46 @@ describe('ProductsService.findDetail', () => {
       displayName: 'Funko Corner',
       isVerified: true,
       photoUrl: 'https://cdn/a.png',
+      isPro: false,
+      frame: { code: 'frame_default', assetUrl: null },
       ratingAverage: 4.7,
       reviewsCount: 12,
     });
     expect(detail.seller).not.toHaveProperty('canComment');
+  });
+
+  it('isFeatured es el destacado efectivo del producto (una sola consulta)', async () => {
+    dataSource.query.mockResolvedValue([{ id: 22 }]);
+
+    const featured = await service.findDetail(22, viewerId);
+
+    expect(featured.isFeatured).toBe(true);
+    expect(dataSource.query).toHaveBeenCalledTimes(1);
+    expect((dataSource.query.mock.calls as unknown[][])[0][1]).toEqual([[22]]);
+
+    dataSource.query.mockResolvedValue([]);
+    expect((await service.findDetail(22, viewerId)).isFeatured).toBe(false);
+  });
+
+  it('el detalle no expone la preferencia featuredAt', async () => {
+    const detail = await service.findDetail(22, viewerId);
+
+    expect(detail).not.toHaveProperty('featuredAt');
+  });
+
+  it('seller.isPro y seller.frame reflejan el Pro vigente y el marco efectivo del dueño', async () => {
+    const gold = { code: 'frame_gold', assetUrl: 'https://cdn/gold.png' };
+    cosmeticsService.getEffectiveSummaryForUsers.mockResolvedValue(
+      new Map([[ownerId, { isPro: true, frame: gold }]]),
+    );
+
+    const detail = await service.findDetail(22, viewerId);
+
+    expect(cosmeticsService.getEffectiveSummaryForUsers).toHaveBeenCalledWith([
+      ownerId,
+    ]);
+    expect(detail.seller.isPro).toBe(true);
+    expect(detail.seller.frame).toEqual(gold);
   });
 
   it('pasa la sesión tal cual: sin sesión la regla recibe undefined', async () => {

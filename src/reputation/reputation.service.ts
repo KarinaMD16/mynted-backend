@@ -2,6 +2,8 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { BadgesService } from '../badges/badges.service';
+import { CosmeticsService } from '../cosmetics/cosmetics.service';
+import { FALLBACK_USER_DISPLAY } from '../cosmetics/user-display-summary';
 import { Seller } from '../sellers/entities/seller.entity';
 import { User } from '../users/entities/user.entity';
 import { UsersService } from '../users/users.service';
@@ -19,6 +21,7 @@ export class ReputationService {
     private readonly sellersRepository: Repository<Seller>,
     private readonly usersService: UsersService,
     private readonly badgesService: BadgesService,
+    private readonly cosmeticsService: CosmeticsService,
   ) {}
 
   // Reputación pública de un usuario. Las cuentas desactivadas se tratan como
@@ -30,19 +33,23 @@ export class ReputationService {
     });
     if (!exists) throw new NotFoundException('Usuario no encontrado');
 
-    const [seller, badges] = await Promise.all([
+    const [seller, badges, displays] = await Promise.all([
       // Un solicitante pendiente o rechazado responde como usuario sin tienda.
       this.sellersRepository.findOne({
         where: { userId, isVerified: true },
         select: { sellerId: true, completedSalesCount: true },
       }),
       this.badgesService.findUserBadges(userId),
+      this.cosmeticsService.getEffectiveSummaryForUsers([userId]),
     ]);
+    const { isPro, frame } = displays.get(userId) ?? FALLBACK_USER_DISPLAY;
 
     if (!seller) {
       return {
         userId,
         isSeller: false,
+        isPro,
+        frame,
         ratingAverage: null,
         reviewsCount: 0,
         completedSalesCount: 0,
@@ -60,6 +67,8 @@ export class ReputationService {
     return {
       userId,
       isSeller: true,
+      isPro,
+      frame,
       ratingAverage: rating?.ratingAverage ?? null,
       reviewsCount: rating?.reviewsCount ?? 0,
       completedSalesCount: seller.completedSalesCount,

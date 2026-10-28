@@ -1,11 +1,29 @@
 import { ForbiddenException } from '@nestjs/common';
 import { Repository } from 'typeorm';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
+import { CosmeticsService } from '../cosmetics/cosmetics.service';
 import { ResponseTimeService } from '../response-time/response-time.service';
 import { Seller } from '../sellers/entities/seller.entity';
 import { UserOAuthAccount } from './entities/user-oauth-account.entity';
 import { User } from './entities/user.entity';
 import { UsersService } from './users.service';
+
+const DEFAULT_COSMETICS = {
+  banner: {
+    source: 'default',
+    code: 'banner_default',
+    url: null,
+    staticUrl: null,
+    isAnimated: false,
+  },
+  gooseSkin: { code: 'goose_default', assetUrl: null },
+  frame: { code: 'frame_default', assetUrl: null },
+};
+
+const view = (isPro: boolean, cosmetics: object) => ({
+  isPro,
+  cosmetics,
+});
 
 describe('UsersService', () => {
   let service: UsersService;
@@ -15,6 +33,7 @@ describe('UsersService', () => {
   };
   let cloudinaryService: { uploadImage: jest.Mock };
   let responseTimeService: { getForUsers: jest.Mock };
+  let cosmeticsService: { getEffectiveCosmeticsForUsers: jest.Mock };
 
   beforeEach(() => {
     usersRepository = {
@@ -22,6 +41,13 @@ describe('UsersService', () => {
       save: jest.fn((user: User) => Promise.resolve(user)),
     };
     cloudinaryService = { uploadImage: jest.fn() };
+    cosmeticsService = {
+      getEffectiveCosmeticsForUsers: jest.fn((ids: string[]) =>
+        Promise.resolve(
+          new Map(ids.map((id) => [id, view(false, DEFAULT_COSMETICS)])),
+        ),
+      ),
+    };
     responseTimeService = {
       getForUsers: jest
         .fn()
@@ -36,6 +62,7 @@ describe('UsersService', () => {
       cloudinaryService as unknown as CloudinaryService,
       {} as Repository<Seller>,
       responseTimeService as unknown as ResponseTimeService,
+      cosmeticsService as unknown as CosmeticsService,
     );
   });
 
@@ -58,6 +85,7 @@ describe('UsersService', () => {
         cloudinaryService as unknown as CloudinaryService,
         sellersRepository as unknown as Repository<Seller>,
         responseTimeService as unknown as ResponseTimeService,
+        cosmeticsService as unknown as CosmeticsService,
       );
       jest
         .spyOn(publicService, 'getSellerRatings')
@@ -99,6 +127,88 @@ describe('UsersService', () => {
       expect(responseTimeService.getForUsers).toHaveBeenCalledWith([
         'seller-id',
       ]);
+    });
+
+    it('marca isPro y frame por usuario con una sola resolución para toda la lista', async () => {
+      const { publicService } = build([approvedSeller]);
+      const gold = {
+        ...DEFAULT_COSMETICS,
+        frame: { code: 'frame_gold', assetUrl: 'https://cdn/gold.png' },
+      };
+      cosmeticsService.getEffectiveCosmeticsForUsers.mockResolvedValue(
+        new Map([
+          ['seller-id', view(false, DEFAULT_COSMETICS)],
+          ['otro-id', view(true, gold)],
+          ['tercero-id', view(false, DEFAULT_COSMETICS)],
+        ]),
+      );
+
+      const result = await publicService.toPublicUsers([
+        { id: 'seller-id', username: 'karina' } as User,
+        { id: 'otro-id', username: 'otro' } as User,
+        { id: 'tercero-id', username: 'tercero' } as User,
+      ]);
+
+      expect(result.map((user) => [user.username, user.isPro])).toEqual([
+        ['karina', false],
+        ['otro', true],
+        ['tercero', false],
+      ]);
+      expect(result.map((user) => user.frame.code)).toEqual([
+        'frame_default',
+        'frame_gold',
+        'frame_default',
+      ]);
+      expect(
+        cosmeticsService.getEffectiveCosmeticsForUsers,
+      ).toHaveBeenCalledTimes(1);
+      expect(
+        cosmeticsService.getEffectiveCosmeticsForUsers,
+      ).toHaveBeenCalledWith(['seller-id', 'otro-id', 'tercero-id']);
+    });
+
+    it('un usuario ausente del lote sale con los valores por defecto', async () => {
+      const { publicService } = build([]);
+      cosmeticsService.getEffectiveCosmeticsForUsers.mockResolvedValue(
+        new Map(),
+      );
+
+      const [user] = await publicService.toPublicUsers([
+        { id: 'fantasma', username: 'fantasma' } as User,
+      ]);
+
+      expect(user.isPro).toBe(false);
+      expect(user.frame).toEqual({ code: 'frame_default', assetUrl: null });
+    });
+
+    it('agrega los cosméticos efectivos con una resolución para toda la lista', async () => {
+      const { publicService } = build([approvedSeller]);
+      const custom = {
+        ...DEFAULT_COSMETICS,
+        banner: { ...DEFAULT_COSMETICS.banner, source: 'custom' },
+      };
+      cosmeticsService.getEffectiveCosmeticsForUsers.mockResolvedValue(
+        new Map([
+          ['seller-id', view(false, DEFAULT_COSMETICS)],
+          ['otro-id', view(true, custom)],
+        ]),
+      );
+
+      const result = await publicService.toPublicUsers([
+        { id: 'seller-id', username: 'karina' } as User,
+        { id: 'otro-id', username: 'otro' } as User,
+      ]);
+
+      expect(result.map((user) => user.cosmetics)).toEqual([
+        DEFAULT_COSMETICS,
+        custom,
+      ]);
+      expect(
+        cosmeticsService.getEffectiveCosmeticsForUsers,
+      ).toHaveBeenCalledTimes(1);
+      expect(
+        cosmeticsService.getEffectiveCosmeticsForUsers,
+      ).toHaveBeenCalledWith(['seller-id', 'otro-id']);
     });
 
     it('un solicitante pendiente o rechazado sale sin objeto seller', async () => {
@@ -217,6 +327,7 @@ describe('UsersService', () => {
         cloudinaryService as unknown as CloudinaryService,
         sellersRepository as unknown as Repository<Seller>,
         responseTimeService as unknown as ResponseTimeService,
+        cosmeticsService as unknown as CosmeticsService,
       );
       jest.spyOn(meService, 'getSellerRatings').mockResolvedValue(new Map());
 
@@ -239,6 +350,58 @@ describe('UsersService', () => {
       });
     });
 
+    it('agrega isPro a la entidad, también sin tienda', async () => {
+      const user = Object.assign(new User(), { id: 'pro-id' });
+      usersRepository.findOne.mockResolvedValue(user);
+      cosmeticsService.getEffectiveCosmeticsForUsers.mockResolvedValue(
+        new Map([['pro-id', view(true, DEFAULT_COSMETICS)]]),
+      );
+      const meService = new UsersService(
+        usersRepository as unknown as Repository<User>,
+        {} as Repository<UserOAuthAccount>,
+        cloudinaryService as unknown as CloudinaryService,
+        {
+          findOne: jest.fn().mockResolvedValue(null),
+        } as unknown as Repository<Seller>,
+        responseTimeService as unknown as ResponseTimeService,
+        cosmeticsService as unknown as CosmeticsService,
+      );
+
+      const me = await meService.findMe('pro-id');
+
+      expect(me).toBeInstanceOf(User);
+      expect(me.isPro).toBe(true);
+      expect(
+        cosmeticsService.getEffectiveCosmeticsForUsers,
+      ).toHaveBeenCalledWith(['pro-id']);
+    });
+
+    it('agrega los cosméticos efectivos a la entidad', async () => {
+      const user = Object.assign(new User(), { id: 'pro-id' });
+      usersRepository.findOne.mockResolvedValue(user);
+      cosmeticsService.getEffectiveCosmeticsForUsers.mockResolvedValue(
+        new Map([['pro-id', view(true, DEFAULT_COSMETICS)]]),
+      );
+      const meService = new UsersService(
+        usersRepository as unknown as Repository<User>,
+        {} as Repository<UserOAuthAccount>,
+        cloudinaryService as unknown as CloudinaryService,
+        {
+          findOne: jest.fn().mockResolvedValue(null),
+        } as unknown as Repository<Seller>,
+        responseTimeService as unknown as ResponseTimeService,
+        cosmeticsService as unknown as CosmeticsService,
+      );
+
+      const me = await meService.findMe('pro-id');
+
+      expect(me.cosmetics).toEqual(DEFAULT_COSMETICS);
+      // Una sola resolución trae el estado Pro y los cosméticos.
+      expect(
+        cosmeticsService.getEffectiveCosmeticsForUsers,
+      ).toHaveBeenCalledTimes(1);
+    });
+
     it('sin tienda aprobada devuelve la entidad sin objeto seller', async () => {
       const user = Object.assign(new User(), { id: 'buyer-id' });
       usersRepository.findOne.mockResolvedValue(user);
@@ -250,11 +413,13 @@ describe('UsersService', () => {
           findOne: jest.fn().mockResolvedValue(null),
         } as unknown as Repository<Seller>,
         responseTimeService as unknown as ResponseTimeService,
+        cosmeticsService as unknown as CosmeticsService,
       );
 
       const me = await meService.findMe('buyer-id');
 
       expect(me).toBe(user);
+      expect(me.isPro).toBe(false);
       expect(me).not.toHaveProperty('seller');
       expect(responseTimeService.getForUsers).not.toHaveBeenCalled();
     });
@@ -286,6 +451,7 @@ describe('UsersService', () => {
         cloudinaryService as unknown as CloudinaryService,
         sellersRepository as unknown as Repository<Seller>,
         responseTimeService as unknown as ResponseTimeService,
+        cosmeticsService as unknown as CosmeticsService,
       );
       return { ratingsService, qb };
     };

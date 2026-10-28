@@ -19,6 +19,7 @@ import { ConversationsModule } from './conversations/conversations.module';
 import { ReputationModule } from './reputation/reputation.module';
 import { SellersPublicModule } from './sellers-public/sellers-public.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { SubscriptionsModule } from './subscriptions/subscriptions.module';
 import { ReportsModule } from './reports/reports.module';
 import { ModerationModule } from './moderation/moderation.module';
 import { ModerationActionsModule } from './moderation-actions/moderation-actions.module';
@@ -65,6 +66,7 @@ import { ModerationActionsModule } from './moderation-actions/moderation-actions
     ReputationModule,
     SellersPublicModule,
     NotificationsModule,
+    SubscriptionsModule,
     ReportsModule,
     ModerationModule,
     ModerationActionsModule,

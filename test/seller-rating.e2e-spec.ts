@@ -85,16 +85,21 @@ describe('Rating del vendedor (e2e)', () => {
       {} as CloudinaryService,
       repo(Seller),
       {} as ResponseTimeService,
+      {} as never,
     );
     reputationService = new ReputationService(
       repo(User),
       repo(Seller),
       usersService,
       { findUserBadges: () => Promise.resolve([]) } as unknown as BadgesService,
+      {
+        getEffectiveSummaryForUsers: () => Promise.resolve(new Map()),
+      } as never,
     );
     reviewsService = new ReviewsService(
       repo(Review),
       repo(Product),
+      {} as never,
       {} as never,
     );
 

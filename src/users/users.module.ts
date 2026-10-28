@@ -8,6 +8,7 @@ import { UsersController } from './users.controller';
 import { CloudinaryModule } from '../cloudinary/cloudinary.module';
 import { SuperAdminGuard } from '../auth/guards/super-admin.guard';
 import { AuthModule } from '../auth/auth.module';
+import { CosmeticsModule } from '../cosmetics/cosmetics.module';
 import { ResponseTimeModule } from '../response-time/response-time.module';
 import { Post } from '../community/entities/post.entity';
 import { Reply } from '../community/entities/reply.entity';
@@ -24,6 +25,7 @@ import { Report } from '../reports/entities/report.entity';
     CloudinaryModule,
     forwardRef(() => AuthModule),
     ResponseTimeModule,
+    CosmeticsModule,
     forwardRef(() => ModerationModule),
     NotificationsModule,
   ],

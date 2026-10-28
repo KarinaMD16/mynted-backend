@@ -21,6 +21,10 @@ import {
 } from 'typeorm';
 import { escapeLike } from '../common/escape-like';
 import { UsdRates } from '../pricing/currency';
+import { ProStatusService } from '../pro-status/pro-status.service';
+import { CosmeticsService } from '../cosmetics/cosmetics.service';
+import { EffectiveAsset } from '../cosmetics/cosmetic-resolve';
+import { FALLBACK_USER_DISPLAY } from '../cosmetics/user-display-summary';
 import {
   PriceDisplayService,
   WithDisplayPrice,
@@ -62,6 +66,16 @@ import { ProductTag } from './entities/product-tag.entity';
 import { ProductImage } from './entities/product-image.entity';
 import { ProductRelated } from './entities/product-related.entity';
 import { ProductView } from './entities/product-view.entity';
+import { computeFeaturedPage } from './featured-pagination';
+import {
+  MAX_FEATURED_PER_SELLER,
+  cappedFeaturedCondition,
+  effectiveFeaturedCondition,
+} from './featured-products';
+import {
+  FeaturedProductResponseDto,
+  FeaturedSummaryDto,
+} from './dto/featured-product.dto';
 import {
   PUBLIC_COMMUNITY_ALTERNATIVES,
   PUBLIC_PRODUCT_WHERE,
@@ -119,6 +133,10 @@ export interface TagProductCard {
     displayName: string;
     photoUrl: string | null;
     isVerified: boolean;
+    // Pro vigente y marco efectivo del dueño; findShop los completa por
+    // lotes.
+    isPro: boolean;
+    frame: EffectiveAsset;
   };
 }
 
@@ -233,6 +251,11 @@ export interface MyProductCard {
   condition: ProductCondition | null;
   tags: { tagId: number; name: string }[];
   community: { id: number; name: string } | null;
+  // Destacado (Pro): featuredEnabled es la preferencia del vendedor; isFeatured,
+  // que de verdad se eleva ahora. Si featuredEnabled es true e isFeatured false,
+  // el destacado está "en pausa" (Pro vencido, producto no activo, etc.).
+  featuredEnabled: boolean;
+  isFeatured: boolean;
 }
 
 export interface MyProductsSection {
@@ -278,6 +301,9 @@ export type ProductListItem = WithDisplayPrice<
     finalPrice: number;
     isAvailable: boolean;
     isSaved: boolean;
+    // Destacado efectivo (Pro): solo lo traen GET /products y la lista de
+    // productos de una tienda.
+    isFeatured?: boolean;
   }
 >;
 
@@ -316,6 +342,8 @@ export class ProductsService {
     private readonly cloudinaryService: CloudinaryService,
     private readonly dataSource: DataSource,
     private readonly priceDisplay: PriceDisplayService,
+    private readonly proStatusService: ProStatusService,
+    private readonly cosmeticsService: CosmeticsService,
     @Optional()
     private readonly eventEmitter?: EventEmitter2,
     @Optional()
@@ -496,18 +524,69 @@ export class ProductsService {
     const rates = await this.applyPriceQuery(qb, query, displayCurrency, query);
 
     const total = await qb.getCount();
-    const rows = await qb
-      .select('product.id', 'id')
-      .offset((query.page - 1) * query.limit)
-      .limit(query.limit)
-      .getRawMany<{ id: number }>();
-    const data = await this.findInOrder(
-      rows.map((row) => row.id),
-      { productTags: { tag: true } },
-    );
+
+    // Destacados efectivos (Pro) que cumplen los mismos filtros. Un listado de
+    // vendidos no tiene ninguno: solo los activos se elevan.
+    const featuredQb = qb.clone().andWhere(cappedFeaturedCondition('product'));
+    const featuredTotal =
+      total > 0 && query.status !== ProductStatus.SOLD
+        ? await featuredQb.getCount()
+        : 0;
+
+    let ids: number[];
+    let featuredIds = new Set<number>();
+    if (featuredTotal === 0) {
+      // Sin destacados el listado es exactamente el de siempre.
+      const rows = await qb
+        .select('product.id', 'id')
+        .offset((query.page - 1) * query.limit)
+        .limit(query.limit)
+        .getRawMany<{ id: number }>();
+      ids = rows.map((row) => row.id);
+    } else {
+      // Dos consultas de ids sobre el mismo QueryBuilder ya filtrado: los
+      // destacados (más recientes primero) y los que no lo son (con el sort
+      // del usuario). La cuota por página decide cuántos de cada uno.
+      const slots = computeFeaturedPage({
+        page: query.page,
+        limit: query.limit,
+        featuredTotal,
+        regularTotal: total - featuredTotal,
+      });
+      const [featuredRows, regularRows] = await Promise.all([
+        slots.featuredCount > 0
+          ? featuredQb
+              .orderBy('product.featuredAt', 'DESC')
+              .addOrderBy('product.id', 'DESC')
+              .select('product.id', 'id')
+              .offset(slots.featuredOffset)
+              .limit(slots.featuredCount)
+              .getRawMany<{ id: number }>()
+          : Promise.resolve([]),
+        slots.regularCount > 0
+          ? qb
+              .clone()
+              .andWhere(`NOT ${cappedFeaturedCondition('product')}`)
+              .select('product.id', 'id')
+              .offset(slots.regularOffset)
+              .limit(slots.regularCount)
+              .getRawMany<{ id: number }>()
+          : Promise.resolve([]),
+      ]);
+      featuredIds = new Set(featuredRows.map((row) => row.id));
+      ids = [...featuredRows, ...regularRows].map((row) => row.id);
+    }
+
+    const data = await this.findInOrder(ids, { productTags: { tag: true } });
 
     return {
-      data: await this.withSaved(data, viewerId, displayCurrency, rates),
+      data: await this.withSaved(
+        data,
+        viewerId,
+        displayCurrency,
+        rates,
+        featuredIds,
+      ),
       pagination: this.buildPagination(query.page, query.limit, total),
     };
   }
@@ -759,9 +838,10 @@ export class ProductsService {
       (product) => this.toTagProductCard(product),
     );
 
-    // isSaved y tasas: una sola consulta de cada uno para toda la página.
+    // isSaved, tasas, isPro y marco: una sola resolución de cada uno para
+    // toda la página.
     const cards = sections.flatMap((section) => section.products);
-    const [saved, usdRates] = await Promise.all([
+    const [saved, usdRates, displays] = await Promise.all([
       this.getSavedProductIds(
         userId,
         cards.map((card) => card.id),
@@ -771,6 +851,9 @@ export class ProductsService {
           displayCurrency,
           cards.map((card) => card.currency),
         ),
+      this.cosmeticsService.getEffectiveSummaryForUsers(
+        cards.map((card) => card.seller.userId),
+      ),
     ]);
 
     return {
@@ -781,6 +864,10 @@ export class ProductsService {
           : ('popular' as const),
         products: section.products.map((card) => ({
           ...card,
+          seller: {
+            ...card.seller,
+            ...(displays.get(card.seller.userId) ?? FALLBACK_USER_DISPLAY),
+          },
           isSaved: saved.has(card.id),
           ...this.priceDisplay.toDisplay(card, displayCurrency, usdRates),
         })),
@@ -914,6 +1001,7 @@ export class ProductsService {
         displayName: product.seller.displayName,
         photoUrl: product.seller.user.photoUrl ?? null,
         isVerified: product.seller.isVerified,
+        ...FALLBACK_USER_DISPLAY,
       },
     };
   }
@@ -957,6 +1045,20 @@ export class ProductsService {
       { productTags: { tag: true }, community: true },
       (product) => this.toMyProductCard(product),
     );
+
+    // Estado de destacado de toda la página con una sola consulta.
+    const featured = await this.findFeaturedState(
+      sections.flatMap((section) =>
+        section.products.map((product) => product.id),
+      ),
+    );
+    for (const section of sections) {
+      section.products = section.products.map((product) => ({
+        ...product,
+        featuredEnabled: featured.has(product.id),
+        isFeatured: featured.get(product.id) === true,
+      }));
+    }
 
     return { totalProducts: matching.length, sections, pagination };
   }
@@ -1015,6 +1117,9 @@ export class ProductsService {
       community: product.community
         ? { id: product.community.id, name: product.community.name }
         : null,
+      // Se completan por lotes en findMine.
+      featuredEnabled: false,
+      isFeatured: false,
     };
   }
 
@@ -1055,12 +1160,19 @@ export class ProductsService {
       throw new NotFoundException('Producto no encontrado');
     }
 
-    const [rating, sellerRatings, saved, reviewStatus] = await Promise.all([
-      this.reviewsService.getProductRating(id),
-      this.usersService.getSellerRatings([product.seller.sellerId]),
-      this.getSavedProductIds(viewerId, [id]),
-      this.reviewsService.getReviewStatus(product, viewerId),
-    ]);
+    const [rating, sellerRatings, saved, reviewStatus, displays, featured] =
+      await Promise.all([
+        this.reviewsService.getProductRating(id),
+        this.usersService.getSellerRatings([product.seller.sellerId]),
+        this.getSavedProductIds(viewerId, [id]),
+        this.reviewsService.getReviewStatus(product, viewerId),
+        this.cosmeticsService.getEffectiveSummaryForUsers([
+          product.seller.userId,
+        ]),
+        this.findEffectiveFeaturedIds([id]),
+      ]);
+    const sellerDisplay =
+      displays.get(product.seller.userId) ?? FALLBACK_USER_DISPLAY;
     const sellerRating = sellerRatings.get(product.seller.sellerId);
     // El user completo se descarta: del vendedor solo sale lo público.
     const { user, ...seller } = product.seller;
@@ -1073,9 +1185,13 @@ export class ProductsService {
           : computeFinalPrice(product.price, product.discountPercent),
       isAvailable: isProductAvailable(product),
       isSaved: saved.has(id),
+      // Destacado efectivo (Pro): lo que de verdad se eleva ahora.
+      isFeatured: featured.has(id),
       seller: {
         ...seller,
         photoUrl: user?.photoUrl ?? null,
+        isPro: sellerDisplay.isPro,
+        frame: sellerDisplay.frame,
         ratingAverage: sellerRating?.ratingAverage ?? null,
         reviewsCount: sellerRating?.reviewsCount ?? 0,
       },
@@ -1634,6 +1750,161 @@ export class ProductsService {
     }
   }
 
+  // ---------------------------------------------------------------------
+  // Destacados (Pro)
+  // ---------------------------------------------------------------------
+
+  // Marca el producto como destacado. Solo el dueño (404 si no existe o no es
+  // suyo), vendedor aprobado con Pro vigente (403), producto activo (409) y
+  // con menos de MAX_FEATURED_PER_SELLER destacados efectivos (409). Es
+  // idempotente: si ya estaba marcado responde igual sin tocar featured_at.
+  async setFeatured(
+    id: number,
+    userId: string,
+  ): Promise<FeaturedProductResponseDto> {
+    const product = await this.findOwnProductForFeatured(id, userId);
+
+    if (!product.seller.isVerified) {
+      throw new ForbiddenException('Requiere ser un vendedor aprobado');
+    }
+    if (!(await this.proStatusService.isPro(userId))) {
+      throw new ForbiddenException(
+        'Destacar productos es exclusivo de Mynted Pro',
+      );
+    }
+    if (product.featuredAt)
+      return this.toFeaturedResponse(id, product.featuredAt);
+    if (product.status !== ProductStatus.ACTIVE) {
+      throw new ConflictException('Solo se pueden destacar productos activos');
+    }
+
+    const featuredAt = await this.dataSource.transaction(async (manager) => {
+      // Serializa los cambios de destacados del mismo vendedor: dos PUT
+      // simultáneos no pueden pasarse del tope.
+      await manager.query(
+        'SELECT pg_advisory_xact_lock(hashtext($1), $2::int)',
+        ['featured', product.sellerId],
+      );
+      const [{ count }] = await manager.query<{ count: number }[]>(
+        `SELECT COUNT(*)::int AS count FROM product
+          WHERE seller_id = $1 AND ${effectiveFeaturedCondition('product')}`,
+        [product.sellerId],
+      );
+      if (count >= MAX_FEATURED_PER_SELLER) {
+        throw new ConflictException(
+          `Ya tienes ${MAX_FEATURED_PER_SELLER} productos destacados. Quita uno para destacar otro`,
+        );
+      }
+      // El UPDATE va en un CTE: un UPDATE ... RETURNING crudo devuelve
+      // [filas, cantidad] y no las filas.
+      const rows = await manager.query<{ featured_at: Date }[]>(
+        `WITH marked AS (
+           UPDATE product SET featured_at = now()
+            WHERE id = $1 AND featured_at IS NULL
+        RETURNING featured_at
+         )
+         SELECT featured_at FROM marked`,
+        [id],
+      );
+      // Otra petición lo marcó entre medias: se conserva su fecha.
+      if (rows.length > 0) return rows[0].featured_at;
+      const [current] = await manager.query<{ featured_at: Date }[]>(
+        'SELECT featured_at FROM product WHERE id = $1',
+        [id],
+      );
+      return current.featured_at;
+    });
+
+    return this.toFeaturedResponse(id, featuredAt);
+  }
+
+  // Quita la preferencia. Solo el dueño; idempotente y sin exigir Pro (se
+  // puede limpiar aunque haya vencido).
+  async unsetFeatured(id: number, userId: string): Promise<void> {
+    await this.findOwnProductForFeatured(id, userId);
+    await this.dataSource.query(
+      'UPDATE product SET featured_at = NULL WHERE id = $1',
+      [id],
+    );
+  }
+
+  // Cuántos destacados efectivos tiene el vendedor (con el recorte al tope).
+  async getFeaturedSummary(userId: string): Promise<FeaturedSummaryDto> {
+    const seller = await this.getSellerOrFail(userId);
+    const [{ count }] = await this.dataSource.query<{ count: number }[]>(
+      `SELECT COUNT(*)::int AS count FROM product
+        WHERE seller_id = $1 AND ${cappedFeaturedCondition('product')}`,
+      [seller.sellerId],
+    );
+    const used = Math.min(count, MAX_FEATURED_PER_SELLER);
+    return {
+      limit: MAX_FEATURED_PER_SELLER,
+      used,
+      remaining: MAX_FEATURED_PER_SELLER - used,
+    };
+  }
+
+  // De entre estos ids, los que se elevan de verdad ahora (con el recorte al
+  // tope por vendedor). Una consulta para toda la lista.
+  async findEffectiveFeaturedIds(ids: number[]): Promise<Set<number>> {
+    if (ids.length === 0) return new Set();
+    const rows = await this.dataSource.query<{ id: number }[]>(
+      `SELECT product.id FROM product
+        WHERE product.id = ANY($1::int[]) AND ${cappedFeaturedCondition('product')}`,
+      [ids],
+    );
+    return new Set(rows.map((row) => row.id));
+  }
+
+  // De entre estos ids, los que tienen la preferencia de destacado: el valor
+  // dice si además se elevan ahora (con el recorte al tope). Una consulta.
+  private async findFeaturedState(
+    ids: number[],
+  ): Promise<Map<number, boolean>> {
+    if (ids.length === 0) return new Map();
+    const rows = await this.dataSource.query<
+      { id: number; effective: boolean }[]
+    >(
+      `SELECT product.id, ${cappedFeaturedCondition('product')} AS effective
+         FROM product
+        WHERE product.id = ANY($1::int[]) AND product.featured_at IS NOT NULL`,
+      [ids],
+    );
+    return new Map(rows.map((row) => [row.id, row.effective]));
+  }
+
+  // 404 tanto si no existe como si es de otro vendedor: no se revela cuál.
+  private async findOwnProductForFeatured(id: number, userId: string) {
+    const product = await this.productRepository.findOne({
+      where: { id },
+      relations: { seller: true },
+      select: {
+        id: true,
+        status: true,
+        sellerId: true,
+        featuredAt: true,
+        seller: { sellerId: true, userId: true, isVerified: true },
+      },
+    });
+    if (!product || product.seller.userId !== userId) {
+      throw new NotFoundException('Producto no encontrado');
+    }
+    return product;
+  }
+
+  private async toFeaturedResponse(
+    id: number,
+    featuredAt: Date,
+  ): Promise<FeaturedProductResponseDto> {
+    const effective = await this.findEffectiveFeaturedIds([id]);
+    return {
+      productId: id,
+      featuredEnabled: true,
+      isFeatured: effective.has(id),
+      featuredAt,
+    };
+  }
+
   // quantity 0 deja agotado (active -> sold); reponer stock lo reactiva
   // (sold -> active). Borradores y pausados conservan su status.
   private applyQuantityChange(
@@ -1862,6 +2133,7 @@ export class ProductsService {
     viewerId: string | undefined,
     displayCurrency: string,
     rates?: UsdRates,
+    featuredIds?: Set<number>,
   ): Promise<ProductListItem[]> {
     const saved = await this.getSavedProductIds(
       viewerId,
@@ -1873,6 +2145,7 @@ export class ProductsService {
         finalPrice: computeFinalPrice(product.price, product.discountPercent),
         isAvailable: isProductAvailable(product),
         isSaved: saved.has(product.id),
+        ...(featuredIds ? { isFeatured: featuredIds.has(product.id) } : {}),
       })),
       displayCurrency,
       rates,

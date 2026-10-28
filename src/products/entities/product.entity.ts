@@ -42,6 +42,11 @@ export enum ProductCondition {
 @Check('CHK_product_quantity_non_negative', '"quantity" >= 0')
 // Listados y conteos por vendedor (tienda, /products/me, ratings).
 @Index('IDX_product_seller_id', ['sellerId'])
+// Solo los que tienen la preferencia de destacado (casi ninguno): lo usan los
+// listados para resolver los destacados efectivos sin recorrer la tabla.
+@Index('IDX_product_featured_at', ['featuredAt'], {
+  where: '"featured_at" IS NOT NULL',
+})
 export class Product {
   @PrimaryGeneratedColumn()
   id!: number;
@@ -167,6 +172,19 @@ export class Product {
     nullable: true,
   })
   publishedAt!: Date | null;
+
+  // Preferencia de destacado (Pro): cuándo se marcó. Se conserva al vender,
+  // desactivar o vencer Pro; que el producto se eleve de verdad lo decide
+  // effectiveFeaturedCondition al leer. select:false evita que salga en los
+  // listados y detalles que devuelven la entidad completa: se expone solo como
+  // isFeatured (efectivo) y featuredEnabled (en /products/me).
+  @Column({
+    name: 'featured_at',
+    type: 'timestamp with time zone',
+    nullable: true,
+    select: false,
+  })
+  featuredAt!: Date | null;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamp with time zone' })
   createdAt!: Date;

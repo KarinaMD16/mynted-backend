@@ -1,3 +1,4 @@
+import { UserDisplaySummary } from '../cosmetics/user-display-summary';
 import { computeFinalPrice } from '../products/product-pricing';
 import { Product, ProductStatus } from '../products/entities/product.entity';
 import {
@@ -23,6 +24,7 @@ export function otherParticipantId(
 export function toParticipantSummary(
   user: { id: string; username: string; photoUrl: string | null },
   seller: { displayName: string; isVerified: boolean } | null,
+  display: UserDisplaySummary,
 ): ParticipantSummaryDto {
   return {
     id: user.id,
@@ -30,6 +32,8 @@ export function toParticipantSummary(
     displayName: seller?.displayName ?? user.username,
     photoUrl: user.photoUrl ?? null,
     isVerified: seller?.isVerified ?? false,
+    isPro: display.isPro,
+    frame: display.frame,
   };
 }
 

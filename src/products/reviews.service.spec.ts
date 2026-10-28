@@ -8,6 +8,7 @@ import { PaymentTransaction } from '../payments/entities/payment-transaction.ent
 import { TransactionStatus } from '../payments/enums/transaction-status.enum';
 import { Product, ProductType } from './entities/product.entity';
 import { Review } from './entities/review.entity';
+import { CosmeticsService } from '../cosmetics/cosmetics.service';
 import { ReviewIneligibility, ReviewsService } from './reviews.service';
 
 describe('ReviewsService', () => {
@@ -67,10 +68,28 @@ describe('ReviewsService', () => {
     transactionRepository = { existsBy: jest.fn() };
     givenState({});
 
+    // Una entrada por cada id pedido, como el cargador real.
+    const cosmeticsService = {
+      getEffectiveSummaryForUsers: jest.fn((ids: string[]) =>
+        Promise.resolve(
+          new Map(
+            ids.map((id) => [
+              id,
+              {
+                isPro: false,
+                frame: { code: 'frame_default', assetUrl: null },
+              },
+            ]),
+          ),
+        ),
+      ),
+    };
+
     service = new ReviewsService(
       reviewRepository as unknown as Repository<Review>,
       productRepository as unknown as Repository<Product>,
       transactionRepository as unknown as Repository<PaymentTransaction>,
+      cosmeticsService as unknown as CosmeticsService,
     );
   });
 
@@ -150,7 +169,13 @@ describe('ReviewsService', () => {
         productId,
         rating: 5,
         comment: 'Excelente',
-        author: { id: buyerId, username: 'comprador', photoUrl: null },
+        author: {
+          id: buyerId,
+          username: 'comprador',
+          photoUrl: null,
+          isPro: false,
+          frame: { code: 'frame_default', assetUrl: null },
+        },
         isMine: true,
       });
     });

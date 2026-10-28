@@ -10,6 +10,7 @@ import {
   ParseIntPipe,
   Patch,
   Post,
+  Put,
   Query,
   Req,
   UploadedFiles,
@@ -21,13 +22,21 @@ import { FileFieldsInterceptor } from '@nestjs/platform-express';
 import {
   ApiBearerAuth,
   ApiBody,
+  ApiConflictResponse,
   ApiConsumes,
+  ApiForbiddenResponse,
+  ApiNoContentResponse,
+  ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
   ApiParam,
   ApiTags,
 } from '@nestjs/swagger';
 import { ProductsService } from './products.service';
+import {
+  FeaturedProductResponseDto,
+  FeaturedSummaryDto,
+} from './dto/featured-product.dto';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { UpdateProductStatusDto } from './dto/update-product-status.dto';
@@ -290,6 +299,59 @@ export class ProductsController {
   })
   countMine(@Req() request: AuthenticatedRequest) {
     return this.productsService.countMineByStatus(request.user.userId);
+  }
+
+  @Get('products/me/featured/summary')
+  @UseGuards(JwtAuthGuard, SellerGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary:
+      'Destacados del vendedor autenticado: tope, cuántos están en uso (efectivos ahora) y cuántos le quedan',
+  })
+  @ApiOkResponse({ type: FeaturedSummaryDto })
+  featuredSummary(@Req() request: AuthenticatedRequest) {
+    return this.productsService.getFeaturedSummary(request.user.userId);
+  }
+
+  @Put('products/:id/featured')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiParam({ name: 'id', type: Number, example: 42 })
+  @ApiOperation({
+    summary:
+      'Destacar un producto propio (vendedor aprobado con Pro vigente; hasta 3 destacados efectivos). Idempotente: si ya estaba destacado responde 200 sin cambiar la fecha',
+  })
+  @ApiOkResponse({ type: FeaturedProductResponseDto })
+  @ApiNotFoundResponse({ description: 'No existe o no es tuyo' })
+  @ApiForbiddenResponse({
+    description: 'No eres vendedor aprobado o no tienes Pro vigente',
+  })
+  @ApiConflictResponse({
+    description: 'El producto no está activo o ya tienes 3 destacados',
+  })
+  setFeatured(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.productsService.setFeatured(id, request.user.userId);
+  }
+
+  @Delete('products/:id/featured')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiParam({ name: 'id', type: Number, example: 42 })
+  @ApiOperation({
+    summary:
+      'Quitar el destacado de un producto propio. Idempotente; no exige Pro',
+  })
+  @ApiNoContentResponse({ description: 'Sin destacado' })
+  @ApiNotFoundResponse({ description: 'No existe o no es tuyo' })
+  async unsetFeatured(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() request: AuthenticatedRequest,
+  ): Promise<void> {
+    await this.productsService.unsetFeatured(id, request.user.userId);
   }
 
   @Get('products')

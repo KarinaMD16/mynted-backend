@@ -1,5 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { BadgeItemDto } from '../../badges/dto/badge-item.dto';
+import { EffectiveAssetDto } from '../../cosmetics/dto/cosmetics-response.dto';
 
 // Cantidad de reseñas por estrellas. Siempre trae las 5 claves (0 si no hay).
 export class RatingDistributionDto {
@@ -32,6 +33,19 @@ export class UserReputationDto {
       'false si el usuario no es vendedor: ratingAverage null y conteos en 0',
   })
   isSeller!: boolean;
+
+  @ApiProperty({
+    example: false,
+    description: 'Tiene Pro vigente (suscripción con endsAt futuro)',
+  })
+  isPro!: boolean;
+
+  @ApiProperty({
+    type: EffectiveAssetDto,
+    description:
+      'Marco del avatar que se aplica ahora (el equipado si tiene derecho a usarlo; si no, el por defecto). Siempre presente',
+  })
+  frame!: EffectiveAssetDto;
 
   @ApiProperty({
     type: Number,

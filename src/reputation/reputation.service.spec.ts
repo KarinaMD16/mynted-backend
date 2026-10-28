@@ -1,11 +1,14 @@
 import { NotFoundException } from '@nestjs/common';
 import { Repository } from 'typeorm';
 import { BadgesService } from '../badges/badges.service';
+import { CosmeticsService } from '../cosmetics/cosmetics.service';
 import { BadgeRarity, BadgeScope } from '../badges/entities/badge.entity';
 import { Seller } from '../sellers/entities/seller.entity';
 import { User } from '../users/entities/user.entity';
 import { UsersService } from '../users/users.service';
 import { ReputationService } from './reputation.service';
+
+const DEFAULT_FRAME = { code: 'frame_default', assetUrl: null };
 
 describe('ReputationService', () => {
   const userId = '6f1c2a9e-1b2c-4d3e-8f90-123456789abc';
@@ -27,6 +30,7 @@ describe('ReputationService', () => {
     getSellerRatingDistribution: jest.Mock;
   };
   let badgesService: { findUserBadges: jest.Mock };
+  let cosmeticsService: { getEffectiveSummaryForUsers: jest.Mock };
 
   beforeEach(() => {
     usersRepository = { existsBy: jest.fn().mockResolvedValue(true) };
@@ -40,12 +44,20 @@ describe('ReputationService', () => {
       getSellerRatingDistribution: jest.fn().mockResolvedValue(new Map()),
     };
     badgesService = { findUserBadges: jest.fn().mockResolvedValue([badge]) };
+    cosmeticsService = {
+      getEffectiveSummaryForUsers: jest
+        .fn()
+        .mockResolvedValue(
+          new Map([[userId, { isPro: false, frame: DEFAULT_FRAME }]]),
+        ),
+    };
 
     service = new ReputationService(
       usersRepository as unknown as Repository<User>,
       sellersRepository as unknown as Repository<Seller>,
       usersService as unknown as UsersService,
       badgesService as unknown as BadgesService,
+      cosmeticsService as unknown as CosmeticsService,
     );
   });
 
@@ -64,6 +76,8 @@ describe('ReputationService', () => {
     await expect(service.getUserReputation(userId)).resolves.toEqual({
       userId,
       isSeller: true,
+      isPro: false,
+      frame: DEFAULT_FRAME,
       ratingAverage: 4.6,
       reviewsCount: 12,
       completedSalesCount: 15,
@@ -83,12 +97,37 @@ describe('ReputationService', () => {
     await expect(service.getUserReputation(userId)).resolves.toEqual({
       userId,
       isSeller: true,
+      isPro: false,
+      frame: DEFAULT_FRAME,
       ratingAverage: null,
       reviewsCount: 0,
       completedSalesCount: 2,
       ratingDistribution: { '1': 0, '2': 0, '3': 0, '4': 0, '5': 0 },
       badges: [badge],
     });
+  });
+
+  it('isPro y frame reflejan el Pro vigente y el marco efectivo, también en quien no es vendedor', async () => {
+    const gold = { code: 'frame_gold', assetUrl: 'https://cdn/gold.png' };
+    cosmeticsService.getEffectiveSummaryForUsers.mockResolvedValue(
+      new Map([[userId, { isPro: true, frame: gold }]]),
+    );
+
+    await expect(service.getUserReputation(userId)).resolves.toMatchObject({
+      isSeller: true,
+      isPro: true,
+      frame: gold,
+    });
+
+    sellersRepository.findOne.mockResolvedValue(null);
+    await expect(service.getUserReputation(userId)).resolves.toMatchObject({
+      isSeller: false,
+      isPro: true,
+      frame: gold,
+    });
+    expect(cosmeticsService.getEffectiveSummaryForUsers).toHaveBeenCalledWith([
+      userId,
+    ]);
   });
 
   it('busca la tienda solo entre vendedores aprobados', async () => {
@@ -108,6 +147,8 @@ describe('ReputationService', () => {
     await expect(service.getUserReputation(userId)).resolves.toEqual({
       userId,
       isSeller: false,
+      isPro: false,
+      frame: DEFAULT_FRAME,
       ratingAverage: null,
       reviewsCount: 0,
       completedSalesCount: 0,

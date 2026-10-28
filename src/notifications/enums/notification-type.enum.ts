@@ -23,6 +23,10 @@ export enum NotificationType {
   SELLER_REQUEST_REJECTED = 'seller_request_rejected',
   SELLER_REVOKED = 'seller_revoked',
   SELLER_RESTORED = 'seller_restored',
+  // Suscripción Pro.
+  SUBSCRIPTION_PAYMENT_CONFIRMED = 'subscription_payment_confirmed',
+  SUBSCRIPTION_EXPIRING_SOON = 'subscription_expiring_soon',
+  SUBSCRIPTION_EXPIRED = 'subscription_expired',
   // Foro.
   POST_REPLIED = 'post_replied',
   REPLY_REPLIED = 'reply_replied',

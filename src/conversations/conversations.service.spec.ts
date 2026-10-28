@@ -4,6 +4,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { DataSource, QueryFailedError, Repository } from 'typeorm';
+import { CosmeticsService } from '../cosmetics/cosmetics.service';
+import { UserDisplaySummary } from '../cosmetics/user-display-summary';
 import { Product, ProductStatus } from '../products/entities/product.entity';
 import {
   ConversationsService,
@@ -24,10 +26,21 @@ describe('ConversationsService', () => {
   };
   const productRepository = { findOne: jest.fn() };
   const dataSource = { query: jest.fn() };
+  const defaultDisplay = (): UserDisplaySummary => ({
+    isPro: false,
+    frame: { code: 'frame_default', assetUrl: null },
+  });
+  // Una entrada por cada id pedido, como el cargador real.
+  const cosmeticsService = {
+    getEffectiveSummaryForUsers: jest.fn((ids: string[]) =>
+      Promise.resolve(new Map(ids.map((id) => [id, defaultDisplay()]))),
+    ),
+  };
   const service = new ConversationsService(
     conversationRepository as unknown as Repository<Conversation>,
     productRepository as unknown as Repository<Product>,
     dataSource as unknown as DataSource,
+    cosmeticsService as unknown as CosmeticsService,
   );
 
   const product = (status = ProductStatus.ACTIVE, isVisible = true) => ({
@@ -308,6 +321,8 @@ describe('ConversationsService', () => {
             displayName: 'Funko Corner CR',
             photoUrl: 'https://cdn/avatar.png',
             isVerified: true,
+            isPro: false,
+            frame: { code: 'frame_default', assetUrl: null },
           },
           product: {
             id: 42,
@@ -381,6 +396,48 @@ describe('ConversationsService', () => {
 
       expect(data[0].lastMessage.type).toBe(MessageType.IMAGE);
       expect(data[0].lastMessage.content).toBeNull();
+    });
+
+    it('marks isPro and the frame per participant with a single batch for the whole page', async () => {
+      cosmeticsService.getEffectiveSummaryForUsers.mockResolvedValueOnce(
+        new Map<string, UserDisplaySummary>([
+          [sellerUserId, defaultDisplay()],
+          [
+            'pro-user',
+            {
+              isPro: true,
+              frame: { code: 'frame_gold', assetUrl: 'https://cdn/gold.png' },
+            },
+          ],
+        ]),
+      );
+      dataSource.query
+        .mockResolvedValueOnce([
+          inboxRow({ id: 15, other_id: sellerUserId }),
+          inboxRow({ id: 16, other_id: 'pro-user' }),
+          inboxRow({ id: 17, other_id: 'pro-user' }),
+        ])
+        .mockResolvedValueOnce([{ total: 3 }]);
+      cosmeticsService.getEffectiveSummaryForUsers.mockClear();
+
+      const { data } = await service.getInbox(buyerId, { page: 1, limit: 20 });
+
+      expect(data.map((item) => item.otherParticipant.isPro)).toEqual([
+        false,
+        true,
+        true,
+      ]);
+      expect(data.map((item) => item.otherParticipant.frame.code)).toEqual([
+        'frame_default',
+        'frame_gold',
+        'frame_gold',
+      ]);
+      expect(
+        cosmeticsService.getEffectiveSummaryForUsers,
+      ).toHaveBeenCalledTimes(1);
+      expect(cosmeticsService.getEffectiveSummaryForUsers).toHaveBeenCalledWith(
+        [sellerUserId, 'pro-user', 'pro-user'],
+      );
     });
 
     it('falls back to username and unverified for a participant without a store', async () => {

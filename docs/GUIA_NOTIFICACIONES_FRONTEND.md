@@ -118,6 +118,11 @@ GET /notifications?page=1&limit=20
 | `seller_request_rejected` | el usuario | `{}` | — |
 | `post_replied` | autor del post | `postId, postTitle, replyId, communityId, communitySlug, authorUsername` | el post, en la respuesta `replyId` |
 | `reply_replied` | autor de la respuesta respondida | lo mismo + `parentReplyId` | ídem |
+| `subscription_payment_confirmed` | quien pagó Pro | `paymentId, period, amount, currency, startsAt, endsAt, renewal` | su suscripción (`GET /subscriptions/me`) |
+| `subscription_expiring_soon` | quien tiene Pro por vencer (3 días antes) | `subscriptionId, period, endsAt, daysRemaining, cancelAtPeriodEnd` | pantalla de planes para renovar |
+| `subscription_expired` | quien dejó de ser Pro | `subscriptionId, period, endsAt` | pantalla de planes para renovar |
+
+Las tres de suscripción están explicadas en la [guía de Pro](GUIA_PRO_FRONTEND.md#notificaciones): `amount` va en USD (lo que se cobró) y las fechas son ISO. En `subscription_expiring_soon`, si `cancelAtPeriodEnd` es `true` el usuario canceló la renovación: el texto debe invitar a pagar de nuevo, no a "renovar".
 
 Los montos van en la moneda original de la transacción o del producto, no en la de visualización. Si quieres mostrarlos convertidos, usa las tasas de la [guía de moneda](GUIA_MONEDA_FRONTEND.md).
 
@@ -136,6 +141,9 @@ Los montos van en la moneda original de la transacción o del producto, no en la
 | Pedir unirse a una comunidad privada | `community_join_requested` a owner y moderadores | quien la pidió |
 | Aceptar o rechazar la solicitud | `community_join_accepted` o `community_join_rejected` a quien la pidió | — |
 | Aprobar o rechazar una solicitud de vendedor | `seller_request_approved` o `seller_request_rejected` | — |
+| Pago de Pro aprobado | `subscription_payment_confirmed` (una sola vez; repetir la misma `Idempotency-Key` no vuelve a notificar) | — |
+| Faltan 3 días o menos para `endsAt` de Pro | `subscription_expiring_soon` (una vez por vencimiento; si renueva y vuelve a estar por vencer, avisa otra vez) | cuentas desactivadas |
+| Vence Pro | `subscription_expired` (una vez por vencimiento, hasta 7 días después) | cuentas desactivadas |
 | Responder un post | `post_replied` al autor del post | quien respondió |
 | Responder una respuesta | `reply_replied` al autor de esa respuesta y `post_replied` al autor del post | quien respondió. Si el autor del post es también el de la respuesta, recibe **una sola** (`reply_replied`). |
 

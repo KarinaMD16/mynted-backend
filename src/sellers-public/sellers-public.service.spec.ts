@@ -4,11 +4,24 @@ import { UserBadge } from '../badges/entities/user-badge.entity';
 import { ProductSort } from '../products/dto/product-price-query.dto';
 import { ProductStatus } from '../products/entities/product.entity';
 import { ProductsService } from '../products/products.service';
+import { CosmeticsService } from '../cosmetics/cosmetics.service';
 import { ResponseTimeService } from '../response-time/response-time.service';
 import { Seller } from '../sellers/entities/seller.entity';
 import { UsersService } from '../users/users.service';
 import { GetSellerProductsQueryDto } from './dto/get-seller-products-query.dto';
 import { SellersPublicService } from './sellers-public.service';
+
+const DEFAULT_COSMETICS = {
+  banner: {
+    source: 'default',
+    code: 'banner_default',
+    url: null,
+    staticUrl: null,
+    isAnimated: false,
+  },
+  gooseSkin: { code: 'goose_default', assetUrl: null },
+  frame: { code: 'frame_default', assetUrl: null },
+};
 
 describe('SellersPublicService', () => {
   const approvedAt = new Date('2026-09-01T12:00:00Z');
@@ -37,6 +50,10 @@ describe('SellersPublicService', () => {
   let responseTimeService: { getForUser: jest.Mock };
   let userBadgeRepository: { findOne: jest.Mock };
   let usersService: { getSellerRatings: jest.Mock };
+  let cosmeticsService: {
+    getEffectiveCosmeticsForUsers: jest.Mock;
+    getEffectiveSummaryForUsers: jest.Mock;
+  };
   let productsService: {
     countPublicBySeller: jest.Mock;
     findSellerTags: jest.Mock;
@@ -51,6 +68,24 @@ describe('SellersPublicService', () => {
         .mockResolvedValue({ medianMinutes: 20, sampleSize: 3 }),
     };
     userBadgeRepository = { findOne: jest.fn().mockResolvedValue(null) };
+    cosmeticsService = {
+      getEffectiveCosmeticsForUsers: jest
+        .fn()
+        .mockResolvedValue(
+          new Map([['user-4', { isPro: false, cosmetics: DEFAULT_COSMETICS }]]),
+        ),
+      getEffectiveSummaryForUsers: jest.fn().mockResolvedValue(
+        new Map([
+          [
+            'user-4',
+            {
+              isPro: false,
+              frame: { code: 'frame_default', assetUrl: null },
+            },
+          ],
+        ]),
+      ),
+    };
     usersService = {
       getSellerRatings: jest
         .fn()
@@ -71,6 +106,7 @@ describe('SellersPublicService', () => {
       usersService as unknown as UsersService,
       productsService as unknown as ProductsService,
       responseTimeService as unknown as ResponseTimeService,
+      cosmeticsService as unknown as CosmeticsService,
     );
   });
 
@@ -84,7 +120,10 @@ describe('SellersPublicService', () => {
         location: 'San José',
         photoUrl: 'https://cdn/a.png',
         bannerUrl: null,
+        cosmetics: DEFAULT_COSMETICS,
         isVerified: true,
+        isPro: false,
+        frame: { code: 'frame_default', assetUrl: null },
         ratingAverage: 4.7,
         reviewsCount: 12,
         completedSalesCount: 15,
@@ -96,6 +135,57 @@ describe('SellersPublicService', () => {
       expect(usersService.getSellerRatings).toHaveBeenCalledWith([4]);
       expect(productsService.countPublicBySeller).toHaveBeenCalledWith([4]);
       expect(userBadgeRepository.findOne).not.toHaveBeenCalled();
+    });
+
+    it('isPro es true si el dueño de la tienda tiene Pro vigente', async () => {
+      cosmeticsService.getEffectiveCosmeticsForUsers.mockResolvedValue(
+        new Map([['user-4', { isPro: true, cosmetics: DEFAULT_COSMETICS }]]),
+      );
+
+      await expect(service.getStore(4)).resolves.toMatchObject({ isPro: true });
+      expect(
+        cosmeticsService.getEffectiveCosmeticsForUsers,
+      ).toHaveBeenCalledWith(['user-4']);
+    });
+
+    it('frame es el marco efectivo del dueño (igual a cosmetics.frame)', async () => {
+      const gold = {
+        ...DEFAULT_COSMETICS,
+        frame: { code: 'frame_gold', assetUrl: 'https://cdn/gold.png' },
+      };
+      cosmeticsService.getEffectiveCosmeticsForUsers.mockResolvedValue(
+        new Map([['user-4', { isPro: true, cosmetics: gold }]]),
+      );
+
+      await expect(service.getStore(4)).resolves.toMatchObject({
+        frame: gold.frame,
+        cosmetics: { frame: gold.frame },
+      });
+    });
+
+    it('bannerUrl es el banner efectivo del dueño y cosmetics trae el resto', async () => {
+      const custom = {
+        banner: {
+          source: 'custom',
+          code: null,
+          url: 'https://res.cloudinary.com/x/image/upload/v1/banner.gif',
+          staticUrl: 'https://res.cloudinary.com/x/image/upload/v1/banner.jpg',
+          isAnimated: true,
+        },
+        gooseSkin: { code: 'goose_ninja', assetUrl: null },
+        frame: { code: 'frame_default', assetUrl: null },
+      };
+      cosmeticsService.getEffectiveCosmeticsForUsers.mockResolvedValue(
+        new Map([['user-4', { isPro: true, cosmetics: custom }]]),
+      );
+
+      await expect(service.getStore(4)).resolves.toMatchObject({
+        bannerUrl: custom.banner.url,
+        cosmetics: custom,
+      });
+      expect(
+        cosmeticsService.getEffectiveCosmeticsForUsers,
+      ).toHaveBeenCalledTimes(1);
     });
 
     it('solo busca vendedores aprobados con cuenta activa', async () => {
