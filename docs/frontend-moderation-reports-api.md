@@ -377,6 +377,26 @@ El log es histórico y append-only. targetId llega como string. El actor no expo
 
 GET /users admite sellerStatus: none, pending, approved, rejected, revoked.
 
+En las respuestas administrativas de `GET /users` y `GET /users/:id` cuando
+consulta un SUPERADMIN, un usuario con Seller incluye:
+
+~~~json
+{
+  "seller": {
+    "sellerId": 1,
+    "status": "approved",
+    "isVerified": true,
+    "displayName": "Nombre tienda",
+    "location": "Ubicación",
+    "productCount": 0,
+    "salesCount": 0,
+    "reportsReceivedCount": 0
+  }
+}
+~~~
+
+`location` no forma parte del Seller del perfil público.
+
 Desactivar y eliminar requieren:
 
 ~~~json

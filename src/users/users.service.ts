@@ -444,6 +444,8 @@ export class UsersService {
           sellerId: seller.sellerId,
           status: user.sellerRequestStatus,
           isVerified: seller.isVerified,
+          displayName: seller.displayName,
+          location: seller.location,
           productCount: sellerMetrics.productCount,
           salesCount: sellerMetrics.salesCount,
           reportsReceivedCount: sellerMetrics.reportsReceivedCount,
