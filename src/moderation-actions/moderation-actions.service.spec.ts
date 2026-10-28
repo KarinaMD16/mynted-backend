@@ -124,6 +124,7 @@ describe('ModerationActionsService', () => {
     expect(repository.findAndCount).toHaveBeenCalledWith({
       relations: { actor: true },
       withDeleted: true,
+      where: {},
       order: { createdAt: 'DESC', id: 'DESC' },
       skip: 0,
       take: 20,
@@ -137,5 +138,53 @@ describe('ModerationActionsService', () => {
       total: 1,
       totalPages: 1,
     });
+  });
+
+  it('applies all optional filters with AND semantics and preserves pagination order', async () => {
+    repository.findAndCount.mockResolvedValue([[], 0]);
+    const from = '2026-10-01T00:00:00.000Z';
+    const to = '2026-10-31T23:59:59.999Z';
+
+    await service.findAll({
+      page: 2,
+      limit: 10,
+      action: MODERATION_ACTIONS.REPORT_RESOLVED,
+      targetType: MODERATION_TARGET_TYPES.REPORT,
+      targetId: '8',
+      communityId: 2,
+      actorUserId: '550e8400-e29b-41d4-a716-446655440000',
+      from,
+      to,
+    });
+
+    const calls = repository.findAndCount.mock.calls as unknown[][];
+    const options = calls[0]?.[0];
+    expect(options).toEqual(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          action: MODERATION_ACTIONS.REPORT_RESOLVED,
+          targetType: MODERATION_TARGET_TYPES.REPORT,
+          targetId: '8',
+          communityId: 2,
+          actorUserId: '550e8400-e29b-41d4-a716-446655440000',
+          createdAt: expect.any(Object) as unknown,
+        }) as unknown,
+        order: { createdAt: 'DESC', id: 'DESC' },
+        skip: 10,
+        take: 10,
+      }),
+    );
+  });
+
+  it('rejects an inverted date range', async () => {
+    await expect(
+      service.findAll({
+        page: 1,
+        limit: 20,
+        from: '2026-11-01T00:00:00.000Z',
+        to: '2026-10-01T00:00:00.000Z',
+      }),
+    ).rejects.toThrow('from no puede ser posterior a to');
+    expect(repository.findAndCount).not.toHaveBeenCalled();
   });
 });

@@ -293,7 +293,32 @@ JWT + SuperAdminGuard. No requiere communityId en la URL y permite descartar rep
 
 JWT + SuperAdminGuard.
 
-Query: page default 1 y limit default 20, máximo 100. Orden: createdAt DESC, id DESC.
+Query: todos los filtros son opcionales y combinables con lógica AND. `page` default 1, `limit` default 20 y máximo 100. Orden: createdAt DESC, id DESC.
+
+| Parámetro | Tipo | Uso |
+|---|---|---|
+| action | string/enum | Acción auditada. |
+| targetType | string/enum | Tipo de objetivo. |
+| targetId | string | ID exacto del objetivo; acepta números o UUID. |
+| communityId | integer positivo | Comunidad relacionada. |
+| actorUserId | UUID | Usuario que ejecutó la acción. |
+| from | ISO date-time | `createdAt >= from`. |
+| to | ISO date-time | `createdAt <= to`. |
+| page | integer | Página, mínimo 1. |
+| limit | integer | Tamaño, entre 1 y 100. |
+
+Ejemplos:
+
+~~~http
+GET /moderation-log?action=report_resolved
+GET /moderation-log?targetType=community
+GET /moderation-log?communityId=2
+GET /moderation-log?actorUserId=<uuid>
+GET /moderation-log?from=2026-10-01T00:00:00.000Z&to=2026-10-31T23:59:59.999Z
+GET /moderation-log?action=report_resolved&communityId=2&page=1&limit=20
+~~~
+
+`from` y `to` son inclusivos; `from` no puede ser posterior a `to`. Los valores inválidos devuelven 400.
 
 ~~~json
 {
