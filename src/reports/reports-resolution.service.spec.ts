@@ -291,6 +291,57 @@ describe('ReportsService resolution', () => {
     expect(updateQuery.execute).not.toHaveBeenCalled();
   });
 
+  it('resolves a community report with a note without modifying the community', async () => {
+    const report = pendingReport({
+      itemType: ReportItemType.COMMUNITY,
+      itemId: communityId,
+    });
+    reportRepository.findOne.mockResolvedValue(report);
+
+    const result = await service.resolveCommunityReport(
+      communityId,
+      report.id,
+      { hideContent: false, warnAuthor: false, note: 'Revisión completada' },
+      actorId,
+    );
+
+    expect(result).toMatchObject({
+      itemType: ReportItemType.COMMUNITY,
+      status: ReportStatus.RESOLVED,
+      resolutionAction: 'note',
+      resolutionNote: 'Revisión completada',
+    });
+    expect(moderationService.hideContent).not.toHaveBeenCalled();
+    expect(notificationsService.notify).not.toHaveBeenCalled();
+    expect(moderationActionsService.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'report_resolved',
+        targetType: 'report',
+      }),
+      manager,
+    );
+  });
+
+  it.each([
+    { hideContent: true },
+    { warnAuthor: true },
+    { hideContent: true, note: 'No permitido' },
+    { warnAuthor: true, note: 'No permitido' },
+  ])('rejects unsupported actions for community reports: %j', async (dto) => {
+    const report = pendingReport({
+      itemType: ReportItemType.COMMUNITY,
+      itemId: communityId,
+    });
+    reportRepository.findOne.mockResolvedValue(report);
+
+    await expect(
+      service.resolveCommunityReport(communityId, report.id, dto, actorId),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(report.status).toBe(ReportStatus.PENDING);
+    expect(moderationService.hideContent).not.toHaveBeenCalled();
+    expect(moderationActionsService.record).not.toHaveBeenCalled();
+  });
+
   it('resolves a global report without requiring a community', async () => {
     const report = pendingReport({ communityId: null });
     reportRepository.findOne.mockResolvedValue(report);

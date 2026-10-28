@@ -62,7 +62,7 @@ export interface ReportExcerpt {
   text: string | null;
 }
 
-type LoadedReportTarget = Post | Reply | Product | Conversation;
+type LoadedReportTarget = Post | Reply | Product | Conversation | Community;
 
 @Injectable()
 export class ReportsService {
@@ -375,6 +375,17 @@ export class ReportsService {
         );
       }
 
+      if (
+        report.itemType === ReportItemType.COMMUNITY &&
+        (dto.hideContent === true || dto.warnAuthor === true)
+      ) {
+        throw new BadRequestException(
+          dto.hideContent === true
+            ? 'Las comunidades no se pueden ocultar mediante este flujo'
+            : 'Las comunidades no tienen un autor único para advertir',
+        );
+      }
+
       const recipientId =
         dto.hideContent === true || dto.warnAuthor === true
           ? await this.findReportAuthorId(report, manager)
@@ -601,6 +612,10 @@ export class ReportsService {
         }
         throw new NotFoundException('Autor del contenido no encontrado');
       }
+      case ReportItemType.COMMUNITY:
+        throw new BadRequestException(
+          'Las comunidades no tienen un autor único para advertir',
+        );
     }
   }
 
@@ -695,7 +710,35 @@ export class ReportsService {
         return this.resolveProduct(itemId);
       case ReportItemType.CONVERSATION:
         return this.resolveConversation(userId, itemId);
+      case ReportItemType.COMMUNITY:
+        return this.resolveCommunityTarget(userId, itemId);
     }
+  }
+
+  private async resolveCommunityTarget(
+    userId: string,
+    communityId: number,
+  ): Promise<ReportTarget> {
+    const community = await this.communityRepository.findOne({
+      where: { id: communityId },
+    });
+    if (!community) {
+      throw new NotFoundException('Comunidad no encontrada');
+    }
+
+    if (community.isPrivate) {
+      const membership = await this.communityProfileRepository.findOne({
+        where: { userId, communityId },
+        select: { communityProfileId: true },
+      });
+      if (!membership) {
+        throw new ForbiddenException(
+          'No tienes acceso a esta comunidad privada',
+        );
+      }
+    }
+
+    return { communityId };
   }
 
   private async resolvePost(itemId: number): Promise<ReportTarget> {
@@ -861,6 +904,20 @@ export class ReportsService {
       }
     }
 
+    const communityIds = idsByType.get(ReportItemType.COMMUNITY) ?? [];
+    if (communityIds.length > 0) {
+      const communities = await this.communityRepository.find({
+        where: { id: In(communityIds) },
+        withDeleted: true,
+      });
+      communities.forEach((target) =>
+        targets.set(
+          this.targetKey(ReportItemType.COMMUNITY, target.id),
+          target,
+        ),
+      );
+    }
+
     return targets;
   }
 
@@ -931,7 +988,19 @@ export class ReportsService {
           },
         };
       }
+      case ReportItemType.COMMUNITY:
+        return this.loadCommunityReportDetail(report);
     }
+  }
+
+  private async loadCommunityReportDetail(
+    report: Report,
+  ): Promise<{ value: unknown } | null> {
+    const community = await this.communityRepository.findOne({
+      where: { id: report.itemId },
+      withDeleted: true,
+    });
+    return community ? { value: this.mapCommunityDetail(community) } : null;
   }
 
   private buildExcerpt(target: LoadedReportTarget): ReportExcerpt {
@@ -944,6 +1013,12 @@ export class ReportsService {
     if (target instanceof Product) {
       return {
         title: target.title,
+        text: this.truncate(target.description),
+      };
+    }
+    if (target instanceof Community) {
+      return {
+        title: target.name,
         text: this.truncate(target.description),
       };
     }
@@ -1126,6 +1201,18 @@ export class ReportsService {
             photoUrl: product.seller.user?.photoUrl ?? null,
           }
         : null,
+    };
+  }
+
+  private mapCommunityDetail(community: Community) {
+    return {
+      id: community.id,
+      name: community.name,
+      slug: community.slug,
+      description: community.description,
+      isActive: community.isActive,
+      isPrivate: community.isPrivate,
+      deletedAt: community.deletedAt,
     };
   }
 }
