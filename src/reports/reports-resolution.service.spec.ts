@@ -122,6 +122,8 @@ describe('ReportsService resolution', () => {
       resolutionAction: 'hide_content,warn_author,note',
       resolutionNote: 'Revisado',
     });
+    expect(result).not.toHaveProperty('reporter');
+    expect(result).not.toHaveProperty('reporterId');
     expect(moderationService.hideContent).toHaveBeenCalledWith(
       'post',
       42,
@@ -430,6 +432,8 @@ describe('ReportsService resolution', () => {
       resolutionAction: 'dismiss',
       resolutionNote: null,
     });
+    expect(result).not.toHaveProperty('reporter');
+    expect(result).not.toHaveProperty('reporterId');
     expect(moderationService.hideContent).not.toHaveBeenCalled();
     expect(notificationsService.notify).not.toHaveBeenCalled();
     expect(moderationActionsService.record).toHaveBeenCalledWith(

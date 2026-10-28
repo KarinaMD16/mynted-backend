@@ -31,7 +31,6 @@ import { AuthenticatedRequest } from '../auth/types/authenticated-request';
 import { CreateReportDto } from './dto/create-report.dto';
 import { GetReportsQueryDto } from './dto/get-reports-query.dto';
 import { ResolveReportDto } from './dto/resolve-report.dto';
-import { Report } from './entities/report.entity';
 import { ReportsService } from './reports.service';
 
 @ApiTags('reports')
@@ -115,7 +114,7 @@ export class ReportsController {
   @ApiOperation({
     summary: 'Reportar una publicación, respuesta, producto o conversación',
   })
-  @ApiCreatedResponse({ type: Report })
+  @ApiCreatedResponse({ description: 'Reporte creado' })
   @ApiBadRequestResponse({
     description: 'Datos inválidos o intento de reportar contenido propio',
   })
@@ -125,10 +124,7 @@ export class ReportsController {
   })
   @ApiNotFoundResponse({ description: 'El contenido reportado no existe' })
   @ApiConflictResponse({ description: 'El usuario ya reportó este contenido' })
-  create(
-    @Body() dto: CreateReportDto,
-    @Req() request: AuthenticatedRequest,
-  ): Promise<Report> {
+  create(@Body() dto: CreateReportDto, @Req() request: AuthenticatedRequest) {
     return this.reportsService.createReport(request.user.userId, dto);
   }
 }

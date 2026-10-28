@@ -63,6 +63,7 @@ export interface ReportExcerpt {
 }
 
 type LoadedReportTarget = Post | Reply | Product | Conversation | Community;
+type AnonymousReportResponse = Omit<Report, 'reporterId' | 'reporter'>;
 
 @Injectable()
 export class ReportsService {
@@ -93,7 +94,10 @@ export class ReportsService {
     private readonly moderationActionsService: ModerationActionsService,
   ) {}
 
-  async createReport(userId: string, dto: CreateReportDto): Promise<Report> {
+  async createReport(
+    userId: string,
+    dto: CreateReportDto,
+  ): Promise<AnonymousReportResponse> {
     const target = await this.resolveTarget(userId, dto.itemType, dto.itemId);
 
     if (target.ownerId === userId) {
@@ -126,7 +130,8 @@ export class ReportsService {
     });
 
     try {
-      return await this.reportRepository.save(report);
+      const saved = await this.reportRepository.save(report);
+      return this.toAnonymousReportResponse(saved);
     } catch (error: unknown) {
       if (this.isReportUniqueViolation(error)) {
         throw new ConflictException('Ya reportaste este contenido');
@@ -170,14 +175,12 @@ export class ReportsService {
     if (typeof reportQuery.withDeleted === 'function') {
       reportQuery.withDeleted();
     }
-    reportQuery
-      .leftJoinAndSelect('report.reporter', 'reporter')
-      .where(
-        communityId === undefined
-          ? '1 = 1'
-          : 'report.community_id = :communityId',
-        communityId === undefined ? {} : { communityId },
-      );
+    reportQuery.where(
+      communityId === undefined
+        ? '1 = 1'
+        : 'report.community_id = :communityId',
+      communityId === undefined ? {} : { communityId },
+    );
 
     if (communityId !== undefined && !includeCommunity) {
       reportQuery.andWhere('report.item_type != :communityItemType', {
@@ -229,7 +232,6 @@ export class ReportsService {
           itemId: report.itemId,
           excerpt: target ? this.buildExcerpt(target) : null,
           contentUnavailable: !target,
-          reporter: this.toUserSummary(report.reporter),
           ...(includeCommunity
             ? {
                 communityId: report.communityId,
@@ -289,7 +291,7 @@ export class ReportsService {
     const report = await this.reportRepository.findOne({
       where: { id: reportId, communityId },
       withDeleted: true,
-      relations: { reporter: true, resolvedByUser: true },
+      relations: { resolvedByUser: true },
     });
 
     if (!report) {
@@ -309,7 +311,6 @@ export class ReportsService {
       status: report.status,
       itemType: report.itemType,
       itemId: report.itemId,
-      reporter: this.toUserSummary(report.reporter),
       content: content?.value ?? null,
       contentUnavailable: content === null,
       resolvedAt: report.resolvedAt,
@@ -350,17 +351,24 @@ export class ReportsService {
     reportId: number,
     dto: ResolveReportDto,
     actorUserId: string,
-  ): Promise<Report> {
+  ): Promise<AnonymousReportResponse> {
     await this.ensureCommunityExists(communityId);
-    return this.resolveReportInternal(reportId, dto, actorUserId, communityId);
+    const report = await this.resolveReportInternal(
+      reportId,
+      dto,
+      actorUserId,
+      communityId,
+    );
+    return this.toAnonymousReportResponse(report);
   }
 
   async resolveGlobalReport(
     reportId: number,
     dto: ResolveReportDto,
     actorUserId: string,
-  ): Promise<Report> {
-    return this.resolveReportInternal(reportId, dto, actorUserId);
+  ): Promise<AnonymousReportResponse> {
+    const report = await this.resolveReportInternal(reportId, dto, actorUserId);
+    return this.toAnonymousReportResponse(report);
   }
 
   private async resolveReportInternal(
@@ -503,16 +511,22 @@ export class ReportsService {
     communityId: number,
     reportId: number,
     actorUserId: string,
-  ): Promise<Report> {
+  ): Promise<AnonymousReportResponse> {
     await this.ensureCommunityExists(communityId);
-    return this.dismissReportInternal(reportId, actorUserId, communityId);
+    const report = await this.dismissReportInternal(
+      reportId,
+      actorUserId,
+      communityId,
+    );
+    return this.toAnonymousReportResponse(report);
   }
 
   async dismissGlobalReport(
     reportId: number,
     actorUserId: string,
-  ): Promise<Report> {
-    return this.dismissReportInternal(reportId, actorUserId);
+  ): Promise<AnonymousReportResponse> {
+    const report = await this.dismissReportInternal(reportId, actorUserId);
+    return this.toAnonymousReportResponse(report);
   }
 
   private async dismissReportInternal(
@@ -1168,6 +1182,13 @@ export class ReportsService {
       username: user.username,
       photoUrl: user.photoUrl ?? null,
     };
+  }
+
+  private toAnonymousReportResponse(report: Report): AnonymousReportResponse {
+    const response = { ...report } as Record<string, unknown>;
+    delete response.reporterId;
+    delete response.reporter;
+    return response as AnonymousReportResponse;
   }
 
   private mapPostDetail(post: Post) {

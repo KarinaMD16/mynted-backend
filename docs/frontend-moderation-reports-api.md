@@ -25,6 +25,12 @@ Hay dos niveles:
 
 Errores habituales: 400 datos o acción inválida, 401 sin autenticación, 403 sin permiso, 404 objetivo inexistente/no disponible y 409 conflicto o duplicado.
 
+## Privacidad de los reportes
+
+Los reportes son anónimos para frontend. La identidad del usuario que reportó se conserva internamente mediante `reporterId` para integridad, prevención de duplicados y lógica del sistema, pero no se devuelve en las respuestas API de moderación.
+
+OWNER, MODERATOR y SUPERADMIN reciben los reportes sin identidad del reportante. `resolvedByUser`, cuando existe, representa al moderador o SUPERADMIN que procesó el reporte; no representa al usuario que lo creó.
+
 ## Enums
 
 ReportItemType:
@@ -134,11 +140,10 @@ Orden: createdAt DESC, luego id DESC.
       "id": 10,
       "reason": "spam",
       "status": "pending",
-      "itemType": "community",
+      "itemType": "post",
       "itemId": 2,
-      "excerpt": { "title": "Comunidad", "text": "Descripción" },
+      "excerpt": { "title": "Publicación", "text": "Contenido reportado" },
       "contentUnavailable": false,
-      "reporter": { "id": "uuid", "username": "usuario", "photoUrl": null },
       "createdAt": "2026-10-28T12:00:00.000Z"
     }
   ],
@@ -151,7 +156,7 @@ counts contiene totales por estado de la comunidad. Los reports cuyo itemType es
 
 ### GET /communities/:communityId/reports/:id
 
-Mismos guards y roles. Devuelve description, estado, reporter, resolución y content.
+Mismos guards y roles. Devuelve description, estado, resolución y content, sin identidad del reportante.
 
 Para una comunidad, content puede ser:
 
@@ -272,7 +277,7 @@ GET /reports?status=pending&itemType=community&page=1&limit=20
 
 Orden: createdAt DESC, id DESC.
 
-La respuesta tiene data, pagination y counts. Cada elemento incluye id, reason, status, itemType, itemId, excerpt, contentUnavailable, reporter y createdAt; el listado global agrega communityId y community. Ambos pueden ser null.
+La respuesta tiene data, pagination y counts. Cada elemento incluye id, reason, status, itemType, itemId, excerpt, contentUnavailable y createdAt; el listado global agrega communityId y community. `reporter` y `reporterId` no forman parte de la respuesta.
 
 ### PATCH /reports/:id/resolve
 
@@ -497,7 +502,7 @@ Resolver con nota o descartar un report no genera notificación adicional de com
 | Report | status | pending/resolved/dismissed. |
 | Seller | sellerRequestStatus, isVerified | Estado de solicitud y verificación. |
 
-Aceptar null en communityId, community, excerpt, reporter.photoUrl, resolvedAt, resolvedByUser, resolutionAction, resolutionNote y deletedAt.
+Aceptar null en communityId, community, excerpt, resolvedAt, resolvedByUser, resolutionAction, resolutionNote y deletedAt.
 
 Defaults de paginación:
 

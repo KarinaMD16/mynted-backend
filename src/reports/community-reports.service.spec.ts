@@ -153,6 +153,8 @@ describe('ReportsService community reports', () => {
       expect.objectContaining({ id: 15, isHidden: true }),
     );
     expect(result.contentUnavailable).toBe(false);
+    expect(result).not.toHaveProperty('reporter');
+    expect(result).not.toHaveProperty('reporterId');
   });
 
   it('hides community report detail from the community panel', async () => {
@@ -261,7 +263,6 @@ describe('ReportsService community reports', () => {
           slug: 'eliminada',
           deletedAt,
         },
-        reporter: null,
         contentUnavailable: true,
       }),
       expect.objectContaining({
@@ -269,6 +270,10 @@ describe('ReportsService community reports', () => {
         community: null,
       }),
     ]);
+    expect(result.data[0]).not.toHaveProperty('reporter');
+    expect(result.data[0]).not.toHaveProperty('reporterId');
+    expect(result.data[1]).not.toHaveProperty('reporter');
+    expect(result.data[1]).not.toHaveProperty('reporterId');
     expect(result.counts).toEqual({ pending: 1, resolved: 1, dismissed: 0 });
     expect(communityRepository.find).toHaveBeenCalledWith(
       expect.objectContaining({ withDeleted: true }),
