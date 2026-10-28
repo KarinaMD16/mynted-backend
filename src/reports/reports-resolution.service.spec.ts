@@ -122,6 +122,8 @@ describe('ReportsService resolution', () => {
       resolutionAction: 'hide_content,warn_author,note',
       resolutionNote: 'Revisado',
     });
+    expect(result).not.toHaveProperty('reporter');
+    expect(result).not.toHaveProperty('reporterId');
     expect(moderationService.hideContent).toHaveBeenCalledWith(
       'post',
       42,
@@ -291,35 +293,25 @@ describe('ReportsService resolution', () => {
     expect(updateQuery.execute).not.toHaveBeenCalled();
   });
 
-  it('resolves a community report with a note without modifying the community', async () => {
+  it('hides a community report from the community resolve route', async () => {
     const report = pendingReport({
       itemType: ReportItemType.COMMUNITY,
       itemId: communityId,
     });
     reportRepository.findOne.mockResolvedValue(report);
 
-    const result = await service.resolveCommunityReport(
-      communityId,
-      report.id,
-      { hideContent: false, warnAuthor: false, note: 'Revisión completada' },
-      actorId,
-    );
-
-    expect(result).toMatchObject({
-      itemType: ReportItemType.COMMUNITY,
-      status: ReportStatus.RESOLVED,
-      resolutionAction: 'note',
-      resolutionNote: 'Revisión completada',
-    });
+    await expect(
+      service.resolveCommunityReport(
+        communityId,
+        report.id,
+        { hideContent: false, warnAuthor: false, note: 'Revisión completada' },
+        actorId,
+      ),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(report.status).toBe(ReportStatus.PENDING);
     expect(moderationService.hideContent).not.toHaveBeenCalled();
     expect(notificationsService.notify).not.toHaveBeenCalled();
-    expect(moderationActionsService.record).toHaveBeenCalledWith(
-      expect.objectContaining({
-        action: 'report_resolved',
-        targetType: 'report',
-      }),
-      manager,
-    );
+    expect(moderationActionsService.record).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -335,7 +327,7 @@ describe('ReportsService resolution', () => {
     reportRepository.findOne.mockResolvedValue(report);
 
     await expect(
-      service.resolveCommunityReport(communityId, report.id, dto, actorId),
+      service.resolveGlobalReport(report.id, dto, actorId),
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(report.status).toBe(ReportStatus.PENDING);
     expect(moderationService.hideContent).not.toHaveBeenCalled();
@@ -362,6 +354,28 @@ describe('ReportsService resolution', () => {
       }),
       manager,
     );
+  });
+
+  it('allows SUPERADMIN to resolve a community report with a note', async () => {
+    const report = pendingReport({
+      itemType: ReportItemType.COMMUNITY,
+      itemId: communityId,
+    });
+    reportRepository.findOne.mockResolvedValue(report);
+
+    await expect(
+      service.resolveGlobalReport(
+        report.id,
+        { hideContent: false, warnAuthor: false, note: 'Revisión global' },
+        'superadmin-id',
+      ),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        status: ReportStatus.RESOLVED,
+        resolutionAction: 'note',
+      }),
+    );
+    expect(moderationService.hideContent).not.toHaveBeenCalled();
   });
 
   it('dismisses a global report from a soft-deleted community', async () => {
@@ -418,6 +432,8 @@ describe('ReportsService resolution', () => {
       resolutionAction: 'dismiss',
       resolutionNote: null,
     });
+    expect(result).not.toHaveProperty('reporter');
+    expect(result).not.toHaveProperty('reporterId');
     expect(moderationService.hideContent).not.toHaveBeenCalled();
     expect(notificationsService.notify).not.toHaveBeenCalled();
     expect(moderationActionsService.record).toHaveBeenCalledWith(

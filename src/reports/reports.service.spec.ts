@@ -96,7 +96,7 @@ describe('ReportsService', () => {
     communityProfileRepository.findOne.mockResolvedValue(null);
   });
 
-  it('creates a pending post report with reporter and community derived from the post', async () => {
+  it('stores reporterId internally without exposing it in the create response', async () => {
     postRepository.findOne.mockResolvedValue({
       communityProfile: { userId: ownerId, communityId: 12 },
     });
@@ -108,13 +108,17 @@ describe('ReportsService', () => {
 
     expect(result).toEqual(
       expect.objectContaining({
-        reporterId,
         communityId: 12,
         itemType: ReportItemType.POST,
         itemId: 7,
         status: ReportStatus.PENDING,
         description: '  motivo  ',
       }),
+    );
+    expect(result).not.toHaveProperty('reporterId');
+    expect(result).not.toHaveProperty('reporter');
+    expect(reportRepository.save).toHaveBeenCalledWith(
+      expect.objectContaining({ reporterId }),
     );
   });
 

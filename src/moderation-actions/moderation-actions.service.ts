@@ -1,6 +1,13 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, Repository } from 'typeorm';
+import {
+  Between,
+  EntityManager,
+  FindOptionsWhere,
+  LessThanOrEqual,
+  MoreThanOrEqual,
+  Repository,
+} from 'typeorm';
 import {
   ModerationActionType,
   ModerationTargetType,
@@ -70,9 +77,28 @@ export class ModerationActionsService {
   async findAll(
     query: ModerationActionQueryDto,
   ): Promise<ModerationActionListResponseDto> {
+    const from = query.from ? new Date(query.from) : undefined;
+    const to = query.to ? new Date(query.to) : undefined;
+    if (from && to && from > to) {
+      throw new BadRequestException('from no puede ser posterior a to');
+    }
+
+    const where: FindOptionsWhere<ModerationAction> = {};
+    if (query.action) where.action = query.action;
+    if (query.targetType) where.targetType = query.targetType;
+    if (query.targetId) where.targetId = query.targetId;
+    if (query.communityId !== undefined) {
+      where.communityId = query.communityId;
+    }
+    if (query.actorUserId) where.actorUserId = query.actorUserId;
+    if (from && to) where.createdAt = Between(from, to);
+    else if (from) where.createdAt = MoreThanOrEqual(from);
+    else if (to) where.createdAt = LessThanOrEqual(to);
+
     const [actions, total] = await this.repository.findAndCount({
       withDeleted: true,
       relations: { actor: true },
+      where,
       order: { createdAt: 'DESC', id: 'DESC' },
       skip: (query.page - 1) * query.limit,
       take: query.limit,

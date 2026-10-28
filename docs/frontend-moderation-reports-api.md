@@ -25,6 +25,12 @@ Hay dos niveles:
 
 Errores habituales: 400 datos o acción inválida, 401 sin autenticación, 403 sin permiso, 404 objetivo inexistente/no disponible y 409 conflicto o duplicado.
 
+## Privacidad de los reportes
+
+Los reportes son anónimos para frontend. La identidad del usuario que reportó se conserva internamente mediante `reporterId` para integridad, prevención de duplicados y lógica del sistema, pero no se devuelve en las respuestas API de moderación.
+
+OWNER, MODERATOR y SUPERADMIN reciben los reportes sin identidad del reportante. `resolvedByUser`, cuando existe, representa al moderador o SUPERADMIN que procesó el reporte; no representa al usuario que lo creó.
+
 ## Enums
 
 ReportItemType:
@@ -134,11 +140,10 @@ Orden: createdAt DESC, luego id DESC.
       "id": 10,
       "reason": "spam",
       "status": "pending",
-      "itemType": "community",
+      "itemType": "post",
       "itemId": 2,
-      "excerpt": { "title": "Comunidad", "text": "Descripción" },
+      "excerpt": { "title": "Publicación", "text": "Contenido reportado" },
       "contentUnavailable": false,
-      "reporter": { "id": "uuid", "username": "usuario", "photoUrl": null },
       "createdAt": "2026-10-28T12:00:00.000Z"
     }
   ],
@@ -147,11 +152,11 @@ Orden: createdAt DESC, luego id DESC.
 }
 ~~~
 
-counts contiene totales por estado de la comunidad. Un report community aparece por su communityId.
+counts contiene totales por estado de la comunidad. Los reports cuyo itemType es community no aparecen en este listado ni en sus counts; este panel solo muestra contenido que OWNER/MODERATOR pueden gestionar.
 
 ### GET /communities/:communityId/reports/:id
 
-Mismos guards y roles. Devuelve description, estado, reporter, resolución y content.
+Mismos guards y roles. Devuelve description, estado, resolución y content, sin identidad del reportante.
 
 Para una comunidad, content puede ser:
 
@@ -272,7 +277,7 @@ GET /reports?status=pending&itemType=community&page=1&limit=20
 
 Orden: createdAt DESC, id DESC.
 
-La respuesta tiene data, pagination y counts. Cada elemento incluye id, reason, status, itemType, itemId, excerpt, contentUnavailable, reporter y createdAt; el listado global agrega communityId y community. Ambos pueden ser null.
+La respuesta tiene data, pagination y counts. Cada elemento incluye id, reason, status, itemType, itemId, excerpt, contentUnavailable y createdAt; el listado global agrega communityId y community. `reporter` y `reporterId` no forman parte de la respuesta.
 
 ### PATCH /reports/:id/resolve
 
@@ -288,7 +293,32 @@ JWT + SuperAdminGuard. No requiere communityId en la URL y permite descartar rep
 
 JWT + SuperAdminGuard.
 
-Query: page default 1 y limit default 20, máximo 100. Orden: createdAt DESC, id DESC.
+Query: todos los filtros son opcionales y combinables con lógica AND. `page` default 1, `limit` default 20 y máximo 100. Orden: createdAt DESC, id DESC.
+
+| Parámetro | Tipo | Uso |
+|---|---|---|
+| action | string/enum | Acción auditada. |
+| targetType | string/enum | Tipo de objetivo. |
+| targetId | string | ID exacto del objetivo; acepta números o UUID. |
+| communityId | integer positivo | Comunidad relacionada. |
+| actorUserId | UUID | Usuario que ejecutó la acción. |
+| from | ISO date-time | `createdAt >= from`. |
+| to | ISO date-time | `createdAt <= to`. |
+| page | integer | Página, mínimo 1. |
+| limit | integer | Tamaño, entre 1 y 100. |
+
+Ejemplos:
+
+~~~http
+GET /moderation-log?action=report_resolved
+GET /moderation-log?targetType=community
+GET /moderation-log?communityId=2
+GET /moderation-log?actorUserId=<uuid>
+GET /moderation-log?from=2026-10-01T00:00:00.000Z&to=2026-10-31T23:59:59.999Z
+GET /moderation-log?action=report_resolved&communityId=2&page=1&limit=20
+~~~
+
+`from` y `to` son inclusivos; `from` no puede ser posterior a `to`. Los valores inválidos devuelven 400.
 
 ~~~json
 {
@@ -497,7 +527,7 @@ Resolver con nota o descartar un report no genera notificación adicional de com
 | Report | status | pending/resolved/dismissed. |
 | Seller | sellerRequestStatus, isVerified | Estado de solicitud y verificación. |
 
-Aceptar null en communityId, community, excerpt, reporter.photoUrl, resolvedAt, resolvedByUser, resolutionAction, resolutionNote y deletedAt.
+Aceptar null en communityId, community, excerpt, resolvedAt, resolvedByUser, resolutionAction, resolutionNote y deletedAt.
 
 Defaults de paginación:
 
@@ -511,7 +541,7 @@ Defaults de paginación:
 1. Reportar post/reply/product: POST /reports; confirmar 201 y manejar 409.
 2. Panel comunitario: GET /communities/:id/reports; usar counts, excerpt y contentUnavailable.
 3. Resolver contenido: ruta comunitaria de resolve; refrescar porque pueden cambiar varios reports.
-4. Revisar community report: ofrecer solo nota y dismiss.
+4. Revisar community report: hacerlo desde GET /reports como SUPERADMIN; ofrecer solo nota y dismiss.
 5. Panel SUPERADMIN: GET /reports, GET /moderation-log y GET /users/stats.
 6. Acciones sobre community: usar endpoints de community, no hideContent.
 
@@ -527,7 +557,7 @@ Defaults de paginación:
 - communityId puede ser null.
 - warnAuthor no aplica a communities.
 - No mostrar hideContent para itemType community.
-- Reports globales y comunitarios tienen permisos distintos.
+- Reports globales y comunitarios tienen permisos distintos. Los Community Reports son exclusivos del panel global de SUPERADMIN.
 - GET /users no declara paginación en su DTO actual.
 - ReportItemType usa enum PostgreSQL y se sincroniza con synchronize true; no hay migration.
 

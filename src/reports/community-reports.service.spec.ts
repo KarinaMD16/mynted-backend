@@ -1,4 +1,4 @@
-import { Repository } from 'typeorm';
+import { Not, Repository } from 'typeorm';
 import { Community } from '../community/entities/community.entity';
 import { CommunityProfile } from '../community/entities/community-profile.entity';
 import { Post } from '../community/entities/post.entity';
@@ -153,6 +153,21 @@ describe('ReportsService community reports', () => {
       expect.objectContaining({ id: 15, isHidden: true }),
     );
     expect(result.contentUnavailable).toBe(false);
+    expect(result).not.toHaveProperty('reporter');
+    expect(result).not.toHaveProperty('reporterId');
+  });
+
+  it('hides community report detail from the community panel', async () => {
+    reportRepository.findOne.mockResolvedValue({
+      id: 2,
+      communityId: 7,
+      itemType: ReportItemType.COMMUNITY,
+      itemId: 7,
+    });
+
+    await expect(service.getCommunityReportDetail(7, 2)).rejects.toThrow(
+      'Reporte no encontrado',
+    );
   });
 
   it('calculates pending, resolved today and active member/moderator counts', async () => {
@@ -173,6 +188,13 @@ describe('ReportsService community reports', () => {
       resolvedToday: 2,
       activeMembers: 10,
       activeModerators: 3,
+    });
+    expect(reportRepository.count).toHaveBeenCalledWith({
+      where: {
+        communityId: 7,
+        status: ReportStatus.PENDING,
+        itemType: Not(ReportItemType.COMMUNITY),
+      },
     });
     expect(membersQb.andWhere).toHaveBeenCalledWith('user.is_active = true');
     expect(moderatorsQb.andWhere).toHaveBeenCalledWith(
@@ -241,7 +263,6 @@ describe('ReportsService community reports', () => {
           slug: 'eliminada',
           deletedAt,
         },
-        reporter: null,
         contentUnavailable: true,
       }),
       expect.objectContaining({
@@ -249,6 +270,10 @@ describe('ReportsService community reports', () => {
         community: null,
       }),
     ]);
+    expect(result.data[0]).not.toHaveProperty('reporter');
+    expect(result.data[0]).not.toHaveProperty('reporterId');
+    expect(result.data[1]).not.toHaveProperty('reporter');
+    expect(result.data[1]).not.toHaveProperty('reporterId');
     expect(result.counts).toEqual({ pending: 1, resolved: 1, dismissed: 0 });
     expect(communityRepository.find).toHaveBeenCalledWith(
       expect.objectContaining({ withDeleted: true }),
@@ -311,5 +336,170 @@ describe('ReportsService community reports', () => {
       }),
     );
     expect(communityRepository.find).toHaveBeenCalledTimes(2);
+  });
+
+  it('includes community reports in the global communityId filter and counts', async () => {
+    const listQb = chain();
+    const countsQb = chain();
+    reportRepository.createQueryBuilder
+      .mockReturnValueOnce(listQb)
+      .mockReturnValueOnce(countsQb);
+    const report = {
+      id: 8,
+      communityId: 2,
+      reason: ReportReason.SPAM,
+      status: ReportStatus.RESOLVED,
+      itemType: ReportItemType.COMMUNITY,
+      itemId: 2,
+      reporter: null,
+      createdAt: new Date(),
+    } as unknown as Report;
+    listQb.getManyAndCount.mockResolvedValue([[report], 1]);
+    countsQb.getRawMany.mockResolvedValue([
+      { status: ReportStatus.RESOLVED, count: '1' },
+    ]);
+    const community = Object.assign(new Community(), {
+      id: 2,
+      name: 'Comunidad reportada',
+      description: 'Descripción',
+      slug: 'reportada',
+      isActive: true,
+      isPrivate: false,
+      deletedAt: null,
+    });
+    communityRepository.find
+      .mockResolvedValueOnce([community])
+      .mockResolvedValueOnce([
+        { id: 2, name: community.name, slug: community.slug, deletedAt: null },
+      ]);
+
+    const result = await service.listGlobalReports({
+      page: 1,
+      limit: 20,
+      communityId: 2,
+    });
+
+    expect(result.data).toHaveLength(1);
+    expect(result.data[0]).toEqual(
+      expect.objectContaining({
+        id: 8,
+        itemType: ReportItemType.COMMUNITY,
+        communityId: 2,
+      }),
+    );
+    expect(result.counts).toEqual({ pending: 0, resolved: 1, dismissed: 0 });
+    expect(listQb.where).toHaveBeenCalledWith(
+      'report.community_id = :communityId',
+      { communityId: 2 },
+    );
+    expect(listQb.andWhere).not.toHaveBeenCalledWith(
+      'report.item_type != :communityItemType',
+      expect.anything(),
+    );
+    expect(countsQb.andWhere).not.toHaveBeenCalledWith(
+      'report.item_type != :communityItemType',
+      expect.anything(),
+    );
+  });
+
+  it('combines global itemType=community and communityId without excluding the report', async () => {
+    const listQb = chain();
+    const countsQb = chain();
+    reportRepository.createQueryBuilder
+      .mockReturnValueOnce(listQb)
+      .mockReturnValueOnce(countsQb);
+    const report = {
+      id: 8,
+      communityId: 2,
+      reason: ReportReason.SPAM,
+      status: ReportStatus.RESOLVED,
+      itemType: ReportItemType.COMMUNITY,
+      itemId: 2,
+      reporter: null,
+      createdAt: new Date(),
+    } as unknown as Report;
+    listQb.getManyAndCount.mockResolvedValue([[report], 1]);
+    countsQb.getRawMany.mockResolvedValue([
+      { status: ReportStatus.RESOLVED, count: '1' },
+    ]);
+    const community = Object.assign(new Community(), {
+      id: 2,
+      name: 'Comunidad reportada',
+      description: 'Descripción',
+      slug: 'reportada',
+      deletedAt: null,
+    });
+    communityRepository.find
+      .mockResolvedValueOnce([community])
+      .mockResolvedValueOnce([
+        { id: 2, name: community.name, slug: community.slug, deletedAt: null },
+      ]);
+
+    const result = await service.listGlobalReports({
+      page: 1,
+      limit: 20,
+      itemType: ReportItemType.COMMUNITY,
+      communityId: 2,
+    });
+
+    expect(result.data[0]).toEqual(
+      expect.objectContaining({
+        id: 8,
+        itemType: ReportItemType.COMMUNITY,
+        communityId: 2,
+      }),
+    );
+    expect(listQb.andWhere).toHaveBeenCalledWith(
+      'report.item_type = :itemType',
+      { itemType: ReportItemType.COMMUNITY },
+    );
+    expect(listQb.andWhere).not.toHaveBeenCalledWith(
+      'report.item_type != :communityItemType',
+      expect.anything(),
+    );
+  });
+
+  it('does not return a community report from another community', async () => {
+    const listQb = chain();
+    const countsQb = chain();
+    reportRepository.createQueryBuilder
+      .mockReturnValueOnce(listQb)
+      .mockReturnValueOnce(countsQb);
+    listQb.getManyAndCount.mockResolvedValue([[], 0]);
+    countsQb.getRawMany.mockResolvedValue([]);
+
+    const result = await service.listGlobalReports({
+      page: 1,
+      limit: 20,
+      communityId: 2,
+    });
+
+    expect(result.data).toEqual([]);
+    expect(result.pagination.total).toBe(0);
+    expect(listQb.where).toHaveBeenCalledWith(
+      'report.community_id = :communityId',
+      { communityId: 2 },
+    );
+  });
+
+  it('excludes community reports from the community list query and counts', async () => {
+    const listQb = chain();
+    const countsQb = chain();
+    reportRepository.createQueryBuilder
+      .mockReturnValueOnce(listQb)
+      .mockReturnValueOnce(countsQb);
+    listQb.getManyAndCount.mockResolvedValue([[], 0]);
+    countsQb.getRawMany.mockResolvedValue([]);
+
+    await service.listCommunityReports(7, { page: 1, limit: 20 });
+
+    expect(listQb.andWhere).toHaveBeenCalledWith(
+      'report.item_type != :communityItemType',
+      { communityItemType: ReportItemType.COMMUNITY },
+    );
+    expect(countsQb.andWhere).toHaveBeenCalledWith(
+      'report.item_type != :communityItemType',
+      { communityItemType: ReportItemType.COMMUNITY },
+    );
   });
 });
