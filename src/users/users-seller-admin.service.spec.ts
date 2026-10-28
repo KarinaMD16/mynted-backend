@@ -74,6 +74,8 @@ describe('UsersService seller administration', () => {
     sellerId: 10,
     userId: 'seller-id',
     isVerified: true,
+    displayName: 'Funko Corner CR',
+    location: 'San José',
   });
 
   it('filters by sellerStatus and maps independent seller metrics', async () => {
@@ -97,6 +99,8 @@ describe('UsersService seller administration', () => {
         sellerId: 10,
         status: SellerRequestStatus.APPROVED,
         isVerified: true,
+        displayName: 'Funko Corner CR',
+        location: 'San José',
         productCount: 2,
         salesCount: 3,
         reportsReceivedCount: 4,
@@ -134,6 +138,8 @@ describe('UsersService seller administration', () => {
       productCount: 2,
       salesCount: 3,
       reportsReceivedCount: 4,
+      displayName: 'Funko Corner CR',
+      location: 'San José',
       products: [
         expect.objectContaining({ id: 1, isHidden: true, status: 'inactive' }),
       ],

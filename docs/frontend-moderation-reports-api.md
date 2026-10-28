@@ -287,6 +287,15 @@ JWT + SuperAdminGuard. Tiene el mismo body y reglas. Permite resolver reports de
 
 JWT + SuperAdminGuard. No requiere communityId en la URL y permite descartar reports normales o históricos.
 
+### Notificaciones de Community Reports
+
+- Mientras un Community Report está `pending`, el OWNER no recibe ninguna notificación.
+- Si el SUPERADMIN descarta el reporte, no se envía ninguna notificación.
+- Si el SUPERADMIN lo resuelve con una nota válida, el OWNER recibe una notificación `community_moderation_warning`.
+- La notificación es genérica y contiene únicamente `communityId` y `communityName`.
+- No incluye `reportId`, `reporter`, `reporterId`, `reason`, `description` ni `resolutionNote`.
+- El OWNER no obtiene acceso al reporte; los Community Reports siguen siendo gestionables exclusivamente por SUPERADMIN.
+
 ## Moderation log
 
 ### GET /moderation-log
@@ -367,6 +376,26 @@ El log es histórico y append-only. targetId llega como string. El actor no expo
 | GET | /users/stats | SUPERADMIN | Estadísticas globales. |
 
 GET /users admite sellerStatus: none, pending, approved, rejected, revoked.
+
+En las respuestas administrativas de `GET /users` y `GET /users/:id` cuando
+consulta un SUPERADMIN, un usuario con Seller incluye:
+
+~~~json
+{
+  "seller": {
+    "sellerId": 1,
+    "status": "approved",
+    "isVerified": true,
+    "displayName": "Nombre tienda",
+    "location": "Ubicación",
+    "productCount": 0,
+    "salesCount": 0,
+    "reportsReceivedCount": 0
+  }
+}
+~~~
+
+`location` no forma parte del Seller del perfil público.
 
 Desactivar y eliminar requieren:
 
