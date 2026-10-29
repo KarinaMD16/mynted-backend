@@ -1,5 +1,6 @@
 import {
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
   Optional,
@@ -22,6 +23,7 @@ import {
   CommunityJoinRequest,
   CommunityJoinRequestStatus,
 } from '../community/entities/community-join-request.entity';
+import { CommunityBan } from '../community/entities/community-ban.entity';
 import { Post } from '../community/entities/post.entity';
 import { UserTag } from '../user-tags/entities/user-tag.entity';
 import { UsersService } from '../users/users.service';
@@ -59,6 +61,9 @@ export class UserCommunitiesService {
     private readonly communityService: CommunityService,
     @Optional()
     private readonly eventEmitter?: EventEmitter2,
+    @Optional()
+    @InjectRepository(CommunityBan)
+    private readonly communityBanRepository?: Repository<CommunityBan>,
   ) {}
 
   /**
@@ -120,6 +125,17 @@ export class UserCommunitiesService {
     community: Community,
   ): Promise<JoinCommunityResult> {
     const communityId = community.id;
+
+    const activeBan = this.communityBanRepository
+      ? await this.communityBanRepository.findOne({
+          where: { communityId, userId, isActive: true },
+        })
+      : null;
+    if (activeBan) {
+      throw new ForbiddenException(
+        'No puedes unirte a esta comunidad porque has sido bloqueado',
+      );
+    }
 
     const existingProfile = await this.communityProfileRepository.findOne({
       where: { userId, communityId },

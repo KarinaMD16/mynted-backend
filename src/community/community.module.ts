@@ -14,6 +14,7 @@ import { Community } from './entities/community.entity';
 import { Tag } from './entities/tag.entity';
 import { CommunityProfile } from './entities/community-profile.entity';
 import { CommunityJoinRequest } from './entities/community-join-request.entity';
+import { CommunityBan } from './entities/community-ban.entity';
 import { Post } from './entities/post.entity';
 import { PostTag } from './entities/post-tag.entity';
 import { PostImage } from './entities/post-image.entity';
@@ -44,6 +45,7 @@ import { ModerationActionsModule } from '../moderation-actions/moderation-action
       CommunityRule,
       CommunityProfile,
       CommunityJoinRequest,
+      CommunityBan,
       Post,
       PostTag,
       PostImage,
