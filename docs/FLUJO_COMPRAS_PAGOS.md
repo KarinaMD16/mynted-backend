@@ -403,6 +403,11 @@ Incluye, cuando corresponde:
 
 No expone información de tarjeta completa ni información de otros usuarios.
 
+También incluye `dispute`: `null` si la transacción no tiene reclamo o un
+objeto con `id`, `status`, `reason`, `resolution`, `resolutionNote`,
+`createdAt` y `resolvedAt` cuando existe. Solo se exponen estos campos del
+reclamo; no se incluyen actores administrativos ni datos duplicados.
+
 ## 23. Notifications
 
 Las notificaciones de compra existentes incluyen:

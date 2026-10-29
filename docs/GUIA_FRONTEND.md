@@ -960,6 +960,12 @@ Sigue en `GET /products/:id` con **el mismo valor que `canReview`**, solo por co
 | 404    | `Producto no encontrado`                                    | No existe, es un borrador ajeno, o está borrado y no lo compraste.               |
 | 409    | `Ya reseñaste este producto`                                | Ya tiene reseña (también si dos peticiones llegan a la vez: solo una se guarda). |
 
+### Reclamo en el receipt
+
+`GET /payments/:id` incluye `dispute: null` si no existe reclamo. Si existe,
+contiene `id`, `status`, `reason`, `resolution`, `resolutionNote`, `createdAt`
+y `resolvedAt`.
+
 Otras notas:
 
 - Un comentario vacío o de solo espacios se guarda como `null`.
