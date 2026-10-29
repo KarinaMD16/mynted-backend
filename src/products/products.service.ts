@@ -93,7 +93,7 @@ import {
   applyDisplayPriceRange,
   applyProductSort,
 } from './product-price-query';
-import { ReviewsService } from './reviews.service';
+import { RatingSummary, ReviewsService } from './reviews.service';
 import { ModerationActionsService } from '../moderation-actions/moderation-actions.service';
 import {
   MODERATION_ACTIONS,
@@ -126,6 +126,9 @@ export interface TagProductCard {
   quantity: number;
   isAvailable: boolean;
   isSaved: boolean;
+  // Rating del PRODUCTO (no el del vendedor); findShop lo completa por lotes.
+  ratingAverage: number | null;
+  reviewsCount: number;
   tags: { tagId: number; name: string }[];
   seller: {
     sellerId: number;
@@ -256,6 +259,9 @@ export interface MyProductCard {
   // el destacado está "en pausa" (Pro vencido, producto no activo, etc.).
   featuredEnabled: boolean;
   isFeatured: boolean;
+  // Rating del producto; findMine lo completa por lotes.
+  ratingAverage: number | null;
+  reviewsCount: number;
 }
 
 export interface MyProductsSection {
@@ -301,6 +307,9 @@ export type ProductListItem = WithDisplayPrice<
     finalPrice: number;
     isAvailable: boolean;
     isSaved: boolean;
+    // Rating del producto (promedio con 1 decimal o null, y cantidad).
+    ratingAverage: number | null;
+    reviewsCount: number;
     // Destacado efectivo (Pro): solo lo traen GET /products y la lista de
     // productos de una tienda.
     isFeatured?: boolean;
@@ -841,7 +850,7 @@ export class ProductsService {
     // isSaved, tasas, isPro y marco: una sola resolución de cada uno para
     // toda la página.
     const cards = sections.flatMap((section) => section.products);
-    const [saved, usdRates, displays] = await Promise.all([
+    const [saved, usdRates, displays, ratings] = await Promise.all([
       this.getSavedProductIds(
         userId,
         cards.map((card) => card.id),
@@ -854,6 +863,7 @@ export class ProductsService {
       this.cosmeticsService.getEffectiveSummaryForUsers(
         cards.map((card) => card.seller.userId),
       ),
+      this.reviewsService.getProductRatings(cards.map((card) => card.id)),
     ]);
 
     return {
@@ -869,6 +879,7 @@ export class ProductsService {
             ...(displays.get(card.seller.userId) ?? FALLBACK_USER_DISPLAY),
           },
           isSaved: saved.has(card.id),
+          ...this.ratingOf(ratings, card.id),
           ...this.priceDisplay.toDisplay(card, displayCurrency, usdRates),
         })),
       })),
@@ -991,6 +1002,8 @@ export class ProductsService {
       quantity: product.quantity,
       isAvailable: isProductAvailable(product),
       isSaved: false,
+      ratingAverage: null,
+      reviewsCount: 0,
       tags: product.productTags.map((productTag) => ({
         tagId: productTag.tag.tagId,
         name: productTag.tag.name,
@@ -1047,16 +1060,19 @@ export class ProductsService {
     );
 
     // Estado de destacado de toda la página con una sola consulta.
-    const featured = await this.findFeaturedState(
-      sections.flatMap((section) =>
-        section.products.map((product) => product.id),
-      ),
+    const pageProductIds = sections.flatMap((section) =>
+      section.products.map((product) => product.id),
     );
+    const [featured, ratings] = await Promise.all([
+      this.findFeaturedState(pageProductIds),
+      this.reviewsService.getProductRatings(pageProductIds),
+    ]);
     for (const section of sections) {
       section.products = section.products.map((product) => ({
         ...product,
         featuredEnabled: featured.has(product.id),
         isFeatured: featured.get(product.id) === true,
+        ...this.ratingOf(ratings, product.id),
       }));
     }
 
@@ -1120,6 +1136,8 @@ export class ProductsService {
       // Se completan por lotes en findMine.
       featuredEnabled: false,
       isFeatured: false,
+      ratingAverage: null,
+      reviewsCount: 0,
     };
   }
 
@@ -2125,7 +2143,19 @@ export class ProductsService {
     return new Set(favorites.map((favorite) => favorite.itemId));
   }
 
-  // Agrega finalPrice, isSaved y el precio en la moneda de visualización a
+  // Rating del producto para la tarjeta (sin reseñas: null y 0).
+  private ratingOf(
+    ratings: Map<number, RatingSummary>,
+    productId: number,
+  ): RatingSummary {
+    const { ratingAverage, reviewsCount } = ratings.get(productId) ?? {
+      ratingAverage: null,
+      reviewsCount: 0,
+    };
+    return { ratingAverage, reviewsCount };
+  }
+
+  // Agrega finalPrice, rating, isSaved y el precio en la moneda de visualización a
   // una lista de productos. rates permite reutilizar las tasas ya usadas
   // para filtrar u ordenar.
   private async withSaved(
@@ -2135,16 +2165,18 @@ export class ProductsService {
     rates?: UsdRates,
     featuredIds?: Set<number>,
   ): Promise<ProductListItem[]> {
-    const saved = await this.getSavedProductIds(
-      viewerId,
-      products.map((product) => product.id),
-    );
+    const productIds = products.map((product) => product.id);
+    const [saved, ratings] = await Promise.all([
+      this.getSavedProductIds(viewerId, productIds),
+      this.reviewsService.getProductRatings(productIds),
+    ]);
     return this.priceDisplay.withDisplayPrices(
       products.map((product) => ({
         ...product,
         finalPrice: computeFinalPrice(product.price, product.discountPercent),
         isAvailable: isProductAvailable(product),
         isSaved: saved.has(product.id),
+        ...this.ratingOf(ratings, product.id),
         ...(featuredIds ? { isFeatured: featuredIds.has(product.id) } : {}),
       })),
       displayCurrency,
