@@ -16,6 +16,7 @@ import { Seller } from '../sellers/entities/seller.entity';
 import { SellerRequestStatus, User } from '../users/entities/user.entity';
 import { PaymentTransaction } from './entities/payment-transaction.entity';
 import { TransactionStatus } from './enums/transaction-status.enum';
+import { ShippingStatus } from './enums/shipping-status.enum';
 import {
   PaymentCardValidationCode,
   PaymentCardValidationError,
@@ -237,8 +238,12 @@ describe('PaymentsService', () => {
       normalizedAmountCrc: null,
     });
     expect(result.shippingAddress).toEqual(shippingAddress);
+    expect(result.shippingStatus).toBe(ShippingStatus.PAID);
     expect(h.txRepo.save).toHaveBeenLastCalledWith(
-      expect.objectContaining({ shippingAddress }),
+      expect.objectContaining({
+        shippingAddress,
+        shippingStatus: ShippingStatus.PAID,
+      }),
     );
   });
 
@@ -277,7 +282,10 @@ describe('PaymentsService', () => {
     // El DTO real ya normaliza estos valores; este caso confirma que el
     // snapshot persistido no depende de una referencia mutable al DTO.
     expect(h.txRepo.save).toHaveBeenCalledWith(
-      expect.objectContaining({ shippingAddress: normalizedAddress }),
+      expect.objectContaining({
+        shippingAddress: normalizedAddress,
+        shippingStatus: null,
+      }),
     );
     expect(address).not.toBe(h.txRepo.save.mock.calls[0][0].shippingAddress);
   });

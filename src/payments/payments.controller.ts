@@ -6,6 +6,7 @@ import {
   Param,
   ParseIntPipe,
   ParseUUIDPipe,
+  Patch,
   Post,
   Query,
   Req,
@@ -22,6 +23,7 @@ import {
   ApiParam,
   ApiOperation,
   ApiQuery,
+  ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -36,6 +38,8 @@ import { PaymentPurchaseListResponseDto } from './dto/payment-purchase-response.
 import { PaymentSaleListResponseDto } from './dto/payment-sale-response.dto';
 import { SalesSummaryResponseDto } from './dto/sales-summary-response.dto';
 import { PaymentReceiptResponseDto } from './dto/payment-receipt-response.dto';
+import { ShipPaymentDto } from './dto/ship-payment.dto';
+import { PaymentShippingResponseDto } from './dto/payment-shipping-response.dto';
 
 @ApiTags('payments')
 @Controller('payments')
@@ -167,6 +171,42 @@ export class PaymentsController {
       request.user.userId,
       idempotencyKey,
     );
+  }
+
+  @Patch(':id/ship')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiParam({ name: 'id', type: String, format: 'uuid' })
+  @ApiBody({ type: ShipPaymentDto })
+  @ApiOperation({ summary: 'Marcar una compra como enviada' })
+  @ApiOkResponse({ type: PaymentShippingResponseDto })
+  @ApiResponse({ status: 401, description: 'No autenticado' })
+  @ApiResponse({ status: 403, description: 'No es el vendedor de la compra' })
+  @ApiResponse({ status: 404, description: 'Transacción no encontrada' })
+  @ApiResponse({ status: 409, description: 'Estado no válido para envío' })
+  ship(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() dto: ShipPaymentDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.paymentsService.ship(id, request.user.userId, dto);
+  }
+
+  @Patch(':id/deliver')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiParam({ name: 'id', type: String, format: 'uuid' })
+  @ApiOperation({ summary: 'Marcar una compra como entregada' })
+  @ApiOkResponse({ type: PaymentShippingResponseDto })
+  @ApiResponse({ status: 401, description: 'No autenticado' })
+  @ApiResponse({ status: 403, description: 'No es el comprador de la compra' })
+  @ApiResponse({ status: 404, description: 'Transacción no encontrada' })
+  @ApiResponse({ status: 409, description: 'Estado no válido para entrega' })
+  deliver(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.paymentsService.deliver(id, request.user.userId);
   }
 
   @Get(':id')

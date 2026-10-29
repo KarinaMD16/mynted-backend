@@ -15,6 +15,8 @@ import {
 } from '../community/community-events';
 import {
   CheckoutCompletedEvent,
+  OrderDeliveredEvent,
+  OrderShippedEvent,
   PaymentEvents,
 } from '../payments/payment-events';
 import {
@@ -110,6 +112,57 @@ export class NotificationsListener {
           excludeUserIds: [event.buyerId, row.seller_user_id],
         });
       }
+    });
+  }
+
+  @OnEvent(PaymentEvents.ORDER_SHIPPED, { async: true })
+  onOrderShipped(event: OrderShippedEvent) {
+    return this.safely(PaymentEvents.ORDER_SHIPPED, async () => {
+      const [row] = await this.dataSource.query<{ product_title: string }[]>(
+        'SELECT title AS product_title FROM product WHERE id = $1',
+        [event.productId],
+      );
+      if (!row) return;
+      await this.notificationsService.notify([
+        {
+          userId: event.buyerId,
+          type: NotificationType.ORDER_SHIPPED,
+          data: {
+            transactionId: event.transactionId,
+            productId: event.productId,
+            productTitle: row.product_title,
+          },
+          message: `Tu pedido "${row.product_title}" ha sido enviado`,
+        },
+      ]);
+    });
+  }
+
+  @OnEvent(PaymentEvents.ORDER_DELIVERED, { async: true })
+  onOrderDelivered(event: OrderDeliveredEvent) {
+    return this.safely(PaymentEvents.ORDER_DELIVERED, async () => {
+      const [row] = await this.dataSource.query<
+        { product_title: string; seller_user_id: string }[]
+      >(
+        `SELECT p.title AS product_title, s.user_id AS seller_user_id
+           FROM product p
+           JOIN seller s ON s.seller_id = $2
+          WHERE p.id = $1`,
+        [event.productId, event.sellerId],
+      );
+      if (!row) return;
+      await this.notificationsService.notify([
+        {
+          userId: row.seller_user_id,
+          type: NotificationType.ORDER_DELIVERED,
+          data: {
+            transactionId: event.transactionId,
+            productId: event.productId,
+            productTitle: row.product_title,
+          },
+          message: `Tu pedido "${row.product_title}" fue entregado`,
+        },
+      ]);
     });
   }
 

@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ShippingStatus } from '../enums/shipping-status.enum';
 
 export class PaymentHistoryPaginationDto {
   page!: number;
@@ -28,6 +29,8 @@ export class PaymentPurchaseItemDto {
   cardLast4!: string | null;
   cardHolderName!: string | null;
   gatewayReference!: string | null;
+  @ApiPropertyOptional({ enum: ShippingStatus, nullable: true })
+  shippingStatus!: ShippingStatus | null;
 
   @ApiProperty({
     example: false,

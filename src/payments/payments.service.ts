@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   HttpException,
   HttpStatus,
   Inject,
@@ -35,8 +36,16 @@ import { normalizeCardHolderName } from './dto/payment-card.dto';
 import { CheckoutResponseDto } from './dto/checkout-response.dto';
 import { QuoteResponseDto } from './dto/quote-response.dto';
 import { ExchangeRateService } from './exchange-rate/exchange-rate.service';
-import { CheckoutCompletedEvent, PaymentEvents } from './payment-events';
+import {
+  CheckoutCompletedEvent,
+  OrderDeliveredEvent,
+  OrderShippedEvent,
+  PaymentEvents,
+} from './payment-events';
 import { ShippingAddressSnapshot } from './types/shipping-address-snapshot';
+import { ShippingStatus } from './enums/shipping-status.enum';
+import { ShipPaymentDto } from './dto/ship-payment.dto';
+import { PaymentShippingResponseDto } from './dto/payment-shipping-response.dto';
 
 // isNew: el pago se aprobó en esta llamada (no es la repetición de una clave
 // de idempotencia ya usada).
@@ -149,6 +158,100 @@ export class PaymentsService {
       };
     }
     return response;
+  }
+
+  async ship(
+    transactionId: string,
+    userId: string,
+    dto: ShipPaymentDto,
+  ): Promise<PaymentShippingResponseDto> {
+    const result = await this.dataSource.transaction(async (manager) => {
+      const repository = manager.getRepository(PaymentTransaction);
+      const transaction = await repository.findOne({
+        where: { id: transactionId },
+        relations: { seller: true },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!transaction)
+        throw new NotFoundException('Transacción no encontrada');
+      if (transaction.seller?.userId !== userId) {
+        throw new ForbiddenException(
+          'No tienes permiso para enviar esta transacción',
+        );
+      }
+      if (
+        transaction.status !== TransactionStatus.COMPLETED ||
+        transaction.shippingStatus !== ShippingStatus.PAID ||
+        transaction.shippingAddress === null ||
+        transaction.shippingAddress === undefined
+      ) {
+        throw new ConflictException(
+          'La transacción no está lista para enviarse',
+        );
+      }
+
+      transaction.shippingStatus = ShippingStatus.SHIPPED;
+      transaction.shippedAt = new Date();
+      transaction.trackingNumber = this.normalizeOptionalText(
+        dto.trackingNumber,
+      );
+      transaction.carrier = this.normalizeOptionalText(dto.carrier);
+      await repository.save(transaction);
+      return {
+        response: this.toShippingResponse(transaction),
+        event: {
+          transactionId: transaction.id,
+          productId: transaction.productId,
+          buyerId: transaction.buyerId,
+        } satisfies OrderShippedEvent,
+      };
+    });
+
+    this.eventEmitter?.emit(PaymentEvents.ORDER_SHIPPED, result.event);
+    return result.response;
+  }
+
+  async deliver(
+    transactionId: string,
+    userId: string,
+  ): Promise<PaymentShippingResponseDto> {
+    const result = await this.dataSource.transaction(async (manager) => {
+      const repository = manager.getRepository(PaymentTransaction);
+      const transaction = await repository.findOne({
+        where: { id: transactionId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!transaction)
+        throw new NotFoundException('Transacción no encontrada');
+      if (transaction.buyerId !== userId) {
+        throw new ForbiddenException(
+          'No tienes permiso para entregar esta transacción',
+        );
+      }
+      if (
+        transaction.status !== TransactionStatus.COMPLETED ||
+        transaction.shippingStatus !== ShippingStatus.SHIPPED
+      ) {
+        throw new ConflictException(
+          'La transacción no está lista para marcarse como entregada',
+        );
+      }
+
+      transaction.shippingStatus = ShippingStatus.DELIVERED;
+      transaction.deliveredAt = new Date();
+      await repository.save(transaction);
+      return {
+        response: this.toShippingResponse(transaction),
+        event: {
+          transactionId: transaction.id,
+          productId: transaction.productId,
+          sellerId: transaction.sellerId,
+        } satisfies OrderDeliveredEvent,
+      };
+    });
+
+    this.eventEmitter?.emit(PaymentEvents.ORDER_DELIVERED, result.event);
+    return result.response;
   }
 
   async checkout(
@@ -337,6 +440,11 @@ export class PaymentsService {
       gatewayReference: null,
       idempotencyKey,
       shippingAddress,
+      shippingStatus: null,
+      trackingNumber: null,
+      carrier: null,
+      shippedAt: null,
+      deliveredAt: null,
       completedAt: null,
     });
     await transactionRepository.save(pending);
@@ -374,6 +482,7 @@ export class PaymentsService {
     ) as string;
     pending.failureReason = null;
     pending.completedAt = new Date();
+    pending.shippingStatus = ShippingStatus.PAID;
     seller.completedSalesCount = salesCountBefore + 1;
 
     // Descuento atómico del stock, en la misma transacción que confirma el
@@ -540,7 +649,30 @@ export class PaymentsService {
       failureReason: transaction.failureReason,
       completedAt: transaction.completedAt,
       shippingAddress: transaction.shippingAddress ?? null,
+      shippingStatus: transaction.shippingStatus ?? null,
     };
+  }
+
+  private toShippingResponse(
+    transaction: PaymentTransaction,
+  ): PaymentShippingResponseDto {
+    return {
+      transactionId: transaction.id,
+      paymentStatus: transaction.status,
+      shippingStatus: transaction.shippingStatus ?? null,
+      trackingNumber: transaction.trackingNumber ?? null,
+      carrier: transaction.carrier ?? null,
+      shippedAt: transaction.shippedAt ?? null,
+      deliveredAt: transaction.deliveredAt ?? null,
+    };
+  }
+
+  private normalizeOptionalText(
+    value: string | null | undefined,
+  ): string | null {
+    if (value === undefined || value === null) return null;
+    const normalized = value.trim();
+    return normalized === '' ? null : normalized;
   }
 
   private toShippingAddressSnapshot(dto: CheckoutDto): ShippingAddressSnapshot {

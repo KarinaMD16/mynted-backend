@@ -3,7 +3,21 @@
 // escuchan sin que pagos dependa de ellos.
 export const PaymentEvents = {
   CHECKOUT_COMPLETED: 'payment.checkout.completed',
+  ORDER_SHIPPED: 'payment.order.shipped',
+  ORDER_DELIVERED: 'payment.order.delivered',
 } as const;
+
+export interface OrderShippedEvent {
+  transactionId: string;
+  productId: number;
+  buyerId: string;
+}
+
+export interface OrderDeliveredEvent {
+  transactionId: string;
+  productId: number;
+  sellerId: number;
+}
 
 // Un pago recién aprobado (nunca se emite al repetir una clave de
 // idempotencia). sellerId es seller.seller_id, no el user_id del vendedor.

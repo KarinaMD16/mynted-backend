@@ -86,6 +86,43 @@ autorizado. `GET /payments/me/purchases` y `GET /payments/me/sales` no incluyen
 la dirección completa en sus listados. Las notificaciones de compra/venta
 tampoco contienen datos de envío.
 
+## Estados de envío de compras
+
+El estado del pago y el estado del envío son independientes. Una compra
+completada inicia con `shippingStatus: "paid"` y sigue esta secuencia:
+
+`paid` → `shipped` → `delivered`
+
+El vendedor autenticado puede marcar el pedido como enviado:
+
+```http
+PATCH /payments/:id/ship
+```
+
+Body opcional:
+
+```json
+{
+  "trackingNumber": "ABC123",
+  "carrier": "Correos de Costa Rica"
+}
+```
+
+El comprador autenticado puede marcarlo como recibido:
+
+```http
+PATCH /payments/:id/deliver
+```
+
+Ambas transiciones requieren JWT y devuelven `409` si el pago o el estado de
+envío no permiten la transición. `GET /payments/:id` incluye
+`shippingStatus`, `trackingNumber`, `carrier`, `shippedAt` y `deliveredAt`.
+Las listas de compras y ventas incluyen únicamente `shippingStatus`.
+
+Las transacciones históricas pueden devolver esos campos como `null`; no se
+infiere `paid` automáticamente. Las notificaciones `order_shipped` llegan al
+comprador y `order_delivered` al vendedor, sin incluir dirección ni tracking.
+
 ## 0. Convenciones generales
 
 | Tema                                           | Detalle                                                                                                                                                                                                                                                |

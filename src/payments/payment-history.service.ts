@@ -225,6 +225,11 @@ export class PaymentHistoryService {
         'transaction.cardBrand',
         'transaction.cardHolderName',
         'transaction.shippingAddress',
+        'transaction.shippingStatus',
+        'transaction.trackingNumber',
+        'transaction.carrier',
+        'transaction.shippedAt',
+        'transaction.deliveredAt',
         'product.id',
         'product.title',
         'product.imageUrl',
@@ -264,6 +269,11 @@ export class PaymentHistoryService {
       gatewayReference: transaction.gatewayReference,
       failureReason: transaction.failureReason,
       shippingAddress: transaction.shippingAddress ?? null,
+      shippingStatus: transaction.shippingStatus ?? null,
+      trackingNumber: transaction.trackingNumber ?? null,
+      carrier: transaction.carrier ?? null,
+      shippedAt: transaction.shippedAt ?? null,
+      deliveredAt: transaction.deliveredAt ?? null,
     };
     // El nombre del titular es dato personal del comprador: el vendedor no
     // lo recibe.
@@ -307,6 +317,7 @@ export class PaymentHistoryService {
       'transaction.gatewayReference',
       'transaction.createdAt',
       'transaction.completedAt',
+      'transaction.shippingStatus',
     ];
   }
 
@@ -357,6 +368,7 @@ export class PaymentHistoryService {
       cardLast4: transaction.cardLast4,
       cardHolderName: transaction.cardHolderName ?? null,
       gatewayReference: transaction.gatewayReference,
+      shippingStatus: transaction.shippingStatus ?? null,
       // El detalle de un producto borrado da 404: el frontend no debe enlazarlo.
       productDeleted: transaction.product.deletedAt != null,
       canReview,
@@ -388,6 +400,7 @@ export class PaymentHistoryService {
       commissionRate: transaction.commissionRate,
       commissionAmount: transaction.commissionAmount,
       sellerNet: transaction.sellerNet,
+      shippingStatus: transaction.shippingStatus ?? null,
     };
   }
 
