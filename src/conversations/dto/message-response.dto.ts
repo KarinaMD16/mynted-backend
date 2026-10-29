@@ -1,4 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { ProductType } from '../../products/entities/product.entity';
 import { MessageType } from '../enums/message-type.enum';
 import {
   ParticipantSummaryDto,
@@ -47,6 +48,24 @@ export class MessageResponseDto {
 export class MessageHistoryConversationDto {
   @ApiProperty({ type: Number, example: 15 })
   id!: number;
+
+  @ApiProperty({
+    enum: ['buyer', 'seller'],
+    description: 'Rol de quien consulta el historial en esta conversación',
+  })
+  viewerRole!: 'buyer' | 'seller';
+
+  @ApiProperty({
+    type: Boolean,
+    description: 'true si el vendedor ya envió al menos un mensaje',
+  })
+  sellerHasReplied!: boolean;
+
+  @ApiProperty({
+    enum: ProductType,
+    description: "'sale' (se paga) o 'exchange' (intercambio, no se paga)",
+  })
+  productType!: ProductType;
 
   @ApiProperty({ type: ProductContextDto })
   product!: ProductContextDto;

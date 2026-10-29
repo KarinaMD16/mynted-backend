@@ -253,19 +253,31 @@ export class MessagesService {
       conversation.buyerId === viewerId
         ? conversation.seller
         : conversation.buyer;
-    const [otherSeller, rates, otherDisplay] = await Promise.all([
-      this.sellerRepository.findOne({
-        where: { userId: other.id },
-        select: { sellerId: true, displayName: true, isVerified: true },
-      }),
-      this.priceDisplay.getDisplayRates(displayCurrency, [
-        conversation.product.currency,
-      ]),
-      this.cosmeticsService.getEffectiveSummaryForUsers([other.id]),
-    ]);
+    const [otherSeller, rates, otherDisplay, sellerHasReplied] =
+      await Promise.all([
+        this.sellerRepository.findOne({
+          where: { userId: other.id },
+          select: { sellerId: true, displayName: true, isVerified: true },
+        }),
+        this.priceDisplay.getDisplayRates(displayCurrency, [
+          conversation.product.currency,
+        ]),
+        this.cosmeticsService.getEffectiveSummaryForUsers([other.id]),
+        // EXISTS: no hace falta paginar los mensajes para saberlo.
+        this.messageRepository.exists({
+          where: {
+            conversationId: conversationId,
+            senderId: conversation.sellerId,
+          },
+        }),
+      ]);
 
     return {
       id: conversation.id,
+      viewerRole: (conversation.buyerId === viewerId ? 'buyer' : 'seller') as
+        'buyer' | 'seller',
+      sellerHasReplied,
+      productType: conversation.product.type,
       product: {
         ...toProductContext(conversation.product),
         ...this.priceDisplay.toDisplay(
