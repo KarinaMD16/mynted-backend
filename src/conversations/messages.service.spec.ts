@@ -5,7 +5,10 @@ import {
 } from '@nestjs/common';
 import { DataSource, IsNull, Not, Repository } from 'typeorm';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
-import { ProductStatus } from '../products/entities/product.entity';
+import {
+  ProductStatus,
+  ProductType,
+} from '../products/entities/product.entity';
 import { Seller } from '../sellers/entities/seller.entity';
 import { Conversation } from './entities/conversation.entity';
 import { Message } from './entities/message.entity';
@@ -82,6 +85,7 @@ describe('MessagesService', () => {
           currency: 'CRC',
           imageUrl: 'https://cdn/cover.png',
           status: ProductStatus.SOLD,
+          type: ProductType.SALE,
           isVisible: true,
           deletedAt: null,
         },
@@ -455,6 +459,9 @@ describe('MessagesService', () => {
 
       expect(result.conversation).toEqual({
         id: 15,
+        viewerRole: 'buyer',
+        sellerHasReplied: true,
+        productType: ProductType.SALE,
         product: {
           id: 42,
           title: 'Goku SSJ',
