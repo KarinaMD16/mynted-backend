@@ -1,5 +1,6 @@
 import { NotFoundException } from '@nestjs/common';
 import { Repository } from 'typeorm';
+import { IsNull } from 'typeorm';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
 import { UsersService } from '../users/users.service';
 import { CommunityService } from './community.service';
@@ -68,7 +69,7 @@ describe('CommunityService.getStats', () => {
       recentPostCount: 2,
     });
     expect(communityProfileRepository.count).toHaveBeenCalledWith({
-      where: { communityId: 7 },
+      where: { communityId: 7, removedAt: IsNull() },
     });
     expect(postQueryBuilders[0].innerJoin).toHaveBeenCalledWith(
       CommunityProfile,
@@ -87,7 +88,7 @@ describe('CommunityService.getStats', () => {
     await service.getStats(7);
 
     expect(communityProfileRepository.count).toHaveBeenCalledWith({
-      where: { communityId: 7 },
+      where: { communityId: 7, removedAt: IsNull() },
     });
   });
 

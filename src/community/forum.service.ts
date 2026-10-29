@@ -14,6 +14,7 @@ import {
   DataSource,
   FindOptionsWhere,
   In,
+  IsNull,
   Not,
   Repository,
 } from 'typeorm';
@@ -387,6 +388,7 @@ export class ForumService {
           SELECT 1 FROM community_profile hidden_post_viewer
           WHERE hidden_post_viewer.user_id = :viewerId
             AND hidden_post_viewer.community_id = profile.community_id
+            AND hidden_post_viewer.removed_at IS NULL
             AND hidden_post_viewer.role IN ('moderator', 'owner')
         ))`,
         { viewerId },
@@ -480,6 +482,7 @@ export class ForumService {
             where: {
               userId,
               communityId: community.id,
+              removedAt: IsNull(),
             },
             select: { communityProfileId: true },
           })
@@ -570,6 +573,7 @@ export class ForumService {
                 where: {
                   userId,
                   communityId: post.communityProfile.communityId,
+                  removedAt: IsNull(),
                 },
                 select: { communityProfileId: true },
               })
@@ -597,6 +601,7 @@ export class ForumService {
           SELECT 1 FROM community_profile reply_viewer_profile
           WHERE reply_viewer_profile.user_id = :viewerId
             AND reply_viewer_profile.community_id = :communityId
+            AND reply_viewer_profile.removed_at IS NULL
             AND reply_viewer_profile.role IN ('moderator', 'owner')
         )))`,
         { viewerId: userId, communityId: post.communityProfile.communityId },
@@ -636,6 +641,7 @@ export class ForumService {
       where: {
         userId,
         communityId: reply.post.communityProfile.communityId,
+        removedAt: IsNull(),
       },
       select: { communityProfileId: true },
     });
@@ -843,7 +849,7 @@ export class ForumService {
     communityId: number,
   ): Promise<CommunityProfile> {
     const profile = await this.communityProfileRepository.findOne({
-      where: { userId, communityId },
+      where: { userId, communityId, removedAt: IsNull() },
     });
     if (!profile) {
       throw new ForbiddenException(
@@ -873,7 +879,7 @@ export class ForumService {
     if (!viewerId) return false;
     if (post.communityProfile?.userId === viewerId) return true;
     const profile = await this.communityProfileRepository.findOne({
-      where: { userId: viewerId, communityId },
+      where: { userId: viewerId, communityId, removedAt: IsNull() },
       select: { role: true },
     });
     return (
@@ -893,6 +899,7 @@ export class ForumService {
       where: {
         userId: viewerId,
         communityId: reply.post.communityProfile.communityId,
+        removedAt: IsNull(),
       },
       select: { role: true },
     });
@@ -1042,6 +1049,7 @@ export class ForumService {
                   FROM community_profile reply_viewer
                   WHERE reply_viewer.user_id = :viewerId
                     AND reply_viewer.community_id = reply_post_profile.community_id
+                    AND reply_viewer.removed_at IS NULL
                     AND reply_viewer.role IN ('moderator', 'owner')
                 )`);
               }),
@@ -1139,7 +1147,7 @@ export class ForumService {
       return true;
     }
     return this.communityProfileRepository.exists({
-      where: { userId, communityId: product.communityId },
+      where: { userId, communityId: product.communityId, removedAt: IsNull() },
     });
   }
 
@@ -1245,6 +1253,7 @@ export class ForumService {
         SELECT 1 FROM community_profile viewer_profile
         WHERE viewer_profile.user_id = :viewerId
           AND viewer_profile.community_id = profile.community_id
+          AND viewer_profile.removed_at IS NULL
           AND viewer_profile.role IN ('moderator', 'owner')
       ))`,
       { viewerId },
@@ -1410,6 +1419,7 @@ export class ForumService {
                 SELECT 1 FROM community_profile favorite_post_viewer
                 WHERE favorite_post_viewer.user_id = :viewerId
                   AND favorite_post_viewer.community_id = favorite_post_profile.community_id
+                  AND favorite_post_viewer.removed_at IS NULL
                   AND favorite_post_viewer.role IN ('moderator', 'owner')
               ))`,
               { viewerId: userId },
@@ -1433,6 +1443,7 @@ export class ForumService {
                 SELECT 1 FROM community_profile favorite_product_viewer
                 WHERE favorite_product_viewer.user_id = :viewerId
                   AND favorite_product_viewer.community_id = favorite_product.community_id
+                  AND favorite_product_viewer.removed_at IS NULL
                   AND favorite_product_viewer.role IN ('moderator', 'owner')
               ))`,
               { viewerId: userId },
@@ -1609,7 +1620,11 @@ export class ForumService {
     const profiles =
       viewerId && communityIds.length
         ? await this.communityProfileRepository.find({
-            where: { userId, communityId: In(communityIds) },
+            where: {
+              userId,
+              communityId: In(communityIds),
+              removedAt: IsNull(),
+            },
             select: { communityProfileId: true, communityId: true },
           })
         : [];

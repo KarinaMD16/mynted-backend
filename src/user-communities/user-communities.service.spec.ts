@@ -136,6 +136,40 @@ describe('UserCommunitiesService', () => {
       expect(existingProfile.role).toBe(CommunityProfileRole.MEMBER);
     });
 
+    it('reactivates the same removed profile on public rejoin', async () => {
+      const removedProfile = {
+        communityProfileId: 10,
+        userId: 'user-id',
+        communityId: 5,
+        role: CommunityProfileRole.MODERATOR,
+        displayName: 'collector',
+        bio: 'bio',
+        removedAt: new Date('2026-01-01T00:00:00.000Z'),
+      } as CommunityProfile;
+      communityRepository.findOne.mockResolvedValue({
+        id: 5,
+        isPrivate: false,
+      });
+      communityProfileRepository.findOne.mockResolvedValue(removedProfile);
+      usersService.findById.mockResolvedValue({
+        id: 'user-id',
+        username: 'collector',
+      });
+
+      await expect(service.joinCommunity('user-id', 5)).resolves.toEqual({
+        communityId: 5,
+        result: 'joined',
+      });
+
+      expect(communityProfileRepository.create).not.toHaveBeenCalled();
+      expect(communityProfileRepository.save).toHaveBeenCalledWith(
+        removedProfile,
+      );
+      expect(removedProfile.removedAt).toBeNull();
+      expect(removedProfile.role).toBe(CommunityProfileRole.MEMBER);
+      expect(removedProfile.communityProfileId).toBe(10);
+    });
+
     it('returns already_member on a concurrent unique violation', async () => {
       communityRepository.findOne.mockResolvedValue({
         id: 5,
@@ -167,6 +201,27 @@ describe('UserCommunitiesService', () => {
   });
 
   describe('joinCommunity — private community', () => {
+    it('creates a new request for a removed profile without creating another profile', async () => {
+      const removedProfile = {
+        communityProfileId: 10,
+        userId: 'user-id',
+        communityId: 6,
+        role: CommunityProfileRole.MEMBER,
+        removedAt: new Date(),
+      } as CommunityProfile;
+      communityRepository.findOne.mockResolvedValue({ id: 6, isPrivate: true });
+      communityProfileRepository.findOne.mockResolvedValue(removedProfile);
+      communityJoinRequestRepository.findOne.mockResolvedValue(null);
+
+      await expect(service.joinCommunity('user-id', 6)).resolves.toEqual({
+        communityId: 6,
+        result: 'requested',
+      });
+
+      expect(communityProfileRepository.create).not.toHaveBeenCalled();
+      expect(communityJoinRequestRepository.save).toHaveBeenCalled();
+    });
+
     it('creates a pending communityJoinRequest instead of a profile', async () => {
       communityRepository.findOne.mockResolvedValue({ id: 6, isPrivate: true });
       communityProfileRepository.findOne.mockResolvedValue(null);
@@ -238,7 +293,7 @@ describe('UserCommunitiesService', () => {
   });
 
   describe('leaveCommunity', () => {
-    it('removes a MEMBER profile only', async () => {
+    it('finalizes a MEMBER profile without deleting it', async () => {
       const member = {
         communityProfileId: 10,
         userId: 'user-id',
@@ -251,11 +306,14 @@ describe('UserCommunitiesService', () => {
       await expect(service.leaveCommunity('user-id', 5)).resolves.toEqual({
         message: 'Has abandonado la comunidad correctamente',
       });
-      expect(communityProfileRepository.remove).toHaveBeenCalledWith(member);
+      expect(member.removedAt).toEqual(expect.any(Date));
+      expect(member.role).toBe(CommunityProfileRole.MEMBER);
+      expect(communityProfileRepository.save).toHaveBeenCalledWith(member);
+      expect(communityProfileRepository.remove).not.toHaveBeenCalled();
       expect(usersService.findById).not.toHaveBeenCalled();
     });
 
-    it('removes a MODERATOR profile without changing global seller data', async () => {
+    it('finalizes a MODERATOR profile and resets its role', async () => {
       const moderator = {
         communityProfileId: 10,
         userId: 'seller-id',
@@ -267,7 +325,10 @@ describe('UserCommunitiesService', () => {
 
       await service.leaveCommunity('seller-id', 5);
 
-      expect(communityProfileRepository.remove).toHaveBeenCalledWith(moderator);
+      expect(moderator.removedAt).toEqual(expect.any(Date));
+      expect(moderator.role).toBe(CommunityProfileRole.MEMBER);
+      expect(communityProfileRepository.save).toHaveBeenCalledWith(moderator);
+      expect(communityProfileRepository.remove).not.toHaveBeenCalled();
       expect(usersService.findById).not.toHaveBeenCalled();
     });
 

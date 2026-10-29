@@ -69,7 +69,7 @@ export class CommunityRoleGuard implements CanActivate {
       where: { userId: req.user.userId, communityId },
     });
 
-    if (!profile || !allowedRoles.includes(profile.role)) {
+    if (!profile || profile.removedAt || !allowedRoles.includes(profile.role)) {
       const community = await this.communityRepository.findOne({
         where: { id: communityId },
         select: { id: true },

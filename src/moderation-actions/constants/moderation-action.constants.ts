@@ -7,6 +7,7 @@ export const MODERATION_TARGET_TYPES = {
   SELLER: 'seller',
   COMMUNITY: 'community',
   CONVERSATION: 'conversation',
+  COMMUNITY_PROFILE: 'community_profile',
 } as const;
 
 export type ModerationTargetType =
@@ -31,6 +32,7 @@ export const MODERATION_ACTIONS = {
   COMMUNITY_MADE_PUBLIC: 'community_made_public',
   COMMUNITY_MADE_PRIVATE: 'community_made_private',
   COMMUNITY_SOFT_DELETED: 'community_soft_deleted',
+  COMMUNITY_MEMBER_REMOVED: 'community_member_removed',
 } as const;
 
 export type ModerationActionType =

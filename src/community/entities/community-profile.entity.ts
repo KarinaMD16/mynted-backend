@@ -34,6 +34,13 @@ export class CommunityProfile {
   joinedAt!: Date;
 
   @Column({
+    name: 'removed_at',
+    type: 'timestamp with time zone',
+    nullable: true,
+  })
+  removedAt!: Date | null;
+
+  @Column({
     type: 'enum',
     enum: CommunityProfileRole,
     default: CommunityProfileRole.MEMBER,

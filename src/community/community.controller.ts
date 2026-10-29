@@ -44,6 +44,7 @@ import { GetTagsQueryDto } from './dto/get-tags-query.dto';
 import { GetCommunitiesQueryDto } from './dto/get-communities-query.dto';
 import { GetAdminCommunitiesQueryDto } from './dto/get-admin-communities-query.dto';
 import { GetCommunityMembersQueryDto } from './dto/get-community-members-query.dto';
+import { RemoveCommunityMemberDto } from './dto/remove-community-member.dto';
 import { UpdateCommunityDto } from './dto/update-community.dto';
 import { UpdateCommunityRuleDto } from './dto/update-community-rule.dto';
 import { UpdateTagDto } from './dto/update-tag.dto';
@@ -753,6 +754,53 @@ export class CommunityController {
     @Param('profileId', ParseIntPipe) profileId: number,
   ) {
     return this.communityService.removeModerator(communityId, profileId);
+  }
+
+  @Delete('communities/:communityId/members/:profileId')
+  @UseGuards(JwtAuthGuard, CommunityRoleGuard)
+  @RequireCommunityRole(
+    CommunityProfileRole.OWNER,
+    CommunityProfileRole.MODERATOR,
+  )
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Expulsar un miembro sin borrar su contenido histórico',
+    description:
+      'La expulsión finaliza la membresía, no es un ban. El usuario puede volver a unirse. El OWNER no puede ser expulsado y un MODERATOR solo puede expulsar MEMBER.',
+  })
+  @ApiParam({ name: 'communityId', type: Number, example: 2 })
+  @ApiParam({ name: 'profileId', type: Number, example: 18 })
+  @ApiBody({
+    type: RemoveCommunityMemberDto,
+    examples: {
+      default: { value: { reason: 'Incumplimiento de las reglas' } },
+    },
+  })
+  @ApiOkResponse({
+    schema: { example: { message: 'Miembro expulsado correctamente' } },
+  })
+  @ApiConflictResponse({
+    description: 'No se puede expulsar al OWNER ni realizar autoexpulsión',
+  })
+  removeCommunityMember(
+    @Param('communityId', ParseIntPipe) communityId: number,
+    @Param('profileId', ParseIntPipe) profileId: number,
+    @Body(
+      new ValidationPipe({
+        transform: true,
+        whitelist: true,
+        forbidNonWhitelisted: true,
+      }),
+    )
+    dto: RemoveCommunityMemberDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.communityService.removeCommunityMember(
+      communityId,
+      profileId,
+      request.user.userId,
+      dto.reason,
+    );
   }
 
   @Get('communities/:communityId/join-requests')

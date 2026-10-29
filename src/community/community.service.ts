@@ -17,6 +17,7 @@ import {
   DataSource,
   FindOptionsWhere,
   In,
+  IsNull,
   QueryFailedError,
   Repository,
 } from 'typeorm';
@@ -53,7 +54,7 @@ import { Favorite, FavoriteItemType } from './entities/favorite.entity';
 import { VoteType } from './entities/vote-type.enum';
 import { UserTag } from '../user-tags/entities/user-tag.entity';
 import { UsersService } from '../users/users.service';
-import { UserRole } from '../users/entities/user.entity';
+import { User, UserRole } from '../users/entities/user.entity';
 import { escapeLike } from '../common/escape-like';
 import { Product } from '../products/entities/product.entity';
 import { Report } from '../reports/entities/report.entity';
@@ -381,6 +382,7 @@ export class CommunityService {
       .select('COUNT(*)')
       .from(CommunityProfile, 'recommended_member_count_profile')
       .where('recommended_member_count_profile.community_id = community.id')
+      .andWhere('recommended_member_count_profile.removed_at IS NULL')
       .getQuery();
 
     const recentPostCountSubquery = this.communityRepository
@@ -424,6 +426,7 @@ export class CommunityService {
         'recommended_category_community.id = recommended_category_profile.community_id',
       )
       .where('recommended_category_profile.user_id = :userId', { userId })
+      .andWhere('recommended_category_profile.removed_at IS NULL')
       .andWhere(
         'recommended_category_community.category_id = community.category_id',
       )
@@ -523,10 +526,12 @@ export class CommunityService {
     }
 
     const [memberCount, recentPostCount, membership] = await Promise.all([
-      this.communityProfileRepository.count({ where: { communityId } }),
+      this.communityProfileRepository.count({
+        where: { communityId, removedAt: IsNull() },
+      }),
       this.countRecentPosts(communityId),
       this.communityProfileRepository.findOne({
-        where: { userId, communityId },
+        where: { userId, communityId, removedAt: IsNull() },
         select: { communityProfileId: true, role: true },
       }),
     ]);
@@ -606,12 +611,12 @@ export class CommunityService {
     const [memberCount, recentPostCount, membership, latestJoinRequest] =
       await Promise.all([
         this.communityProfileRepository.count({
-          where: { communityId: community.id },
+          where: { communityId: community.id, removedAt: IsNull() },
         }),
         this.countRecentPosts(community.id),
         userId
           ? this.communityProfileRepository.findOne({
-              where: { userId, communityId: community.id },
+              where: { userId, communityId: community.id, removedAt: IsNull() },
               select: { communityProfileId: true, role: true },
             })
           : Promise.resolve(null),
@@ -686,7 +691,9 @@ export class CommunityService {
     await this.ensureActiveCommunityExists(communityId);
 
     const [memberCount, postCount, recentPostCount] = await Promise.all([
-      this.communityProfileRepository.count({ where: { communityId } }),
+      this.communityProfileRepository.count({
+        where: { communityId, removedAt: IsNull() },
+      }),
       this.countAllPosts(communityId),
       this.countRecentPosts(communityId),
     ]);
@@ -710,6 +717,7 @@ export class CommunityService {
       .createQueryBuilder('profile')
       .innerJoinAndSelect('profile.user', 'user', 'user.deleted_at IS NULL')
       .where('profile.community_id = :communityId', { communityId })
+      .andWhere('profile.removed_at IS NULL')
       .orderBy('profile.joined_at', 'DESC')
       .addOrderBy('profile.community_profile_id', 'DESC')
       .skip((query.page - 1) * query.limit)
@@ -841,6 +849,10 @@ export class CommunityService {
       throw new NotFoundException('El perfil no existe en esta comunidad');
     }
 
+    if (profile.removedAt !== null && profile.removedAt !== undefined) {
+      throw new NotFoundException('El perfil no existe en esta comunidad');
+    }
+
     if (profile.role === CommunityProfileRole.OWNER) {
       throw new ConflictException(
         'No se puede modificar el rol del propietario desde este endpoint',
@@ -858,6 +870,147 @@ export class CommunityService {
     return this.communityProfileRepository.save(profile);
   }
 
+  async removeCommunityMember(
+    communityId: number,
+    profileId: number,
+    actorUserId: string,
+    reason: string,
+  ): Promise<{ message: string }> {
+    if (!this.moderationActionsService || !this.notificationsService) {
+      throw new InternalServerErrorException(
+        'La moderación de miembros no está configurada',
+      );
+    }
+
+    let targetUserId = '';
+    let communityName = '';
+    let communitySlug = '';
+    let changed = false;
+
+    await this.dataSource.transaction(async (manager) => {
+      const communityRepository = manager.getRepository(Community);
+      const profileRepository = manager.getRepository(CommunityProfile);
+      const userRepository = manager.getRepository(User);
+      const requestRepository = manager.getRepository(CommunityJoinRequest);
+
+      const community = await communityRepository.findOne({
+        where: { id: communityId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!community) {
+        throw new NotFoundException('Comunidad no encontrada');
+      }
+
+      const actor = await userRepository.findOne({
+        where: { id: actorUserId },
+      });
+      if (!actor) {
+        throw new ForbiddenException('Usuario no encontrado');
+      }
+
+      const target = await profileRepository.findOne({
+        where: { communityProfileId: profileId, communityId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (
+        !target ||
+        (target.removedAt !== null && target.removedAt !== undefined)
+      ) {
+        throw new NotFoundException('El perfil no existe en esta comunidad');
+      }
+
+      const targetUser = await userRepository.findOne({
+        where: { id: target.userId },
+        withDeleted: true,
+      });
+      if (!targetUser || targetUser.deletedAt) {
+        throw new NotFoundException('El usuario no existe');
+      }
+      if (target.userId === actorUserId) {
+        throw new ConflictException(
+          'No puedes expulsarte a ti mismo; utiliza el endpoint para salir',
+        );
+      }
+      if (target.role === CommunityProfileRole.OWNER) {
+        throw new ConflictException(
+          'El propietario no puede ser expulsado desde este endpoint',
+        );
+      }
+
+      let actorProfile: CommunityProfile | null = null;
+      if (actor.role !== UserRole.SUPERADMIN) {
+        actorProfile = await profileRepository.findOne({
+          where: { userId: actorUserId, communityId },
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (!actorProfile || actorProfile.removedAt) {
+          throw new ForbiddenException(
+            'No tienes permisos para administrar esta comunidad',
+          );
+        }
+        if (
+          actorProfile.role === CommunityProfileRole.MODERATOR &&
+          target.role !== CommunityProfileRole.MEMBER
+        ) {
+          throw new ForbiddenException(
+            'Los moderadores solo pueden expulsar miembros',
+          );
+        }
+        if (
+          actorProfile.role !== CommunityProfileRole.OWNER &&
+          actorProfile.role !== CommunityProfileRole.MODERATOR
+        ) {
+          throw new ForbiddenException(
+            'No tienes permisos para administrar esta comunidad',
+          );
+        }
+      }
+
+      target.removedAt = new Date();
+      target.role = CommunityProfileRole.MEMBER;
+      await profileRepository.save(target);
+      await requestRepository.delete({
+        userId: target.userId,
+        communityId,
+        status: CommunityJoinRequestStatus.PENDING,
+      });
+      await this.moderationActionsService!.record(
+        {
+          actorUserId,
+          targetType: MODERATION_TARGET_TYPES.COMMUNITY_PROFILE,
+          targetId: profileId,
+          action: MODERATION_ACTIONS.COMMUNITY_MEMBER_REMOVED,
+          reason,
+          communityId,
+        },
+        manager,
+      );
+
+      targetUserId = target.userId;
+      communityName = community.name;
+      communitySlug = community.slug;
+      changed = true;
+    });
+
+    if (changed) {
+      try {
+        await this.notificationsService.notify([
+          {
+            userId: targetUserId,
+            type: NotificationType.COMMUNITY_MEMBER_REMOVED,
+            data: { communityId, communityName, communitySlug, reason },
+            message: `Has sido expulsado de ${communityName}`,
+          },
+        ]);
+      } catch {
+        // La expulsión y la auditoría ya están confirmadas; una falla de
+        // notificación no debe revertir la operación.
+      }
+    }
+
+    return { message: 'Miembro expulsado correctamente' };
+  }
+
   async removeModerator(
     communityId: number,
     profileId: number,
@@ -869,6 +1022,10 @@ export class CommunityService {
     });
 
     if (!profile) {
+      throw new NotFoundException('El perfil no existe en esta comunidad');
+    }
+
+    if (profile.removedAt !== null && profile.removedAt !== undefined) {
       throw new NotFoundException('El perfil no existe en esta comunidad');
     }
 
@@ -912,14 +1069,25 @@ export class CommunityService {
 
     const accepted = await this.dataSource.transaction(async (manager) => {
       const user = await this.usersService.findById(request.userId);
-      const profile = manager.create(CommunityProfile, {
-        userId: request.userId,
-        communityId,
-        role: CommunityProfileRole.MEMBER,
-        displayName: user.username,
-        bio: '',
+      const profile = await manager.findOne(CommunityProfile, {
+        where: { userId: request.userId, communityId },
+        lock: { mode: 'pessimistic_write' },
       });
-      const savedProfile = await manager.save(CommunityProfile, profile);
+      const activeProfile =
+        profile ??
+        manager.create(CommunityProfile, {
+          userId: request.userId,
+          communityId,
+          role: CommunityProfileRole.MEMBER,
+          displayName: user.username,
+          bio: '',
+        });
+      activeProfile.removedAt = null;
+      activeProfile.joinedAt = new Date();
+      activeProfile.role = CommunityProfileRole.MEMBER;
+      activeProfile.displayName = activeProfile.displayName || user.username;
+      activeProfile.bio = activeProfile.bio ?? '';
+      const savedProfile = await manager.save(CommunityProfile, activeProfile);
 
       request.status = CommunityJoinRequestStatus.ACCEPTED;
       request.resolvedAt = new Date();
@@ -1062,6 +1230,7 @@ export class CommunityService {
           SELECT 1 FROM community_profile viewer_profile
           WHERE viewer_profile.user_id = :userId
             AND viewer_profile.community_id = :communityId
+            AND viewer_profile.removed_at IS NULL
             AND viewer_profile.role IN ('moderator', 'owner')
         ))`,
         { userId, communityId },
@@ -1081,6 +1250,7 @@ export class CommunityService {
       .select('COUNT(*)')
       .from(CommunityProfile, 'member_count_profile')
       .where('member_count_profile.community_id = community.id')
+      .andWhere('member_count_profile.removed_at IS NULL')
       .getQuery();
 
     const recentPostCountSubquery = this.communityRepository
@@ -1111,7 +1281,7 @@ export class CommunityService {
       queryBuilder.innerJoin(
         'community.communityProfiles',
         'membership',
-        'membership.user_id = :userId',
+        'membership.user_id = :userId AND membership.removed_at IS NULL',
         { userId },
       );
       queryBuilder.addSelect('membership.role', 'membership_role');
@@ -1151,6 +1321,8 @@ export class CommunityService {
       .select('COUNT(*)')
       .from(CommunityProfile, 'admin_member_profile')
       .where('admin_member_profile.community_id = community.id')
+      .andWhere('admin_member_profile.removed_at IS NULL')
+      .andWhere('admin_member_profile.removed_at IS NULL')
       .getQuery();
 
     const productCountSubquery = this.communityRepository
