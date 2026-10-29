@@ -52,6 +52,7 @@ describe('PaymentsService shipping transitions', () => {
       {} as never,
       {} as never,
       {} as never,
+      { hasSellerMessageForProduct: jest.fn() } as never,
       eventEmitter as never,
     );
     return { service, repository, dataSource, eventEmitter, transaction };

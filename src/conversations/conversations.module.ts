@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { WsJwtAuthenticator } from '../auth/ws-jwt-authenticator';
@@ -21,7 +21,7 @@ import { MessagesService } from './messages.service';
   imports: [
     TypeOrmModule.forFeature([Conversation, Message, Product, Seller]),
     CloudinaryModule,
-    PricingModule,
+    forwardRef(() => PricingModule),
     CosmeticsModule,
     // Solo para verificar el token del handshake: el secret se pasa al
     // verificar (JWT_SECRET), igual que en JwtStrategy.

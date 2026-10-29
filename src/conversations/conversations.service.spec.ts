@@ -70,6 +70,33 @@ describe('ConversationsService', () => {
     jest.clearAllMocks();
   });
 
+  describe('hasSellerMessageForProduct', () => {
+    it.each([
+      ['no conversation', false],
+      ['buyer-only messages', false],
+      ['wrong buyer, product, or seller', false],
+    ])('returns false for %s', async (_scenario, exists) => {
+      dataSource.query.mockResolvedValue([{ exists }]);
+
+      await expect(
+        service.hasSellerMessageForProduct(buyerId, 42, sellerUserId),
+      ).resolves.toBe(false);
+
+      expect(dataSource.query).toHaveBeenCalledWith(
+        expect.stringContaining('SELECT EXISTS'),
+        [buyerId, 42, sellerUserId],
+      );
+    });
+
+    it('returns true when the seller has sent any message for the product', async () => {
+      dataSource.query.mockResolvedValue([{ exists: true }]);
+
+      await expect(
+        service.hasSellerMessageForProduct(buyerId, 42, sellerUserId),
+      ).resolves.toBe(true);
+    });
+  });
+
   describe('findOrCreate', () => {
     it('creates the conversation deriving sellerId from the product owner', async () => {
       productRepository.findOne.mockResolvedValue(product());

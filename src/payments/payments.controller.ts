@@ -130,6 +130,11 @@ export class PaymentsController {
   @ApiBearerAuth()
   @ApiParam({ name: 'productId', type: Number, example: 42 })
   @ApiOkResponse({ type: QuoteResponseDto })
+  @ApiResponse({
+    status: 403,
+    description:
+      'Primero conversa con el vendedor antes de comprar este producto',
+  })
   @ApiQuery({
     name: 'quantity',
     required: false,
@@ -178,6 +183,11 @@ export class PaymentsController {
     status: 409,
     description:
       'El producto no estÃ¡ disponible para envÃ­o al paÃ­s indicado',
+  })
+  @ApiResponse({
+    status: 403,
+    description:
+      'Primero conversa con el vendedor antes de comprar este producto',
   })
   checkout(
     @Body() dto: CheckoutDto,
