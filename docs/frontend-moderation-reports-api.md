@@ -479,6 +479,49 @@ Incluye activas, inactivas, públicas, privadas y soft-deleted según filtros. D
 
 Una community sin perfiles aparece con memberCount 0. Una community creada por SUPERADMIN sin owner es válida.
 
+### GET /communities/:communityId/members
+
+Disponible para OWNER, MODERATOR y SUPERADMIN. Los miembros comunes y usuarios
+sin perfil en la community reciben 403.
+
+Query opcional:
+
+~~~text
+page, default 1
+limit, default 20, mÃ¡ximo 100
+role, member | moderator | owner
+search, bÃºsqueda parcial por username o displayName
+~~~
+
+Los filtros se combinan con lÃ³gica AND. El orden es `joinedAt DESC` y luego
+`communityProfileId DESC`.
+
+~~~json
+{
+  "data": [
+    {
+      "communityProfileId": 12,
+      "userId": "uuid",
+      "username": "usuario",
+      "displayName": "Nombre visible",
+      "photoUrl": null,
+      "role": "member",
+      "joinedAt": "2026-10-28T12:00:00.000Z",
+      "postCount": 3,
+      "replyCount": 5,
+      "hiddenContentCount": 1
+    }
+  ],
+  "pagination": { "page": 1, "limit": 20, "total": 1, "totalPages": 1 }
+}
+~~~
+
+`communityProfileId` es el `profileId` que se utiliza en los endpoints para
+agregar o quitar moderadores. `postCount` y `replyCount` incluyen contenido
+histÃ³rico, incluso oculto; `hiddenContentCount` suma posts y replies ocultos.
+Los usuarios soft-deleted se excluyen, mientras que los usuarios inactivos se
+mantienen visibles para administraciÃ³n.
+
 ### POST /communities
 
 JWT y multipart/form-data.

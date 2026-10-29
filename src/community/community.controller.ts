@@ -25,6 +25,7 @@ import {
   ApiConflictResponse,
   ApiConsumes,
   ApiCreatedResponse,
+  ApiForbiddenResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
@@ -42,6 +43,7 @@ import { CreateTagDto } from './dto/create-tag.dto';
 import { GetTagsQueryDto } from './dto/get-tags-query.dto';
 import { GetCommunitiesQueryDto } from './dto/get-communities-query.dto';
 import { GetAdminCommunitiesQueryDto } from './dto/get-admin-communities-query.dto';
+import { GetCommunityMembersQueryDto } from './dto/get-community-members-query.dto';
 import { UpdateCommunityDto } from './dto/update-community.dto';
 import { UpdateCommunityRuleDto } from './dto/update-community-rule.dto';
 import { UpdateTagDto } from './dto/update-tag.dto';
@@ -307,6 +309,57 @@ export class CommunityController {
   @ApiOperation({ summary: 'Obtener estadísticas básicas de una comunidad' })
   getCommunityStats(@Param('communityId', ParseIntPipe) communityId: number) {
     return this.communityService.getStats(communityId);
+  }
+
+  @Get('communities/:communityId/members')
+  @UseGuards(JwtAuthGuard, CommunityRoleGuard)
+  @RequireCommunityRole(
+    CommunityProfileRole.OWNER,
+    CommunityProfileRole.MODERATOR,
+  )
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Listar miembros administrativos de una comunidad' })
+  @ApiParam({ name: 'communityId', type: Number, example: 2 })
+  @ApiOkResponse({
+    schema: {
+      example: {
+        data: [
+          {
+            communityProfileId: 12,
+            userId: 'uuid',
+            username: 'usuario',
+            displayName: 'Nombre visible',
+            photoUrl: null,
+            role: 'member',
+            joinedAt: '2026-10-28T12:00:00.000Z',
+            postCount: 3,
+            replyCount: 5,
+            hiddenContentCount: 1,
+          },
+        ],
+        pagination: {
+          page: 1,
+          limit: 20,
+          total: 1,
+          totalPages: 1,
+        },
+      },
+    },
+  })
+  @ApiForbiddenResponse({ description: 'No tienes permisos de moderación' })
+  @ApiNotFoundResponse({ description: 'Comunidad no encontrada' })
+  findCommunityMembers(
+    @Param('communityId', ParseIntPipe) communityId: number,
+    @Query(
+      new ValidationPipe({
+        transform: true,
+        whitelist: true,
+        forbidNonWhitelisted: true,
+      }),
+    )
+    query: GetCommunityMembersQueryDto,
+  ) {
+    return this.communityService.findCommunityMembers(communityId, query);
   }
 
   @Post('tags')

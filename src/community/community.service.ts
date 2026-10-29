@@ -31,6 +31,7 @@ import { UpdateCommunityRuleDto } from './dto/update-community-rule.dto';
 import { UpdateTagDto } from './dto/update-tag.dto';
 import { GetCommunitiesQueryDto } from './dto/get-communities-query.dto';
 import { GetAdminCommunitiesQueryDto } from './dto/get-admin-communities-query.dto';
+import { GetCommunityMembersQueryDto } from './dto/get-community-members-query.dto';
 import { DeleteCommunityDto } from './dto/delete-community.dto';
 import {
   CommunityProfile,
@@ -46,12 +47,14 @@ import { CommunityTag } from './entities/community-tag.entity';
 import { Community } from './entities/community.entity';
 import { Tag } from './entities/tag.entity';
 import { Post } from './entities/post.entity';
+import { Reply } from './entities/reply.entity';
 import { PostVote } from './entities/post-vote.entity';
 import { Favorite, FavoriteItemType } from './entities/favorite.entity';
 import { VoteType } from './entities/vote-type.enum';
 import { UserTag } from '../user-tags/entities/user-tag.entity';
 import { UsersService } from '../users/users.service';
 import { UserRole } from '../users/entities/user.entity';
+import { escapeLike } from '../common/escape-like';
 import { Product } from '../products/entities/product.entity';
 import { Report } from '../reports/entities/report.entity';
 import { ReportStatus } from '../reports/enums/report-status.enum';
@@ -98,6 +101,9 @@ export class CommunityService {
     private readonly communityJoinRequestRepository: Repository<CommunityJoinRequest>,
     @InjectRepository(Post)
     private readonly postRepository: Repository<Post>,
+    @Optional()
+    @InjectRepository(Reply)
+    private readonly replyRepository?: Repository<Reply>,
     @Optional()
     @InjectRepository(PostVote)
     private readonly postVoteRepository?: Repository<PostVote>,
@@ -691,6 +697,134 @@ export class CommunityService {
       postCount,
       recentPostCount,
     };
+  }
+
+  async findCommunityMembers(
+    communityId: number,
+    query: GetCommunityMembersQueryDto,
+  ) {
+    await this.ensureCommunityExists(communityId);
+
+    const search = query.search?.trim();
+    const membersQuery = this.communityProfileRepository
+      .createQueryBuilder('profile')
+      .innerJoinAndSelect('profile.user', 'user', 'user.deleted_at IS NULL')
+      .where('profile.community_id = :communityId', { communityId })
+      .orderBy('profile.joined_at', 'DESC')
+      .addOrderBy('profile.community_profile_id', 'DESC')
+      .skip((query.page - 1) * query.limit)
+      .take(query.limit);
+
+    if (query.role) {
+      membersQuery.andWhere('profile.role = :role', { role: query.role });
+    }
+    if (search) {
+      membersQuery.andWhere(
+        '(user.username ILIKE :search OR profile.display_name ILIKE :search)',
+        { search: `%${escapeLike(search)}%` },
+      );
+    }
+
+    const [profiles, total] = await membersQuery.getManyAndCount();
+    const profileIds = profiles.map((profile) => profile.communityProfileId);
+    const [postCounts, replyCounts] = await Promise.all([
+      this.getCommunityMemberPostCounts(profileIds),
+      this.getCommunityMemberReplyCounts(profileIds),
+    ]);
+
+    return {
+      data: profiles.map((profile) => {
+        const postCount = postCounts.get(profile.communityProfileId);
+        const replyCount = replyCounts.get(profile.communityProfileId);
+        return {
+          communityProfileId: profile.communityProfileId,
+          userId: profile.userId,
+          username: profile.user.username,
+          displayName: profile.displayName,
+          photoUrl: profile.user.photoUrl ?? null,
+          role: profile.role,
+          joinedAt: profile.joinedAt,
+          postCount: postCount?.total ?? 0,
+          replyCount: replyCount?.total ?? 0,
+          hiddenContentCount:
+            (postCount?.hidden ?? 0) + (replyCount?.hidden ?? 0),
+        };
+      }),
+      pagination: {
+        page: query.page,
+        limit: query.limit,
+        total,
+        totalPages: Math.ceil(total / query.limit),
+      },
+    };
+  }
+
+  private async getCommunityMemberPostCounts(
+    profileIds: number[],
+  ): Promise<Map<number, { total: number; hidden: number }>> {
+    const result = new Map<number, { total: number; hidden: number }>();
+    if (profileIds.length === 0) return result;
+
+    const rows = await this.postRepository
+      .createQueryBuilder('member_post')
+      .select('member_post.community_profile_id', 'profileId')
+      .addSelect('COUNT(member_post.id)', 'total')
+      .addSelect(
+        'COUNT(*) FILTER (WHERE member_post.is_hidden = true)',
+        'hidden',
+      )
+      .where('member_post.community_profile_id IN (:...profileIds)', {
+        profileIds,
+      })
+      .groupBy('member_post.community_profile_id')
+      .getRawMany<{
+        profileId: number | string;
+        total: string;
+        hidden: string;
+      }>();
+
+    for (const row of rows) {
+      result.set(Number(row.profileId), {
+        total: Number(row.total),
+        hidden: Number(row.hidden),
+      });
+    }
+    return result;
+  }
+
+  private async getCommunityMemberReplyCounts(
+    profileIds: number[],
+  ): Promise<Map<number, { total: number; hidden: number }>> {
+    const result = new Map<number, { total: number; hidden: number }>();
+    if (profileIds.length === 0) return result;
+
+    const replyRepository =
+      this.replyRepository ?? this.dataSource.getRepository(Reply);
+    const rows = await replyRepository
+      .createQueryBuilder('member_reply')
+      .select('member_reply.community_profile_id', 'profileId')
+      .addSelect('COUNT(member_reply.id)', 'total')
+      .addSelect(
+        'COUNT(*) FILTER (WHERE member_reply.is_hidden = true)',
+        'hidden',
+      )
+      .where('member_reply.community_profile_id IN (:...profileIds)', {
+        profileIds,
+      })
+      .groupBy('member_reply.community_profile_id')
+      .getRawMany<{
+        profileId: number | string;
+        total: string;
+        hidden: string;
+      }>();
+
+    for (const row of rows) {
+      result.set(Number(row.profileId), {
+        total: Number(row.total),
+        hidden: Number(row.hidden),
+      });
+    }
+    return result;
   }
 
   async addModerator(
