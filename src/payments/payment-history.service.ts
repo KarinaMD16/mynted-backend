@@ -12,6 +12,7 @@ import { resolveReviewIneligibility } from '../products/review-eligibility';
 import { UsersService } from '../users/users.service';
 import { Seller } from '../sellers/entities/seller.entity';
 import { PaymentTransaction } from './entities/payment-transaction.entity';
+import { PaymentDispute } from './entities/payment-dispute.entity';
 import { TransactionStatus } from './enums/transaction-status.enum';
 import { ExchangeRateService } from './exchange-rate/exchange-rate.service';
 import {
@@ -45,6 +46,8 @@ export class PaymentHistoryService {
     private readonly exchangeRateService: ExchangeRateService,
     @InjectRepository(Review)
     private readonly reviewRepository: Repository<Review>,
+    @InjectRepository(PaymentDispute)
+    private readonly disputeRepository: Repository<PaymentDispute>,
   ) {}
 
   async purchases(
@@ -250,6 +253,10 @@ export class PaymentHistoryService {
       );
     }
 
+    const dispute = await this.disputeRepository.findOne({
+      where: { transactionId: transaction.id },
+    });
+
     const response: PaymentReceiptResponseDto = {
       id: transaction.id,
       status: transaction.status,
@@ -274,6 +281,17 @@ export class PaymentHistoryService {
       carrier: transaction.carrier ?? null,
       shippedAt: transaction.shippedAt ?? null,
       deliveredAt: transaction.deliveredAt ?? null,
+      dispute: dispute
+        ? {
+            id: dispute.id,
+            status: dispute.status,
+            reason: dispute.reason,
+            resolution: dispute.resolution ?? null,
+            resolutionNote: dispute.resolutionNote ?? null,
+            createdAt: dispute.createdAt,
+            resolvedAt: dispute.resolvedAt ?? null,
+          }
+        : null,
     };
     // El nombre del titular es dato personal del comprador: el vendedor no
     // lo recibe.

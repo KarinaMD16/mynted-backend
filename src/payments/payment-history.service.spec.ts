@@ -76,12 +76,14 @@ describe('PaymentHistoryService', () => {
         .mockResolvedValue({ rate: 500, rateDate: '2026-10-19' }),
     };
     const reviewRepository = { find: jest.fn().mockResolvedValue([]) };
+    const disputeRepository = { findOne: jest.fn().mockResolvedValue(null) };
     const service = new PaymentHistoryService(
       transactionRepository as never,
       sellerRepository as never,
       usersService as never,
       exchangeRateService as never,
       reviewRepository as never,
+      disputeRepository as never,
     );
     return {
       service,
@@ -90,6 +92,7 @@ describe('PaymentHistoryService', () => {
       usersService,
       exchangeRateService,
       reviewRepository,
+      disputeRepository,
     };
   };
 
@@ -294,6 +297,54 @@ describe('PaymentHistoryService', () => {
       expect.objectContaining({ country: 'CR', line1: 'Avenida Central' }),
     );
     expect(sellerReceipt).not.toHaveProperty('idempotencyKey');
+    expect(buyerReceipt.dispute).toBeNull();
+  });
+
+  it.each([
+    ['open', null, null],
+    ['resolved_refund', 'refund', 'Se aprueba el reembolso'],
+    ['resolved_closed', 'close', 'Se cierra el reclamo'],
+  ])(
+    'includes the associated %s dispute in the receipt',
+    async (status, resolution, resolutionNote) => {
+      const h = createHarness();
+      const dispute = {
+        id: 'dispute-1',
+        transactionId: 'tx-1',
+        status,
+        reason: 'Producto diferente',
+        resolution,
+        resolutionNote,
+        createdAt: new Date('2026-10-29T12:00:00.000Z'),
+        resolvedAt:
+          status === 'open' ? null : new Date('2026-10-29T13:00:00.000Z'),
+      };
+      h.disputeRepository.findOne.mockResolvedValue(dispute);
+
+      const receipt = await h.service.receipt('buyer-1', 'tx-1');
+
+      expect(h.disputeRepository.findOne).toHaveBeenCalledWith({
+        where: { transactionId: 'tx-1' },
+      });
+      expect(receipt.dispute).toEqual({
+        id: dispute.id,
+        status: dispute.status,
+        reason: dispute.reason,
+        resolution: dispute.resolution,
+        resolutionNote: dispute.resolutionNote,
+        createdAt: dispute.createdAt,
+        resolvedAt: dispute.resolvedAt,
+      });
+    },
+  );
+
+  it('does not query the dispute or expose it when the receipt is unauthorized', async () => {
+    const h = createHarness();
+
+    await expect(
+      h.service.receipt('other-user', 'tx-1'),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(h.disputeRepository.findOne).not.toHaveBeenCalled();
   });
 
   it('returns the card holder name in the receipt only to the buyer', async () => {

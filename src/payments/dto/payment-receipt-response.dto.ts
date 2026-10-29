@@ -2,6 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { TransactionStatus } from '../enums/transaction-status.enum';
 import { ShippingAddressSnapshot } from '../types/shipping-address-snapshot';
 import { ShippingStatus } from '../enums/shipping-status.enum';
+import { PaymentDisputeStatus } from '../enums/payment-dispute-status.enum';
 
 export class PaymentReceiptProductDto {
   id!: number;
@@ -20,6 +21,29 @@ export class PaymentReceiptCommissionDto {
   commissionRate!: number;
   commissionAmount!: number;
   sellerNet!: number;
+}
+
+export class PaymentReceiptDisputeDto {
+  @ApiProperty({ format: 'uuid' })
+  id!: string;
+
+  @ApiProperty({ enum: PaymentDisputeStatus })
+  status!: PaymentDisputeStatus;
+
+  @ApiProperty()
+  reason!: string;
+
+  @ApiPropertyOptional({ nullable: true })
+  resolution!: string | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  resolutionNote!: string | null;
+
+  @ApiProperty()
+  createdAt!: Date;
+
+  @ApiPropertyOptional({ nullable: true })
+  resolvedAt!: Date | null;
 }
 
 export class PaymentReceiptResponseDto {
@@ -58,6 +82,8 @@ export class PaymentReceiptResponseDto {
   shippedAt!: Date | null;
   @ApiPropertyOptional({ nullable: true })
   deliveredAt!: Date | null;
+  @ApiPropertyOptional({ type: PaymentReceiptDisputeDto, nullable: true })
+  dispute!: PaymentReceiptDisputeDto | null;
   @ApiPropertyOptional({ type: PaymentReceiptCommissionDto })
   commission?: PaymentReceiptCommissionDto;
 }
