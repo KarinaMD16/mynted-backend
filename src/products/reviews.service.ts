@@ -38,6 +38,8 @@ export interface RatingSummary {
   reviewsCount: number;
 }
 
+const EMPTY_RATING: RatingSummary = { ratingAverage: null, reviewsCount: 0 };
+
 interface PostgresError {
   code?: string;
 }
@@ -236,19 +238,45 @@ export class ReviewsService {
 
   // Promedio redondeado a 1 decimal y cantidad, calculados con agregado.
   async getProductRating(productId: number): Promise<RatingSummary> {
-    const row = await this.reviewRepository
-      .createQueryBuilder('review')
-      .select('ROUND(AVG(review.rating)::numeric, 1)', 'average')
-      .addSelect('COUNT(*)', 'count')
-      .where('review.product_id = :productId', { productId })
-      .getRawOne<{ average: string | null; count: string }>();
+    const ratings = await this.getProductRatings([productId]);
+    return ratings.get(productId) ?? EMPTY_RATING;
+  }
 
-    const count = Number(row?.count ?? 0);
-    return {
-      ratingAverage:
-        count > 0 && row?.average != null ? parseFloat(row.average) : null,
-      reviewsCount: count,
-    };
+  // Mismo cálculo que getProductRating para varios productos, con una sola
+  // consulta agregada (para las tarjetas de los listados). Los ids repetidos
+  // se ignoran y todo id pedido aparece en el mapa; sin reseñas es
+  // { ratingAverage: null, reviewsCount: 0 }.
+  async getProductRatings(
+    productIds: number[],
+  ): Promise<Map<number, RatingSummary>> {
+    const ids = [...new Set(productIds)];
+    const ratings = new Map<number, RatingSummary>(
+      ids.map((id) => [id, EMPTY_RATING]),
+    );
+    if (ids.length === 0) return ratings;
+
+    const rows = await this.reviewRepository
+      .createQueryBuilder('review')
+      .select('review.product_id', 'productId')
+      .addSelect('ROUND(AVG(review.rating)::numeric, 1)', 'average')
+      .addSelect('COUNT(*)', 'count')
+      .where('review.product_id = ANY(:productIds)', { productIds: ids })
+      .groupBy('review.product_id')
+      .getRawMany<{
+        productId: number | string;
+        average: string | null;
+        count: string;
+      }>();
+
+    for (const row of rows) {
+      const count = Number(row.count);
+      ratings.set(Number(row.productId), {
+        ratingAverage:
+          count > 0 && row.average != null ? parseFloat(row.average) : null,
+        reviewsCount: count,
+      });
+    }
+    return ratings;
   }
 
   // Producto sobre el que se reseña o se listan reseñas.

@@ -149,27 +149,33 @@ describe('Reglas de reseñas (compra completada, borrado, reembolso, rating)', (
       },
       // AVG / COUNT sobre las reseñas del producto, como en la base real.
       createQueryBuilder: () => {
-        let id = 0;
+        let ids: number[] = [];
         const builder = {
           select: () => builder,
           addSelect: () => builder,
-          where: (_sql: string, params: { productId: number }) => {
-            id = params.productId;
+          where: (_sql: string, params: { productIds: number[] }) => {
+            ids = params.productIds;
             return builder;
           },
-          getRawOne: async () => {
-            const own = reviews.filter((item) => item.productId === id);
-            const average = own.length
-              ? (
+          groupBy: () => builder,
+          getRawMany: async () =>
+            ids
+              .map((id) => ({
+                id,
+                own: reviews.filter((item) => item.productId === id),
+              }))
+              .filter(({ own }) => own.length > 0)
+              .map(({ id, own }) => ({
+                productId: id,
+                average: (
                   Math.round(
                     (own.reduce((sum, item) => sum + item.rating, 0) /
                       own.length) *
                       10,
                   ) / 10
-                ).toFixed(1)
-              : null;
-            return { average, count: String(own.length) };
-          },
+                ).toFixed(1),
+                count: String(own.length),
+              })),
         };
         return builder;
       },
