@@ -36,6 +36,7 @@ import { CheckoutResponseDto } from './dto/checkout-response.dto';
 import { QuoteResponseDto } from './dto/quote-response.dto';
 import { ExchangeRateService } from './exchange-rate/exchange-rate.service';
 import { CheckoutCompletedEvent, PaymentEvents } from './payment-events';
+import { ShippingAddressSnapshot } from './types/shipping-address-snapshot';
 
 // isNew: el pago se aprobó en esta llamada (no es la repetición de una clave
 // de idempotencia ya usada).
@@ -156,15 +157,23 @@ export class PaymentsService {
     rawIdempotencyKey: string | undefined,
   ): Promise<CheckoutResponseDto> {
     const idempotencyKey = this.normalizeIdempotencyKey(rawIdempotencyKey);
+    const shippingAddress = this.toShippingAddressSnapshot(dto);
     const existing = await this.paymentTransactionRepository.findOne({
       where: { idempotencyKey },
     });
-    if (existing) return this.replayOrConflict(existing, buyerId, dto);
+    if (existing)
+      return this.replayOrConflict(existing, buyerId, dto, shippingAddress);
 
     let result: CheckoutResult;
     try {
       result = await this.dataSource.transaction(async (manager) =>
-        this.executeCheckout(manager, dto, buyerId, idempotencyKey),
+        this.executeCheckout(
+          manager,
+          dto,
+          buyerId,
+          idempotencyKey,
+          shippingAddress,
+        ),
       );
     } catch (error: unknown) {
       if (!this.isIdempotencyUniqueViolation(error)) {
@@ -183,7 +192,7 @@ export class PaymentsService {
           'No fue posible resolver la idempotencia del pago',
         );
       }
-      return this.replayOrConflict(concurrent, buyerId, dto);
+      return this.replayOrConflict(concurrent, buyerId, dto, shippingAddress);
     }
 
     if (result.kind === 'failed') {
@@ -212,13 +221,19 @@ export class PaymentsService {
     dto: CheckoutDto,
     buyerId: string,
     idempotencyKey: string,
+    shippingAddress: ShippingAddressSnapshot,
   ): Promise<CheckoutResult> {
     const transactionRepository = manager.getRepository(PaymentTransaction);
     const existing = await transactionRepository.findOne({
       where: { idempotencyKey },
     });
     if (existing) {
-      return this.replayResultOrConflict(existing, buyerId, dto);
+      return this.replayResultOrConflict(
+        existing,
+        buyerId,
+        dto,
+        shippingAddress,
+      );
     }
 
     const product = await manager.getRepository(Product).findOne({
@@ -235,6 +250,7 @@ export class PaymentsService {
         existingAfterProductLock,
         buyerId,
         dto,
+        shippingAddress,
       );
     }
 
@@ -320,6 +336,7 @@ export class PaymentsService {
       cardHolderName: null,
       gatewayReference: null,
       idempotencyKey,
+      shippingAddress,
       completedAt: null,
     });
     await transactionRepository.save(pending);
@@ -400,8 +417,9 @@ export class PaymentsService {
     transaction: PaymentTransaction,
     buyerId: string,
     dto: CheckoutDto,
+    shippingAddress: ShippingAddressSnapshot,
   ): CheckoutResponseDto {
-    if (this.isOtherOperation(transaction, buyerId, dto)) {
+    if (this.isOtherOperation(transaction, buyerId, dto, shippingAddress)) {
       throw new ConflictException(
         'La clave de idempotencia ya pertenece a otra operación',
       );
@@ -423,8 +441,9 @@ export class PaymentsService {
     transaction: PaymentTransaction,
     buyerId: string,
     dto: CheckoutDto,
+    shippingAddress: ShippingAddressSnapshot,
   ): CheckoutResult {
-    if (this.isOtherOperation(transaction, buyerId, dto)) {
+    if (this.isOtherOperation(transaction, buyerId, dto, shippingAddress)) {
       throw new ConflictException(
         'La clave de idempotencia ya pertenece a otra operación',
       );
@@ -447,12 +466,15 @@ export class PaymentsService {
     transaction: PaymentTransaction,
     buyerId: string,
     dto: CheckoutDto,
+    shippingAddress: ShippingAddressSnapshot,
   ): boolean {
     return (
       transaction.buyerId !== buyerId ||
       transaction.productId !== dto.productId ||
       // Las transacciones anteriores a quantity equivalen a 1 unidad.
-      (transaction.quantity ?? 1) !== (dto.quantity ?? 1)
+      (transaction.quantity ?? 1) !== (dto.quantity ?? 1) ||
+      JSON.stringify(transaction.shippingAddress ?? null) !==
+        JSON.stringify(shippingAddress)
     );
   }
 
@@ -517,7 +539,29 @@ export class PaymentsService {
       cardHolderName: transaction.cardHolderName ?? null,
       failureReason: transaction.failureReason,
       completedAt: transaction.completedAt,
+      shippingAddress: transaction.shippingAddress ?? null,
     };
+  }
+
+  private toShippingAddressSnapshot(dto: CheckoutDto): ShippingAddressSnapshot {
+    const address = dto.shippingAddress;
+    return {
+      fullName: address.fullName.trim(),
+      phone: address.phone.trim(),
+      country: address.country.trim().toUpperCase(),
+      province: address.province.trim(),
+      city: address.city.trim(),
+      line1: address.line1.trim(),
+      line2: this.normalizeNullable(address.line2),
+      postalCode: this.normalizeNullable(address.postalCode),
+      notes: this.normalizeNullable(address.notes),
+    };
+  }
+
+  private normalizeNullable(value: string | null | undefined): string | null {
+    if (value === undefined || value === null) return null;
+    const normalized = value.trim();
+    return normalized === '' ? null : normalized;
   }
 
   private normalizeIdempotencyKey(value: string | undefined): string {

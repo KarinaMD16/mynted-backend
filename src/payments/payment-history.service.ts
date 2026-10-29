@@ -224,6 +224,7 @@ export class PaymentHistoryService {
         'transaction.failureReason',
         'transaction.cardBrand',
         'transaction.cardHolderName',
+        'transaction.shippingAddress',
         'product.id',
         'product.title',
         'product.imageUrl',
@@ -262,6 +263,7 @@ export class PaymentHistoryService {
       cardLast4: transaction.cardLast4,
       gatewayReference: transaction.gatewayReference,
       failureReason: transaction.failureReason,
+      shippingAddress: transaction.shippingAddress ?? null,
     };
     // El nombre del titular es dato personal del comprador: el vendedor no
     // lo recibe.

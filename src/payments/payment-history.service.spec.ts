@@ -24,6 +24,17 @@ describe('PaymentHistoryService', () => {
     cardLast4: '4242',
     cardHolderName: 'María José Núñez',
     gatewayReference: 'SIM-A1B2C3',
+    shippingAddress: {
+      fullName: 'María López',
+      phone: '88888888',
+      country: 'CR',
+      province: 'San José',
+      city: 'San José',
+      line1: 'Avenida Central',
+      line2: null,
+      postalCode: null,
+      notes: null,
+    },
     createdAt: new Date('2026-10-19T15:00:00.000Z'),
     completedAt: new Date('2026-10-19T16:00:00.000Z'),
     product: { id: 10, title: 'Producto', imageUrl: '/image.jpg' },
@@ -255,9 +266,15 @@ describe('PaymentHistoryService', () => {
     const h = createHarness();
     const buyerReceipt = await h.service.receipt('buyer-1', 'tx-1');
     expect(buyerReceipt).not.toHaveProperty('commission');
+    expect(buyerReceipt.shippingAddress).toEqual(
+      expect.objectContaining({ country: 'CR', line1: 'Avenida Central' }),
+    );
     const sellerReceipt = await h.service.receipt('seller-1', 'tx-1');
     expect(sellerReceipt.commission).toEqual(
       expect.objectContaining({ commissionAmount: 3, sellerNet: 97 }),
+    );
+    expect(sellerReceipt.shippingAddress).toEqual(
+      expect.objectContaining({ country: 'CR', line1: 'Avenida Central' }),
     );
     expect(sellerReceipt).not.toHaveProperty('idempotencyKey');
   });

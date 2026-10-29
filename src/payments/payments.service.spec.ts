@@ -25,6 +25,17 @@ import { PaymentsService } from './payments.service';
 
 describe('PaymentsService', () => {
   const buyerId = 'buyer-id';
+  const shippingAddress = {
+    fullName: 'María López',
+    phone: '88888888',
+    country: 'CR',
+    province: 'San José',
+    city: 'San José',
+    line1: 'Avenida Central',
+    line2: null,
+    postalCode: null,
+    notes: null,
+  };
   const card = {
     cardNumber: '4242424242424242',
     expiryMonth: 12,
@@ -176,6 +187,7 @@ describe('PaymentsService', () => {
   const dto = (productId = 7): CheckoutDto => ({
     productId,
     card,
+    shippingAddress,
   });
 
   it('creates pending before charging and atomically completes the sale', async () => {
@@ -224,6 +236,73 @@ describe('PaymentsService', () => {
       exchangeRate: null,
       normalizedAmountCrc: null,
     });
+    expect(result.shippingAddress).toEqual(shippingAddress);
+    expect(h.txRepo.save).toHaveBeenLastCalledWith(
+      expect.objectContaining({ shippingAddress }),
+    );
+  });
+
+  it('persists a normalized shipping snapshot and keeps it on failed payments', async () => {
+    const h = createHarness();
+    h.paymentGateway.charge.mockResolvedValue({
+      approved: false,
+      failureReason: 'card_declined',
+    });
+
+    const address = {
+      ...shippingAddress,
+      fullName: '  María   López ',
+      country: 'cr',
+      line2: '  Apartamento 2 ',
+      postalCode: ' 10101 ',
+      notes: '',
+    };
+    const normalizedAddress = {
+      ...shippingAddress,
+      fullName: 'María   López',
+      country: 'CR',
+      line2: 'Apartamento 2',
+      postalCode: '10101',
+      notes: null,
+    };
+
+    await expect(
+      h.service.checkout(
+        { ...dto(), shippingAddress: address },
+        buyerId,
+        'address-failed',
+      ),
+    ).rejects.toMatchObject({ status: 402 });
+
+    // El DTO real ya normaliza estos valores; este caso confirma que el
+    // snapshot persistido no depende de una referencia mutable al DTO.
+    expect(h.txRepo.save).toHaveBeenCalledWith(
+      expect.objectContaining({ shippingAddress: normalizedAddress }),
+    );
+    expect(address).not.toBe(h.txRepo.save.mock.calls[0][0].shippingAddress);
+  });
+
+  it('rejects the same idempotency key when the shipping address changes', async () => {
+    const h = createHarness();
+    h.txRepo.findOne.mockResolvedValue({
+      id: 'existing',
+      productId: 7,
+      buyerId,
+      shippingAddress,
+      status: TransactionStatus.COMPLETED,
+    });
+
+    await expect(
+      h.service.checkout(
+        {
+          ...dto(),
+          shippingAddress: { ...shippingAddress, line1: 'Otra dirección' },
+        },
+        buyerId,
+        'address-key',
+      ),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(h.paymentGateway.charge).not.toHaveBeenCalled();
   });
 
   it('persists a rejected payment and maps it to HTTP 402 after commit', async () => {
@@ -274,6 +353,7 @@ describe('PaymentsService', () => {
       id: 'existing',
       productId: 7,
       buyerId,
+      shippingAddress,
       amount: 120000,
       currency: 'CRC',
       status: TransactionStatus.COMPLETED,
@@ -352,6 +432,7 @@ describe('PaymentsService', () => {
       id: 'winner',
       productId: 7,
       buyerId,
+      shippingAddress,
       amount: 120000,
       currency: 'CRC',
       status: TransactionStatus.COMPLETED,
@@ -446,6 +527,7 @@ describe('PaymentsService', () => {
         id: 'existing',
         productId: 7,
         buyerId,
+        shippingAddress,
         status,
         failureReason:
           status === TransactionStatus.FAILED ? 'card_declined' : null,
@@ -526,6 +608,7 @@ describe('PaymentsService', () => {
       const result = await h.service.checkout(
         {
           productId: 7,
+          shippingAddress,
           card: { ...card, cardHolderName: '  María   José Núñez ' },
         },
         buyerId,
@@ -578,6 +661,7 @@ describe('PaymentsService', () => {
         id: 'existing',
         productId: 7,
         buyerId,
+        shippingAddress,
         status: TransactionStatus.COMPLETED,
         cardBrand: 'visa',
         cardLast4: '4242',
@@ -588,7 +672,11 @@ describe('PaymentsService', () => {
       // reintento devuelve la transacción guardada tal cual.
       await expect(
         h.service.checkout(
-          { productId: 7, card: { ...card, cardHolderName: 'Otro Nombre' } },
+          {
+            productId: 7,
+            shippingAddress,
+            card: { ...card, cardHolderName: 'Otro Nombre' },
+          },
           buyerId,
           'checkout-holder-3',
         ),
@@ -599,7 +687,7 @@ describe('PaymentsService', () => {
       expect(h.paymentGateway.charge).not.toHaveBeenCalled();
     });
 
-    it('returns null for transactions created before the field existed', async () => {
+    it('rejects reusing a key for a legacy transaction without address', async () => {
       const h = createHarness();
       h.txRepo.findOne.mockResolvedValue({
         id: 'legacy',
@@ -613,7 +701,7 @@ describe('PaymentsService', () => {
 
       await expect(
         h.service.checkout(dto(), buyerId, 'checkout-holder-4'),
-      ).resolves.toMatchObject({ id: 'legacy', cardHolderName: null });
+      ).rejects.toBeInstanceOf(ConflictException);
     });
   });
 

@@ -1,4 +1,5 @@
 import { TransactionStatus } from '../enums/transaction-status.enum';
+import { ShippingAddressSnapshot } from '../types/shipping-address-snapshot';
 
 export class CheckoutCommissionSnapshotDto {
   salesTierName!: string;
@@ -27,4 +28,5 @@ export class CheckoutResponseDto {
   cardHolderName!: string | null;
   failureReason!: string | null;
   completedAt!: Date | null;
+  shippingAddress!: ShippingAddressSnapshot | null;
 }

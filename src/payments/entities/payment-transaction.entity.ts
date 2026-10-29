@@ -13,6 +13,7 @@ import { Seller } from '../../sellers/entities/seller.entity';
 import { User } from '../../users/entities/user.entity';
 import { numericTransformer } from '../common/numeric.transformer';
 import { TransactionStatus } from '../enums/transaction-status.enum';
+import { ShippingAddressSnapshot } from '../types/shipping-address-snapshot';
 
 @Entity('payment_transaction')
 @Unique('UQ_payment_transaction_idempotency_key', ['idempotencyKey'])
@@ -170,6 +171,9 @@ export class PaymentTransaction {
 
   @Column({ name: 'idempotency_key', type: 'varchar' })
   idempotencyKey!: string;
+
+  @Column({ name: 'shipping_address', type: 'jsonb', nullable: true })
+  shippingAddress!: ShippingAddressSnapshot | null;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamp with time zone' })
   createdAt!: Date;
