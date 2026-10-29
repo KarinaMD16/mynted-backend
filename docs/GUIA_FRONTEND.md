@@ -530,11 +530,39 @@ Un producto **sin comunidad** aparece en shop, `/products`, búsqueda, perfil de
   "productTags": [
     { "tagId": 1, "tag": { "tagId": 1, "name": "Coleccionismo" } }
   ],
-  "isSaved": false
+  "isSaved": false,
+  "ratingAverage": 4.3,
+  "reviewsCount": 3
 }
 ```
 
-(`communityId` puede ser `null`.)
+(`communityId` puede ser `null`. `ratingAverage` es `null` y `reviewsCount` es `0` si el producto no tiene reseñas.)
+
+### Rating del producto en las tarjetas
+
+**Todas** las tarjetas de producto traen, a nivel de la tarjeta, `ratingAverage` y `reviewsCount`, con el mismo significado y formato que en `GET /products/:id`, para pintar las estrellas con el mismo componente del detalle:
+
+| Campo           | Tipo             | Significado                                                                                          |
+| --------------- | ---------------- | ---------------------------------------------------------------------------------------------------- |
+| `ratingAverage` | `number \| null` | Promedio de las reseñas **del producto**, con 1 decimal (`4.3`). `null` si no tiene reseñas.         |
+| `reviewsCount`  | `number`         | Cantidad de reseñas del producto. `0` si no tiene.                                                   |
+
+Dónde vienen: `GET /products`, `/products/shop`, `/products/recommended`, `/products/:id/related`, `/sellers/:sellerId/products`, `GET /products/me` (panel del vendedor), `GET /search?type=products` (y `/search` sin `type`), `GET /users/:id/products`, y las tarjetas de producto de `GET /favorites/me`, `GET /posts/me` y los demás listados mixtos de posts y productos. El contexto de producto del chat es un resumen y no los trae.
+
+```json
+{
+  "id": 27,
+  "title": "Funko Pop Batman",
+  "finalPrice": 30,
+  "isSaved": false,
+  "ratingAverage": 4.3,
+  "reviewsCount": 3
+}
+```
+
+- **Sin reseñas:** `ratingAverage: null` y `reviewsCount: 0`. No muestres `0` ni estrellas vacías con un número: oculta las estrellas o muestra "Sin reseñas".
+- **No confundir con el vendedor:** `seller.ratingAverage` / `seller.reviewsCount` (donde existe un objeto `seller`, p. ej. en el detalle) es el rating **del vendedor** (todas las reseñas de todos sus productos). Los campos de la tarjeta son los **del producto**. Las tarjetas del Shop traen `seller{...}` sin rating; el del vendedor sigue donde estaba.
+- Los valores son los mismos que devuelve `GET /products/:id` para ese producto.
 
 **`GET /products/:id`** – detalle:
 
@@ -614,7 +642,7 @@ Query: `page` (1) y `limit` (3, máx. 20) → **secciones** por página · `prod
 - Un producto aparece **una sola vez** (en la primera sección cuyo tag tenga).
 - "Show all": `GET /products?tag=<tagId>`.
 
-`TagProductCard`: `id, title, price, discountPercent, finalPrice, currency, imageUrl, type, condition, isSaved, tags[], seller{sellerId, userId, displayName, photoUrl, isVerified}`.
+`TagProductCard`: `id, title, price, discountPercent, finalPrice, currency, imageUrl, type, condition, isSaved, ratingAverage, reviewsCount, tags[], seller{sellerId, userId, displayName, photoUrl, isVerified}`.
 
 ---
 
@@ -626,7 +654,7 @@ Requiere rol `seller`.
 Query: `status` (`draft|active|inactive|sold`), `q` (busca por título), `type`, `condition`, `priceMin`, `priceMax`, `tagId` (solo la sección de ese tag, para "Show all"), `page`/`limit` (secciones, def. 3), `productsPage`/`productsLimit` (productos por sección, def. 8, máx. 50).
 → `{ totalProducts, sections: [{tag, totalProducts, products: MyProductCard[], pagination}], pagination }`
 
-`MyProductCard`: `id, title, price, discountPercent, finalPrice, currency, imageUrl, status, isVisible, publishedAt, type, condition, tags[], community{id,name} | null`. (No trae `isSaved`.)
+`MyProductCard`: `id, title, price, discountPercent, finalPrice, currency, imageUrl, status, isVisible, publishedAt, type, condition, tags[], community{id,name} | null, featuredEnabled, isFeatured, ratingAverage, reviewsCount`. (No trae `isSaved`.) `ratingAverage`/`reviewsCount` son los del producto (ver "Rating del producto en las tarjetas").
 
 **`GET /products/me/stats`** → `{ total, draft, active, sold, inactive }`.
 
