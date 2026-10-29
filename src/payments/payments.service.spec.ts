@@ -156,6 +156,9 @@ describe('PaymentsService', () => {
       }),
     };
     const eventEmitter = { emit: jest.fn() };
+    const conversationsService = {
+      hasSellerMessageForProduct: jest.fn().mockResolvedValue(true),
+    };
     const service = new PaymentsService(
       dataSource as never,
       productRepo as never,
@@ -165,6 +168,7 @@ describe('PaymentsService', () => {
       paymentGateway,
       userRepo as never,
       exchangeRateService as never,
+      conversationsService as never,
       eventEmitter as never,
     );
     return {
@@ -179,6 +183,7 @@ describe('PaymentsService', () => {
       stockUpdate,
       updateBuilder,
       eventEmitter,
+      conversationsService,
       commissionService,
       paymentGateway,
       userRepo,
@@ -246,6 +251,42 @@ describe('PaymentsService', () => {
         shippingStatus: ShippingStatus.PAID,
       }),
     );
+  });
+
+  it('requires a seller message before checkout and leaves no side effects', async () => {
+    const h = createHarness();
+    h.conversationsService.hasSellerMessageForProduct.mockResolvedValue(false);
+
+    await expect(
+      h.service.checkout(dto(), buyerId, 'conversation-required-1'),
+    ).rejects.toThrow(
+      'Primero conversa con el vendedor antes de comprar este producto',
+    );
+
+    expect(h.paymentGateway.charge).not.toHaveBeenCalled();
+    expect(h.txRepo.create).not.toHaveBeenCalled();
+    expect(h.txRepo.save).not.toHaveBeenCalled();
+    expect(h.product.quantity).toBe(1);
+    expect(h.seller.completedSalesCount).toBe(9);
+    expect(h.eventEmitter.emit).not.toHaveBeenCalled();
+  });
+
+  it('allows retrying the same new idempotency key after the seller replies', async () => {
+    const h = createHarness();
+    h.conversationsService.hasSellerMessageForProduct
+      .mockResolvedValueOnce(false)
+      .mockResolvedValue(true);
+
+    await expect(
+      h.service.checkout(dto(), buyerId, 'conversation-retry-1'),
+    ).rejects.toThrow(
+      'Primero conversa con el vendedor antes de comprar este producto',
+    );
+
+    await expect(
+      h.service.checkout(dto(), buyerId, 'conversation-retry-1'),
+    ).resolves.toMatchObject({ status: TransactionStatus.COMPLETED });
+    expect(h.paymentGateway.charge).toHaveBeenCalledTimes(1);
   });
 
   it('rejects a country outside shipsTo before charging or mutating stock', async () => {
@@ -767,6 +808,18 @@ describe('PaymentsService', () => {
   });
 
   describe('quote', () => {
+    it('requires a seller message before quoting', async () => {
+      const h = createHarness();
+      h.conversationsService.hasSellerMessageForProduct.mockResolvedValue(
+        false,
+      );
+
+      await expect(h.service.quote(7, buyerId)).rejects.toThrow(
+        'Primero conversa con el vendedor antes de comprar este producto',
+      );
+      expect(h.commissionService.calculate).not.toHaveBeenCalled();
+    });
+
     it('returns a CRC quote for a buyer without commission internals', async () => {
       const h = createHarness();
 

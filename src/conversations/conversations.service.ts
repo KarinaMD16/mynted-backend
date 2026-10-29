@@ -120,6 +120,27 @@ export class ConversationsService {
     private readonly cosmeticsService: CosmeticsService,
   ) {}
 
+  async hasSellerMessageForProduct(
+    buyerId: string,
+    productId: number,
+    sellerUserId: string,
+  ): Promise<boolean> {
+    const rows = await this.dataSource.query<{ exists: boolean }[]>(
+      `SELECT EXISTS (
+         SELECT 1
+           FROM conversation c
+           INNER JOIN message m ON m.conversation_id = c.id
+          WHERE c.buyer_id = $1
+            AND c.product_id = $2
+            AND c.seller_id = $3
+            AND m.sender_id = c.seller_id
+       ) AS exists`,
+      [buyerId, productId, sellerUserId],
+    );
+
+    return rows[0]?.exists === true;
+  }
+
   // Bandeja del usuario como comprador o vendedor, más reciente primero.
   async getInbox(
     userId: string,

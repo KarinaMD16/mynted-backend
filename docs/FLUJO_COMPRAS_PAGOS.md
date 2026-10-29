@@ -81,6 +81,13 @@ La clave de idempotencia reutiliza el resultado de una operación compatible.
 Una operación con la misma clave pero distinto comprador, producto, cantidad o
 dirección responde `409 Conflict`.
 
+### Conversación previa a cotizar y comprar
+
+Antes de cotizar o comprar, el vendedor debe haber enviado al menos un
+mensaje en la conversación del comprador para ese producto. Si no existe esa
+respuesta, `GET /payments/quote/:productId` y `POST /payments/checkout`
+responden `403` con: `Primero conversa con el vendedor antes de comprar este producto`.
+
 ## 4. ShippingAddress
 
 `shippingAddress` se recibe durante checkout y se guarda como snapshot JSONB

@@ -141,10 +141,7 @@ export class UserCommunitiesService {
       where: { userId, communityId },
     });
 
-    if (
-      existingProfile?.removedAt === null ||
-      existingProfile?.removedAt === undefined
-    ) {
+    if (existingProfile && !existingProfile.removedAt) {
       return { communityId, result: 'already_member' };
     }
 

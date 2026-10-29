@@ -49,6 +49,7 @@ import { ShipPaymentDto } from './dto/ship-payment.dto';
 import { PaymentShippingResponseDto } from './dto/payment-shipping-response.dto';
 import { CancelPaymentDto } from './dto/cancel-payment.dto';
 import { PaymentCancelResponseDto } from './dto/payment-cancel-response.dto';
+import { ConversationsService } from '../conversations/conversations.service';
 
 // isNew: el pago se aprobó en esta llamada (no es la repetición de una clave
 // de idempotencia ya usada).
@@ -79,6 +80,7 @@ export class PaymentsService {
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
     private readonly exchangeRateService: ExchangeRateService,
+    private readonly conversationsService: ConversationsService,
     @Optional() private readonly eventEmitter?: EventEmitter2,
   ) {}
 
@@ -118,6 +120,8 @@ export class PaymentsService {
 
     const user = await this.userRepository.findOne({ where: { id: userId } });
     if (!user) throw new NotFoundException('Usuario no encontrado');
+
+    await this.assertSellerHasReplied(product.id, userId, seller.userId);
 
     const currency = this.normalizeProductCurrency(product.currency);
     const commission = await this.commissionService.calculate(
@@ -451,7 +455,6 @@ export class PaymentsService {
         'Solo se pueden comprar productos de venta',
       );
     }
-    this.assertShipsToCountry(product, shippingAddress.country);
     if (
       product.price === null ||
       !Number.isFinite(product.price) ||
@@ -460,13 +463,6 @@ export class PaymentsService {
       throw new BadRequestException('El precio del producto es inválido');
     }
     const currency = this.normalizeProductCurrency(product.currency);
-
-    // El producto está bloqueado: este stock es el vigente. No se reserva en
-    // el checkout; solo se valida aquí y se descuenta al aprobar el pago.
-    const quantity = dto.quantity ?? 1;
-    this.assertEnoughStock(product, quantity);
-    const unitPrice = this.unitPrice(product);
-    const amount = this.lineTotal(unitPrice, quantity);
 
     const seller = await manager.getRepository(Seller).findOne({
       where: { sellerId: product.sellerId },
@@ -491,6 +487,16 @@ export class PaymentsService {
     if (seller.userId === buyerId) {
       throw new BadRequestException('No puedes comprar tu propio producto');
     }
+
+    await this.assertSellerHasReplied(product.id, buyerId, seller.userId);
+    this.assertShipsToCountry(product, shippingAddress.country);
+
+    // El producto está bloqueado: este stock es el vigente. No se reserva en
+    // el checkout; solo se valida aquí y se descuenta al aprobar el pago.
+    const quantity = dto.quantity ?? 1;
+    this.assertEnoughStock(product, quantity);
+    const unitPrice = this.unitPrice(product);
+    const amount = this.lineTotal(unitPrice, quantity);
 
     const salesCountBefore = seller.completedSalesCount;
     const commission = await this.commissionService.calculate(
@@ -838,6 +844,24 @@ export class PaymentsService {
     if (!allowed) {
       throw new ConflictException(
         'El producto no está disponible para envío al país indicado',
+      );
+    }
+  }
+
+  private async assertSellerHasReplied(
+    productId: number,
+    buyerId: string,
+    sellerUserId: string,
+  ): Promise<void> {
+    const hasSellerMessage =
+      await this.conversationsService.hasSellerMessageForProduct(
+        buyerId,
+        productId,
+        sellerUserId,
+      );
+    if (!hasSellerMessage) {
+      throw new ForbiddenException(
+        'Primero conversa con el vendedor antes de comprar este producto',
       );
     }
   }

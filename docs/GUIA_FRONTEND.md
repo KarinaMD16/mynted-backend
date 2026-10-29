@@ -176,6 +176,13 @@ La resolución acepta `action: "refund"` o `action: "close"` y requiere una
 `open`, `resolved_refund` y `resolved_closed`. Las listas de compras y ventas
 incluyen `paymentStatus` además de `shippingStatus`.
 
+## Conversación previa a cotizar y comprar
+
+Antes de usar `GET /payments/quote/:productId` o `POST /payments/checkout`,
+el vendedor debe haber enviado al menos un mensaje en la conversación para
+ese producto. Sin respuesta del vendedor, el backend devuelve `403` con:
+`Primero conversa con el vendedor antes de comprar este producto`.
+
 ## 0. Convenciones generales
 
 | Tema                                           | Detalle                                                                                                                                                                                                                                                |
