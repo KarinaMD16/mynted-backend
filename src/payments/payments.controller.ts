@@ -6,6 +6,7 @@ import {
   Param,
   ParseIntPipe,
   ParseUUIDPipe,
+  Patch,
   Post,
   Query,
   Req,
@@ -22,9 +23,11 @@ import {
   ApiParam,
   ApiOperation,
   ApiQuery,
+  ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { SuperAdminGuard } from '../auth/guards/super-admin.guard';
 import { AuthenticatedRequest } from '../auth/types/authenticated-request';
 import { CheckoutDto } from './dto/checkout.dto';
 import { PaymentsService } from './payments.service';
@@ -36,6 +39,18 @@ import { PaymentPurchaseListResponseDto } from './dto/payment-purchase-response.
 import { PaymentSaleListResponseDto } from './dto/payment-sale-response.dto';
 import { SalesSummaryResponseDto } from './dto/sales-summary-response.dto';
 import { PaymentReceiptResponseDto } from './dto/payment-receipt-response.dto';
+import { ShipPaymentDto } from './dto/ship-payment.dto';
+import { PaymentShippingResponseDto } from './dto/payment-shipping-response.dto';
+import { CancelPaymentDto } from './dto/cancel-payment.dto';
+import { PaymentCancelResponseDto } from './dto/payment-cancel-response.dto';
+import { CreatePaymentDisputeDto } from './dto/create-payment-dispute.dto';
+import { ResolvePaymentDisputeDto } from './dto/resolve-payment-dispute.dto';
+import { PaymentDisputeQueryDto } from './dto/payment-dispute-query.dto';
+import {
+  PaymentDisputeItemDto,
+  PaymentDisputeListResponseDto,
+} from './dto/payment-dispute-response.dto';
+import { PaymentDisputesService } from './payment-disputes.service';
 
 @ApiTags('payments')
 @Controller('payments')
@@ -43,6 +58,8 @@ export class PaymentsController {
   constructor(
     private readonly paymentsService: PaymentsService,
     @Optional() private readonly paymentHistoryService?: PaymentHistoryService,
+    @Optional()
+    private readonly paymentDisputesService?: PaymentDisputesService,
   ) {}
 
   @Get('me/purchases')
@@ -157,6 +174,11 @@ export class PaymentsController {
     description: 'Clave única de la operación, entre 8 y 128 caracteres',
   })
   @ApiOperation({ summary: 'Procesar el checkout de un producto de venta' })
+  @ApiResponse({
+    status: 409,
+    description:
+      'El producto no estÃ¡ disponible para envÃ­o al paÃ­s indicado',
+  })
   checkout(
     @Body() dto: CheckoutDto,
     @Headers('Idempotency-Key') idempotencyKey: string | undefined,
@@ -167,6 +189,145 @@ export class PaymentsController {
       request.user.userId,
       idempotencyKey,
     );
+  }
+
+  @Patch(':id/ship')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiParam({ name: 'id', type: String, format: 'uuid' })
+  @ApiBody({ type: ShipPaymentDto })
+  @ApiOperation({ summary: 'Marcar una compra como enviada' })
+  @ApiOkResponse({ type: PaymentShippingResponseDto })
+  @ApiResponse({ status: 401, description: 'No autenticado' })
+  @ApiResponse({ status: 403, description: 'No es el vendedor de la compra' })
+  @ApiResponse({ status: 404, description: 'Transacción no encontrada' })
+  @ApiResponse({ status: 409, description: 'Estado no válido para envío' })
+  ship(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() dto: ShipPaymentDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.paymentsService.ship(id, request.user.userId, dto);
+  }
+
+  @Post(':id/cancel')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiParam({ name: 'id', type: String, format: 'uuid' })
+  @ApiBody({ type: CancelPaymentDto })
+  @ApiOperation({ summary: 'Cancelar una compra antes del envío' })
+  @ApiOkResponse({ type: PaymentCancelResponseDto })
+  @ApiResponse({ status: 401, description: 'No autenticado' })
+  @ApiResponse({ status: 403, description: 'No es el vendedor de la compra' })
+  @ApiResponse({ status: 404, description: 'Transacción no encontrada' })
+  @ApiResponse({
+    status: 409,
+    description: 'Estado no válido para cancelación',
+  })
+  cancel(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() dto: CancelPaymentDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.paymentsService.cancel(id, request.user.userId, dto);
+  }
+
+  @Post(':id/dispute')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiParam({ name: 'id', type: String, format: 'uuid' })
+  @ApiBody({ type: CreatePaymentDisputeDto })
+  @ApiOperation({ summary: 'Abrir un reclamo de una compra entregada' })
+  @ApiOkResponse({ type: PaymentDisputeItemDto })
+  @ApiResponse({ status: 401, description: 'No autenticado' })
+  @ApiResponse({ status: 403, description: 'No es el comprador de la compra' })
+  @ApiResponse({ status: 404, description: 'Transacción no encontrada' })
+  @ApiResponse({
+    status: 409,
+    description: 'Estado no válido o reclamo duplicado',
+  })
+  dispute(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() dto: CreatePaymentDisputeDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.paymentDisputesService!.create(id, request.user.userId, dto);
+  }
+
+  @Get('disputes')
+  @UseGuards(JwtAuthGuard, SuperAdminGuard)
+  @UsePipes(
+    new ValidationPipe({
+      transform: true,
+      whitelist: true,
+      forbidNonWhitelisted: true,
+    }),
+  )
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Listar reclamos comerciales' })
+  @ApiOkResponse({ type: PaymentDisputeItemDto })
+  @ApiResponse({ status: 401, description: 'No autenticado' })
+  @ApiResponse({
+    status: 403,
+    description: 'Requiere permisos de superadministrador',
+  })
+  disputes(@Query() query: PaymentDisputeQueryDto) {
+    return this.paymentDisputesService!.findAll(query);
+  }
+
+  @Get('disputes/:id')
+  @UseGuards(JwtAuthGuard, SuperAdminGuard)
+  @ApiBearerAuth()
+  @ApiParam({ name: 'id', type: String, format: 'uuid' })
+  @ApiOperation({ summary: 'Consultar un reclamo comercial' })
+  @ApiOkResponse({ type: PaymentDisputeItemDto })
+  @ApiResponse({ status: 401, description: 'No autenticado' })
+  @ApiResponse({
+    status: 403,
+    description: 'Requiere permisos de superadministrador',
+  })
+  @ApiResponse({ status: 404, description: 'Reclamo no encontrado' })
+  disputeDetail(@Param('id', new ParseUUIDPipe()) id: string) {
+    return this.paymentDisputesService!.findById(id);
+  }
+
+  @Patch('disputes/:id/resolve')
+  @UseGuards(JwtAuthGuard, SuperAdminGuard)
+  @ApiBearerAuth()
+  @ApiParam({ name: 'id', type: String, format: 'uuid' })
+  @ApiBody({ type: ResolvePaymentDisputeDto })
+  @ApiOperation({ summary: 'Resolver un reclamo comercial' })
+  @ApiOkResponse({ type: PaymentDisputeListResponseDto })
+  @ApiResponse({ status: 401, description: 'No autenticado' })
+  @ApiResponse({
+    status: 403,
+    description: 'Requiere permisos de superadministrador',
+  })
+  @ApiResponse({ status: 404, description: 'Reclamo no encontrado' })
+  @ApiResponse({ status: 409, description: 'El reclamo ya fue resuelto' })
+  resolveDispute(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() dto: ResolvePaymentDisputeDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.paymentDisputesService!.resolve(id, request.user.userId, dto);
+  }
+
+  @Patch(':id/deliver')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiParam({ name: 'id', type: String, format: 'uuid' })
+  @ApiOperation({ summary: 'Marcar una compra como entregada' })
+  @ApiOkResponse({ type: PaymentShippingResponseDto })
+  @ApiResponse({ status: 401, description: 'No autenticado' })
+  @ApiResponse({ status: 403, description: 'No es el comprador de la compra' })
+  @ApiResponse({ status: 404, description: 'Transacción no encontrada' })
+  @ApiResponse({ status: 409, description: 'Estado no válido para entrega' })
+  deliver(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.paymentsService.deliver(id, request.user.userId);
   }
 
   @Get(':id')

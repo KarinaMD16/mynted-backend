@@ -93,6 +93,17 @@ describe('PaymentCardDto.cardHolderName', () => {
     });
     const body = (cardHolderName?: string) => ({
       productId: 42,
+      shippingAddress: {
+        fullName: 'María López',
+        phone: '88888888',
+        country: 'CR',
+        province: 'San José',
+        city: 'San José',
+        line1: 'Avenida Central',
+        line2: null,
+        postalCode: null,
+        notes: null,
+      },
       card: {
         cardNumber: '4242424242424242',
         expiryMonth: 12,

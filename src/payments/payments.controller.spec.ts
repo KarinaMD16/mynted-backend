@@ -13,6 +13,17 @@ describe('PaymentsController', () => {
       cvv: '123',
       cardHolderName: 'María José Núñez',
     },
+    shippingAddress: {
+      fullName: 'María López',
+      phone: '88888888',
+      country: 'CR',
+      province: 'San José',
+      city: 'San José',
+      line1: 'Avenida Central',
+      line2: null,
+      postalCode: null,
+      notes: null,
+    },
   };
 
   it('is protected with JwtAuthGuard', () => {

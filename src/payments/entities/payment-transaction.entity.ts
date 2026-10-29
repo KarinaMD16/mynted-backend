@@ -13,6 +13,8 @@ import { Seller } from '../../sellers/entities/seller.entity';
 import { User } from '../../users/entities/user.entity';
 import { numericTransformer } from '../common/numeric.transformer';
 import { TransactionStatus } from '../enums/transaction-status.enum';
+import { ShippingAddressSnapshot } from '../types/shipping-address-snapshot';
+import { ShippingStatus } from '../enums/shipping-status.enum';
 
 @Entity('payment_transaction')
 @Unique('UQ_payment_transaction_idempotency_key', ['idempotencyKey'])
@@ -170,6 +172,45 @@ export class PaymentTransaction {
 
   @Column({ name: 'idempotency_key', type: 'varchar' })
   idempotencyKey!: string;
+
+  @Column({ name: 'shipping_address', type: 'jsonb', nullable: true })
+  shippingAddress!: ShippingAddressSnapshot | null;
+
+  @Column({ name: 'cancellation_reason', type: 'text', nullable: true })
+  cancellationReason!: string | null;
+
+  @Column({
+    name: 'shipping_status',
+    type: 'enum',
+    enum: ShippingStatus,
+    nullable: true,
+  })
+  shippingStatus!: ShippingStatus | null;
+
+  @Column({
+    name: 'tracking_number',
+    type: 'varchar',
+    length: 120,
+    nullable: true,
+  })
+  trackingNumber!: string | null;
+
+  @Column({ name: 'carrier', type: 'varchar', length: 100, nullable: true })
+  carrier!: string | null;
+
+  @Column({
+    name: 'shipped_at',
+    type: 'timestamp with time zone',
+    nullable: true,
+  })
+  shippedAt!: Date | null;
+
+  @Column({
+    name: 'delivered_at',
+    type: 'timestamp with time zone',
+    nullable: true,
+  })
+  deliveredAt!: Date | null;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamp with time zone' })
   createdAt!: Date;

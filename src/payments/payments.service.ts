@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   HttpException,
   HttpStatus,
   Inject,
@@ -35,7 +36,19 @@ import { normalizeCardHolderName } from './dto/payment-card.dto';
 import { CheckoutResponseDto } from './dto/checkout-response.dto';
 import { QuoteResponseDto } from './dto/quote-response.dto';
 import { ExchangeRateService } from './exchange-rate/exchange-rate.service';
-import { CheckoutCompletedEvent, PaymentEvents } from './payment-events';
+import {
+  CheckoutCompletedEvent,
+  OrderCancelledEvent,
+  OrderDeliveredEvent,
+  OrderShippedEvent,
+  PaymentEvents,
+} from './payment-events';
+import { ShippingAddressSnapshot } from './types/shipping-address-snapshot';
+import { ShippingStatus } from './enums/shipping-status.enum';
+import { ShipPaymentDto } from './dto/ship-payment.dto';
+import { PaymentShippingResponseDto } from './dto/payment-shipping-response.dto';
+import { CancelPaymentDto } from './dto/cancel-payment.dto';
+import { PaymentCancelResponseDto } from './dto/payment-cancel-response.dto';
 
 // isNew: el pago se aprobó en esta llamada (no es la repetición de una clave
 // de idempotencia ya usada).
@@ -150,21 +163,203 @@ export class PaymentsService {
     return response;
   }
 
+  async cancel(
+    transactionId: string,
+    userId: string,
+    dto: CancelPaymentDto,
+  ): Promise<PaymentCancelResponseDto> {
+    const result = await this.dataSource.transaction(async (manager) => {
+      const transaction = await manager
+        .getRepository(PaymentTransaction)
+        .findOne({
+          where: { id: transactionId },
+          relations: { seller: true },
+          lock: { mode: 'pessimistic_write' },
+        });
+      if (!transaction)
+        throw new NotFoundException('Transacción no encontrada');
+      if (transaction.seller?.userId !== userId) {
+        throw new ForbiddenException(
+          'No tienes permiso para cancelar esta transacción',
+        );
+      }
+      if (
+        transaction.status !== TransactionStatus.COMPLETED ||
+        transaction.shippingStatus !== ShippingStatus.PAID ||
+        transaction.shippingAddress === null ||
+        transaction.shippingAddress === undefined
+      ) {
+        throw new ConflictException(
+          'La transacción no puede cancelarse en su estado actual',
+        );
+      }
+
+      const product = await manager.getRepository(Product).findOne({
+        where: { id: transaction.productId },
+        withDeleted: true,
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!product) throw new NotFoundException('Producto no encontrado');
+
+      const seller = await manager.getRepository(Seller).findOne({
+        where: { sellerId: transaction.sellerId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!seller) throw new NotFoundException('Vendedor no encontrado');
+
+      product.quantity += transaction.quantity;
+      if (
+        product.status === ProductStatus.SOLD &&
+        product.quantity > 0 &&
+        !product.deletedAt &&
+        !product.isHidden &&
+        !product.isDeactivated
+      ) {
+        product.status = ProductStatus.ACTIVE;
+      }
+      seller.completedSalesCount = Math.max(0, seller.completedSalesCount - 1);
+      transaction.status = TransactionStatus.REFUNDED;
+      transaction.cancellationReason = dto.reason ?? null;
+
+      await manager.getRepository(Product).save(product);
+      await manager.getRepository(Seller).save(seller);
+      await manager.getRepository(PaymentTransaction).save(transaction);
+
+      return {
+        response: {
+          transactionId: transaction.id,
+          paymentStatus: transaction.status,
+          shippingStatus: transaction.shippingStatus,
+        },
+        event: {
+          transactionId: transaction.id,
+          productId: transaction.productId,
+          buyerId: transaction.buyerId,
+        } satisfies OrderCancelledEvent,
+      };
+    });
+
+    this.eventEmitter?.emit(PaymentEvents.ORDER_CANCELLED, result.event);
+    return result.response;
+  }
+
+  async ship(
+    transactionId: string,
+    userId: string,
+    dto: ShipPaymentDto,
+  ): Promise<PaymentShippingResponseDto> {
+    const result = await this.dataSource.transaction(async (manager) => {
+      const repository = manager.getRepository(PaymentTransaction);
+      const transaction = await repository.findOne({
+        where: { id: transactionId },
+        relations: { seller: true },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!transaction)
+        throw new NotFoundException('Transacción no encontrada');
+      if (transaction.seller?.userId !== userId) {
+        throw new ForbiddenException(
+          'No tienes permiso para enviar esta transacción',
+        );
+      }
+      if (
+        transaction.status !== TransactionStatus.COMPLETED ||
+        transaction.shippingStatus !== ShippingStatus.PAID ||
+        transaction.shippingAddress === null ||
+        transaction.shippingAddress === undefined
+      ) {
+        throw new ConflictException(
+          'La transacción no está lista para enviarse',
+        );
+      }
+
+      transaction.shippingStatus = ShippingStatus.SHIPPED;
+      transaction.shippedAt = new Date();
+      transaction.trackingNumber = this.normalizeOptionalText(
+        dto.trackingNumber,
+      );
+      transaction.carrier = this.normalizeOptionalText(dto.carrier);
+      await repository.save(transaction);
+      return {
+        response: this.toShippingResponse(transaction),
+        event: {
+          transactionId: transaction.id,
+          productId: transaction.productId,
+          buyerId: transaction.buyerId,
+        } satisfies OrderShippedEvent,
+      };
+    });
+
+    this.eventEmitter?.emit(PaymentEvents.ORDER_SHIPPED, result.event);
+    return result.response;
+  }
+
+  async deliver(
+    transactionId: string,
+    userId: string,
+  ): Promise<PaymentShippingResponseDto> {
+    const result = await this.dataSource.transaction(async (manager) => {
+      const repository = manager.getRepository(PaymentTransaction);
+      const transaction = await repository.findOne({
+        where: { id: transactionId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!transaction)
+        throw new NotFoundException('Transacción no encontrada');
+      if (transaction.buyerId !== userId) {
+        throw new ForbiddenException(
+          'No tienes permiso para entregar esta transacción',
+        );
+      }
+      if (
+        transaction.status !== TransactionStatus.COMPLETED ||
+        transaction.shippingStatus !== ShippingStatus.SHIPPED
+      ) {
+        throw new ConflictException(
+          'La transacción no está lista para marcarse como entregada',
+        );
+      }
+
+      transaction.shippingStatus = ShippingStatus.DELIVERED;
+      transaction.deliveredAt = new Date();
+      await repository.save(transaction);
+      return {
+        response: this.toShippingResponse(transaction),
+        event: {
+          transactionId: transaction.id,
+          productId: transaction.productId,
+          sellerId: transaction.sellerId,
+        } satisfies OrderDeliveredEvent,
+      };
+    });
+
+    this.eventEmitter?.emit(PaymentEvents.ORDER_DELIVERED, result.event);
+    return result.response;
+  }
+
   async checkout(
     dto: CheckoutDto,
     buyerId: string,
     rawIdempotencyKey: string | undefined,
   ): Promise<CheckoutResponseDto> {
     const idempotencyKey = this.normalizeIdempotencyKey(rawIdempotencyKey);
+    const shippingAddress = this.toShippingAddressSnapshot(dto);
     const existing = await this.paymentTransactionRepository.findOne({
       where: { idempotencyKey },
     });
-    if (existing) return this.replayOrConflict(existing, buyerId, dto);
+    if (existing)
+      return this.replayOrConflict(existing, buyerId, dto, shippingAddress);
 
     let result: CheckoutResult;
     try {
       result = await this.dataSource.transaction(async (manager) =>
-        this.executeCheckout(manager, dto, buyerId, idempotencyKey),
+        this.executeCheckout(
+          manager,
+          dto,
+          buyerId,
+          idempotencyKey,
+          shippingAddress,
+        ),
       );
     } catch (error: unknown) {
       if (!this.isIdempotencyUniqueViolation(error)) {
@@ -183,7 +378,7 @@ export class PaymentsService {
           'No fue posible resolver la idempotencia del pago',
         );
       }
-      return this.replayOrConflict(concurrent, buyerId, dto);
+      return this.replayOrConflict(concurrent, buyerId, dto, shippingAddress);
     }
 
     if (result.kind === 'failed') {
@@ -212,13 +407,19 @@ export class PaymentsService {
     dto: CheckoutDto,
     buyerId: string,
     idempotencyKey: string,
+    shippingAddress: ShippingAddressSnapshot,
   ): Promise<CheckoutResult> {
     const transactionRepository = manager.getRepository(PaymentTransaction);
     const existing = await transactionRepository.findOne({
       where: { idempotencyKey },
     });
     if (existing) {
-      return this.replayResultOrConflict(existing, buyerId, dto);
+      return this.replayResultOrConflict(
+        existing,
+        buyerId,
+        dto,
+        shippingAddress,
+      );
     }
 
     const product = await manager.getRepository(Product).findOne({
@@ -235,6 +436,7 @@ export class PaymentsService {
         existingAfterProductLock,
         buyerId,
         dto,
+        shippingAddress,
       );
     }
 
@@ -249,6 +451,7 @@ export class PaymentsService {
         'Solo se pueden comprar productos de venta',
       );
     }
+    this.assertShipsToCountry(product, shippingAddress.country);
     if (
       product.price === null ||
       !Number.isFinite(product.price) ||
@@ -320,6 +523,12 @@ export class PaymentsService {
       cardHolderName: null,
       gatewayReference: null,
       idempotencyKey,
+      shippingAddress,
+      shippingStatus: null,
+      trackingNumber: null,
+      carrier: null,
+      shippedAt: null,
+      deliveredAt: null,
       completedAt: null,
     });
     await transactionRepository.save(pending);
@@ -357,6 +566,7 @@ export class PaymentsService {
     ) as string;
     pending.failureReason = null;
     pending.completedAt = new Date();
+    pending.shippingStatus = ShippingStatus.PAID;
     seller.completedSalesCount = salesCountBefore + 1;
 
     // Descuento atómico del stock, en la misma transacción que confirma el
@@ -400,8 +610,9 @@ export class PaymentsService {
     transaction: PaymentTransaction,
     buyerId: string,
     dto: CheckoutDto,
+    shippingAddress: ShippingAddressSnapshot,
   ): CheckoutResponseDto {
-    if (this.isOtherOperation(transaction, buyerId, dto)) {
+    if (this.isOtherOperation(transaction, buyerId, dto, shippingAddress)) {
       throw new ConflictException(
         'La clave de idempotencia ya pertenece a otra operación',
       );
@@ -423,8 +634,9 @@ export class PaymentsService {
     transaction: PaymentTransaction,
     buyerId: string,
     dto: CheckoutDto,
+    shippingAddress: ShippingAddressSnapshot,
   ): CheckoutResult {
-    if (this.isOtherOperation(transaction, buyerId, dto)) {
+    if (this.isOtherOperation(transaction, buyerId, dto, shippingAddress)) {
       throw new ConflictException(
         'La clave de idempotencia ya pertenece a otra operación',
       );
@@ -447,12 +659,15 @@ export class PaymentsService {
     transaction: PaymentTransaction,
     buyerId: string,
     dto: CheckoutDto,
+    shippingAddress: ShippingAddressSnapshot,
   ): boolean {
     return (
       transaction.buyerId !== buyerId ||
       transaction.productId !== dto.productId ||
       // Las transacciones anteriores a quantity equivalen a 1 unidad.
-      (transaction.quantity ?? 1) !== (dto.quantity ?? 1)
+      (transaction.quantity ?? 1) !== (dto.quantity ?? 1) ||
+      JSON.stringify(transaction.shippingAddress ?? null) !==
+        JSON.stringify(shippingAddress)
     );
   }
 
@@ -517,7 +732,52 @@ export class PaymentsService {
       cardHolderName: transaction.cardHolderName ?? null,
       failureReason: transaction.failureReason,
       completedAt: transaction.completedAt,
+      shippingAddress: transaction.shippingAddress ?? null,
+      shippingStatus: transaction.shippingStatus ?? null,
     };
+  }
+
+  private toShippingResponse(
+    transaction: PaymentTransaction,
+  ): PaymentShippingResponseDto {
+    return {
+      transactionId: transaction.id,
+      paymentStatus: transaction.status,
+      shippingStatus: transaction.shippingStatus ?? null,
+      trackingNumber: transaction.trackingNumber ?? null,
+      carrier: transaction.carrier ?? null,
+      shippedAt: transaction.shippedAt ?? null,
+      deliveredAt: transaction.deliveredAt ?? null,
+    };
+  }
+
+  private normalizeOptionalText(
+    value: string | null | undefined,
+  ): string | null {
+    if (value === undefined || value === null) return null;
+    const normalized = value.trim();
+    return normalized === '' ? null : normalized;
+  }
+
+  private toShippingAddressSnapshot(dto: CheckoutDto): ShippingAddressSnapshot {
+    const address = dto.shippingAddress;
+    return {
+      fullName: address.fullName.trim(),
+      phone: address.phone.trim(),
+      country: address.country.trim().toUpperCase(),
+      province: address.province.trim(),
+      city: address.city.trim(),
+      line1: address.line1.trim(),
+      line2: this.normalizeNullable(address.line2),
+      postalCode: this.normalizeNullable(address.postalCode),
+      notes: this.normalizeNullable(address.notes),
+    };
+  }
+
+  private normalizeNullable(value: string | null | undefined): string | null {
+    if (value === undefined || value === null) return null;
+    const normalized = value.trim();
+    return normalized === '' ? null : normalized;
   }
 
   private normalizeIdempotencyKey(value: string | undefined): string {
@@ -563,6 +823,22 @@ export class PaymentsService {
       product.price <= 0
     ) {
       throw new BadRequestException('El precio del producto es inválido');
+    }
+  }
+
+  private assertShipsToCountry(product: Product, country: string): void {
+    const normalizedCountry = country.trim().toUpperCase();
+    const allowed = Array.isArray(product.shipsTo)
+      ? product.shipsTo.some(
+          (value) =>
+            typeof value === 'string' &&
+            value.trim().toUpperCase() === normalizedCountry,
+        )
+      : false;
+    if (!allowed) {
+      throw new ConflictException(
+        'El producto no está disponible para envío al país indicado',
+      );
     }
   }
 

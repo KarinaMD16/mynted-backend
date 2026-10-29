@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { CommissionTier } from './entities/commission-tier.entity';
 import { PaymentTransaction } from './entities/payment-transaction.entity';
+import { PaymentDispute } from './entities/payment-dispute.entity';
 import { ExchangeRateSnapshot } from './entities/exchange-rate-snapshot.entity';
 import { CommissionTierSeed } from './seeds/commission-tier.seed';
 import { BccrExchangeRateProvider } from './exchange-rate/bccr-exchange-rate.provider';
@@ -30,13 +31,17 @@ import { AdminPaymentsController } from './admin-payments.controller';
 import { AdminCommissionTiersService } from './admin-commission-tiers.service';
 import { AdminPaymentSummaryService } from './admin-payment-summary.service';
 import { SuperAdminGuard } from '../auth/guards/super-admin.guard';
+import { ModerationActionsModule } from '../moderation-actions/moderation-actions.module';
+import { PaymentDisputesService } from './payment-disputes.service';
 
 @Module({
   imports: [
     UsersModule,
+    ModerationActionsModule,
     TypeOrmModule.forFeature([
       CommissionTier,
       PaymentTransaction,
+      PaymentDispute,
       ExchangeRateSnapshot,
       Product,
       Review,
@@ -57,6 +62,7 @@ import { SuperAdminGuard } from '../auth/guards/super-admin.guard';
     ExchangeRateService,
     CommissionService,
     PaymentsService,
+    PaymentDisputesService,
     PaymentHistoryService,
     CommissionCatalogService,
     AdminCommissionTiersService,

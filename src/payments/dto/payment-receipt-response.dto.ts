@@ -1,5 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { TransactionStatus } from '../enums/transaction-status.enum';
+import { ShippingAddressSnapshot } from '../types/shipping-address-snapshot';
+import { ShippingStatus } from '../enums/shipping-status.enum';
 
 export class PaymentReceiptProductDto {
   id!: number;
@@ -44,6 +46,18 @@ export class PaymentReceiptResponseDto {
   gatewayReference!: string | null;
   @ApiPropertyOptional()
   failureReason!: string | null;
+  @ApiProperty({ type: Object, nullable: true })
+  shippingAddress!: ShippingAddressSnapshot | null;
+  @ApiPropertyOptional({ enum: ShippingStatus, nullable: true })
+  shippingStatus!: ShippingStatus | null;
+  @ApiPropertyOptional({ nullable: true })
+  trackingNumber!: string | null;
+  @ApiPropertyOptional({ nullable: true })
+  carrier!: string | null;
+  @ApiPropertyOptional({ nullable: true })
+  shippedAt!: Date | null;
+  @ApiPropertyOptional({ nullable: true })
+  deliveredAt!: Date | null;
   @ApiPropertyOptional({ type: PaymentReceiptCommissionDto })
   commission?: PaymentReceiptCommissionDto;
 }

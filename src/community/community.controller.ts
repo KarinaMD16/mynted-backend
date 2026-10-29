@@ -25,6 +25,7 @@ import {
   ApiConflictResponse,
   ApiConsumes,
   ApiCreatedResponse,
+  ApiForbiddenResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
@@ -42,6 +43,11 @@ import { CreateTagDto } from './dto/create-tag.dto';
 import { GetTagsQueryDto } from './dto/get-tags-query.dto';
 import { GetCommunitiesQueryDto } from './dto/get-communities-query.dto';
 import { GetAdminCommunitiesQueryDto } from './dto/get-admin-communities-query.dto';
+import { GetCommunityMembersQueryDto } from './dto/get-community-members-query.dto';
+import { CreateCommunityBanDto } from './dto/create-community-ban.dto';
+import { GetCommunityBansQueryDto } from './dto/get-community-bans-query.dto';
+import { TransferCommunityOwnershipDto } from './dto/transfer-community-ownership.dto';
+import { RemoveCommunityMemberDto } from './dto/remove-community-member.dto';
 import { UpdateCommunityDto } from './dto/update-community.dto';
 import { UpdateCommunityRuleDto } from './dto/update-community-rule.dto';
 import { UpdateTagDto } from './dto/update-tag.dto';
@@ -307,6 +313,57 @@ export class CommunityController {
   @ApiOperation({ summary: 'Obtener estadísticas básicas de una comunidad' })
   getCommunityStats(@Param('communityId', ParseIntPipe) communityId: number) {
     return this.communityService.getStats(communityId);
+  }
+
+  @Get('communities/:communityId/members')
+  @UseGuards(JwtAuthGuard, CommunityRoleGuard)
+  @RequireCommunityRole(
+    CommunityProfileRole.OWNER,
+    CommunityProfileRole.MODERATOR,
+  )
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Listar miembros administrativos de una comunidad' })
+  @ApiParam({ name: 'communityId', type: Number, example: 2 })
+  @ApiOkResponse({
+    schema: {
+      example: {
+        data: [
+          {
+            communityProfileId: 12,
+            userId: 'uuid',
+            username: 'usuario',
+            displayName: 'Nombre visible',
+            photoUrl: null,
+            role: 'member',
+            joinedAt: '2026-10-28T12:00:00.000Z',
+            postCount: 3,
+            replyCount: 5,
+            hiddenContentCount: 1,
+          },
+        ],
+        pagination: {
+          page: 1,
+          limit: 20,
+          total: 1,
+          totalPages: 1,
+        },
+      },
+    },
+  })
+  @ApiForbiddenResponse({ description: 'No tienes permisos de moderación' })
+  @ApiNotFoundResponse({ description: 'Comunidad no encontrada' })
+  findCommunityMembers(
+    @Param('communityId', ParseIntPipe) communityId: number,
+    @Query(
+      new ValidationPipe({
+        transform: true,
+        whitelist: true,
+        forbidNonWhitelisted: true,
+      }),
+    )
+    query: GetCommunityMembersQueryDto,
+  ) {
+    return this.communityService.findCommunityMembers(communityId, query);
   }
 
   @Post('tags')
@@ -700,6 +757,179 @@ export class CommunityController {
     @Param('profileId', ParseIntPipe) profileId: number,
   ) {
     return this.communityService.removeModerator(communityId, profileId);
+  }
+
+  @Post('communities/:communityId/transfer')
+  @UseGuards(JwtAuthGuard, CommunityRoleGuard)
+  @RequireCommunityRole(CommunityProfileRole.OWNER)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Transferir la propiedad de una comunidad' })
+  @ApiParam({ name: 'communityId', type: Number, example: 2 })
+  @ApiBody({ type: TransferCommunityOwnershipDto })
+  @ApiCreatedResponse({
+    schema: {
+      example: {
+        message: 'Propiedad de la comunidad transferida correctamente',
+      },
+    },
+  })
+  @ApiBadRequestResponse({ description: 'profileId inválido' })
+  @ApiForbiddenResponse({ description: 'Solo el OWNER puede transferir' })
+  @ApiNotFoundResponse({ description: 'Comunidad o perfil no encontrado' })
+  @ApiConflictResponse({
+    description: 'Target inválido, inactivo, baneado o transferencia propia',
+  })
+  transferCommunityOwnership(
+    @Param('communityId', ParseIntPipe) communityId: number,
+    @Body(
+      new ValidationPipe({
+        transform: true,
+        whitelist: true,
+        forbidNonWhitelisted: true,
+      }),
+    )
+    dto: TransferCommunityOwnershipDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.communityService.transferCommunityOwnership(
+      communityId,
+      dto.profileId,
+      request.user.userId,
+    );
+  }
+
+  @Delete('communities/:communityId/members/:profileId')
+  @UseGuards(JwtAuthGuard, CommunityRoleGuard)
+  @RequireCommunityRole(
+    CommunityProfileRole.OWNER,
+    CommunityProfileRole.MODERATOR,
+  )
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Expulsar un miembro sin borrar su contenido histórico',
+    description:
+      'La expulsión finaliza la membresía, no es un ban. El usuario puede volver a unirse. El OWNER no puede ser expulsado y un MODERATOR solo puede expulsar MEMBER.',
+  })
+  @ApiParam({ name: 'communityId', type: Number, example: 2 })
+  @ApiParam({ name: 'profileId', type: Number, example: 18 })
+  @ApiBody({
+    type: RemoveCommunityMemberDto,
+    examples: {
+      default: { value: { reason: 'Incumplimiento de las reglas' } },
+    },
+  })
+  @ApiOkResponse({
+    schema: { example: { message: 'Miembro expulsado correctamente' } },
+  })
+  @ApiConflictResponse({
+    description: 'No se puede expulsar al OWNER ni realizar autoexpulsión',
+  })
+  removeCommunityMember(
+    @Param('communityId', ParseIntPipe) communityId: number,
+    @Param('profileId', ParseIntPipe) profileId: number,
+    @Body(
+      new ValidationPipe({
+        transform: true,
+        whitelist: true,
+        forbidNonWhitelisted: true,
+      }),
+    )
+    dto: RemoveCommunityMemberDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.communityService.removeCommunityMember(
+      communityId,
+      profileId,
+      request.user.userId,
+      dto.reason,
+    );
+  }
+
+  @Post('communities/:communityId/bans')
+  @UseGuards(JwtAuthGuard, CommunityRoleGuard)
+  @RequireCommunityRole(
+    CommunityProfileRole.OWNER,
+    CommunityProfileRole.MODERATOR,
+  )
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Bloquear un usuario de una comunidad' })
+  @ApiParam({ name: 'communityId', type: Number, example: 2 })
+  @ApiBody({ type: CreateCommunityBanDto })
+  @ApiCreatedResponse({
+    schema: { example: { message: 'Usuario bloqueado correctamente' } },
+  })
+  @ApiConflictResponse({
+    description: 'El usuario ya está bloqueado o es el propietario',
+  })
+  @ApiForbiddenResponse({
+    description: 'El actor no tiene permisos o el usuario está bloqueado',
+  })
+  createCommunityBan(
+    @Param('communityId', ParseIntPipe) communityId: number,
+    @Body(
+      new ValidationPipe({
+        transform: true,
+        whitelist: true,
+        forbidNonWhitelisted: true,
+      }),
+    )
+    dto: CreateCommunityBanDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.communityService.createCommunityBan(
+      communityId,
+      dto,
+      request.user.userId,
+    );
+  }
+
+  @Get('communities/:communityId/bans')
+  @UseGuards(JwtAuthGuard, CommunityRoleGuard)
+  @RequireCommunityRole(
+    CommunityProfileRole.OWNER,
+    CommunityProfileRole.MODERATOR,
+  )
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Listar bloqueos activos de una comunidad' })
+  @ApiParam({ name: 'communityId', type: Number, example: 2 })
+  findCommunityBans(
+    @Param('communityId', ParseIntPipe) communityId: number,
+    @Query(
+      new ValidationPipe({
+        transform: true,
+        whitelist: true,
+        forbidNonWhitelisted: true,
+      }),
+    )
+    query: GetCommunityBansQueryDto,
+  ) {
+    return this.communityService.findCommunityBans(communityId, query);
+  }
+
+  @Delete('communities/:communityId/bans/:userId')
+  @UseGuards(JwtAuthGuard, CommunityRoleGuard)
+  @RequireCommunityRole(
+    CommunityProfileRole.OWNER,
+    CommunityProfileRole.MODERATOR,
+  )
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Quitar el bloqueo de un usuario' })
+  @ApiParam({ name: 'communityId', type: Number, example: 2 })
+  @ApiParam({ name: 'userId', type: String, format: 'uuid' })
+  @ApiOkResponse({
+    schema: { example: { message: 'Bloqueo eliminado correctamente' } },
+  })
+  @ApiNotFoundResponse({ description: 'El bloqueo no existe' })
+  removeCommunityBan(
+    @Param('communityId', ParseIntPipe) communityId: number,
+    @Param('userId') userId: string,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.communityService.removeCommunityBan(
+      communityId,
+      userId,
+      request.user.userId,
+    );
   }
 
   @Get('communities/:communityId/join-requests')

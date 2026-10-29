@@ -1,7 +1,15 @@
 import { Type } from 'class-transformer';
-import { IsInt, IsOptional, Max, Min, ValidateNested } from 'class-validator';
+import {
+  IsInt,
+  IsNotEmpty,
+  IsOptional,
+  Max,
+  Min,
+  ValidateNested,
+} from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { PaymentCardDto } from './payment-card.dto';
+import { ShippingAddressDto } from './shipping-address.dto';
 
 export class CheckoutDto {
   @ApiProperty({
@@ -32,4 +40,10 @@ export class CheckoutDto {
   @ValidateNested()
   @Type(() => PaymentCardDto)
   card!: PaymentCardDto;
+
+  @ApiProperty({ type: ShippingAddressDto })
+  @IsNotEmpty()
+  @ValidateNested()
+  @Type(() => ShippingAddressDto)
+  shippingAddress!: ShippingAddressDto;
 }

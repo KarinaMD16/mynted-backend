@@ -17,6 +17,7 @@ import {
   DataSource,
   FindOptionsWhere,
   In,
+  IsNull,
   QueryFailedError,
   Repository,
 } from 'typeorm';
@@ -31,6 +32,9 @@ import { UpdateCommunityRuleDto } from './dto/update-community-rule.dto';
 import { UpdateTagDto } from './dto/update-tag.dto';
 import { GetCommunitiesQueryDto } from './dto/get-communities-query.dto';
 import { GetAdminCommunitiesQueryDto } from './dto/get-admin-communities-query.dto';
+import { GetCommunityMembersQueryDto } from './dto/get-community-members-query.dto';
+import { CreateCommunityBanDto } from './dto/create-community-ban.dto';
+import { GetCommunityBansQueryDto } from './dto/get-community-bans-query.dto';
 import { DeleteCommunityDto } from './dto/delete-community.dto';
 import {
   CommunityProfile,
@@ -44,14 +48,17 @@ import { Category } from './entities/category.entity';
 import { CommunityRule } from './entities/community-rule.entity';
 import { CommunityTag } from './entities/community-tag.entity';
 import { Community } from './entities/community.entity';
+import { CommunityBan } from './entities/community-ban.entity';
 import { Tag } from './entities/tag.entity';
 import { Post } from './entities/post.entity';
+import { Reply } from './entities/reply.entity';
 import { PostVote } from './entities/post-vote.entity';
 import { Favorite, FavoriteItemType } from './entities/favorite.entity';
 import { VoteType } from './entities/vote-type.enum';
 import { UserTag } from '../user-tags/entities/user-tag.entity';
 import { UsersService } from '../users/users.service';
-import { UserRole } from '../users/entities/user.entity';
+import { User, UserRole } from '../users/entities/user.entity';
+import { escapeLike } from '../common/escape-like';
 import { Product } from '../products/entities/product.entity';
 import { Report } from '../reports/entities/report.entity';
 import { ReportStatus } from '../reports/enums/report-status.enum';
@@ -99,6 +106,9 @@ export class CommunityService {
     @InjectRepository(Post)
     private readonly postRepository: Repository<Post>,
     @Optional()
+    @InjectRepository(Reply)
+    private readonly replyRepository?: Repository<Reply>,
+    @Optional()
     @InjectRepository(PostVote)
     private readonly postVoteRepository?: Repository<PostVote>,
     @Optional()
@@ -116,6 +126,9 @@ export class CommunityService {
     private readonly notificationsService?: NotificationsService,
     @Optional()
     private readonly moderationActionsService?: ModerationActionsService,
+    @Optional()
+    @InjectRepository(CommunityBan)
+    private readonly communityBanRepository?: Repository<CommunityBan>,
   ) {}
 
   async create(
@@ -375,6 +388,7 @@ export class CommunityService {
       .select('COUNT(*)')
       .from(CommunityProfile, 'recommended_member_count_profile')
       .where('recommended_member_count_profile.community_id = community.id')
+      .andWhere('recommended_member_count_profile.removed_at IS NULL')
       .getQuery();
 
     const recentPostCountSubquery = this.communityRepository
@@ -418,6 +432,7 @@ export class CommunityService {
         'recommended_category_community.id = recommended_category_profile.community_id',
       )
       .where('recommended_category_profile.user_id = :userId', { userId })
+      .andWhere('recommended_category_profile.removed_at IS NULL')
       .andWhere(
         'recommended_category_community.category_id = community.category_id',
       )
@@ -517,10 +532,12 @@ export class CommunityService {
     }
 
     const [memberCount, recentPostCount, membership] = await Promise.all([
-      this.communityProfileRepository.count({ where: { communityId } }),
+      this.communityProfileRepository.count({
+        where: { communityId, removedAt: IsNull() },
+      }),
       this.countRecentPosts(communityId),
       this.communityProfileRepository.findOne({
-        where: { userId, communityId },
+        where: { userId, communityId, removedAt: IsNull() },
         select: { communityProfileId: true, role: true },
       }),
     ]);
@@ -600,12 +617,12 @@ export class CommunityService {
     const [memberCount, recentPostCount, membership, latestJoinRequest] =
       await Promise.all([
         this.communityProfileRepository.count({
-          where: { communityId: community.id },
+          where: { communityId: community.id, removedAt: IsNull() },
         }),
         this.countRecentPosts(community.id),
         userId
           ? this.communityProfileRepository.findOne({
-              where: { userId, communityId: community.id },
+              where: { userId, communityId: community.id, removedAt: IsNull() },
               select: { communityProfileId: true, role: true },
             })
           : Promise.resolve(null),
@@ -680,7 +697,9 @@ export class CommunityService {
     await this.ensureActiveCommunityExists(communityId);
 
     const [memberCount, postCount, recentPostCount] = await Promise.all([
-      this.communityProfileRepository.count({ where: { communityId } }),
+      this.communityProfileRepository.count({
+        where: { communityId, removedAt: IsNull() },
+      }),
       this.countAllPosts(communityId),
       this.countRecentPosts(communityId),
     ]);
@@ -693,17 +712,155 @@ export class CommunityService {
     };
   }
 
+  async findCommunityMembers(
+    communityId: number,
+    query: GetCommunityMembersQueryDto,
+  ) {
+    await this.ensureCommunityExists(communityId);
+
+    const search = query.search?.trim();
+    const membersQuery = this.communityProfileRepository
+      .createQueryBuilder('profile')
+      .innerJoinAndSelect('profile.user', 'user', 'user.deleted_at IS NULL')
+      .where('profile.community_id = :communityId', { communityId })
+      .andWhere('profile.removed_at IS NULL')
+      .orderBy('profile.joined_at', 'DESC')
+      .addOrderBy('profile.community_profile_id', 'DESC')
+      .skip((query.page - 1) * query.limit)
+      .take(query.limit);
+
+    if (query.role) {
+      membersQuery.andWhere('profile.role = :role', { role: query.role });
+    }
+    if (search) {
+      membersQuery.andWhere(
+        '(user.username ILIKE :search OR profile.display_name ILIKE :search)',
+        { search: `%${escapeLike(search)}%` },
+      );
+    }
+
+    const [profiles, total] = await membersQuery.getManyAndCount();
+    const profileIds = profiles.map((profile) => profile.communityProfileId);
+    const [postCounts, replyCounts] = await Promise.all([
+      this.getCommunityMemberPostCounts(profileIds),
+      this.getCommunityMemberReplyCounts(profileIds),
+    ]);
+
+    return {
+      data: profiles.map((profile) => {
+        const postCount = postCounts.get(profile.communityProfileId);
+        const replyCount = replyCounts.get(profile.communityProfileId);
+        return {
+          communityProfileId: profile.communityProfileId,
+          userId: profile.userId,
+          username: profile.user.username,
+          displayName: profile.displayName,
+          photoUrl: profile.user.photoUrl ?? null,
+          role: profile.role,
+          joinedAt: profile.joinedAt,
+          postCount: postCount?.total ?? 0,
+          replyCount: replyCount?.total ?? 0,
+          hiddenContentCount:
+            (postCount?.hidden ?? 0) + (replyCount?.hidden ?? 0),
+        };
+      }),
+      pagination: {
+        page: query.page,
+        limit: query.limit,
+        total,
+        totalPages: Math.ceil(total / query.limit),
+      },
+    };
+  }
+
+  private async getCommunityMemberPostCounts(
+    profileIds: number[],
+  ): Promise<Map<number, { total: number; hidden: number }>> {
+    const result = new Map<number, { total: number; hidden: number }>();
+    if (profileIds.length === 0) return result;
+
+    const rows = await this.postRepository
+      .createQueryBuilder('member_post')
+      .select('member_post.community_profile_id', 'profileId')
+      .addSelect('COUNT(member_post.id)', 'total')
+      .addSelect(
+        'COUNT(*) FILTER (WHERE member_post.is_hidden = true)',
+        'hidden',
+      )
+      .where('member_post.community_profile_id IN (:...profileIds)', {
+        profileIds,
+      })
+      .groupBy('member_post.community_profile_id')
+      .getRawMany<{
+        profileId: number | string;
+        total: string;
+        hidden: string;
+      }>();
+
+    for (const row of rows) {
+      result.set(Number(row.profileId), {
+        total: Number(row.total),
+        hidden: Number(row.hidden),
+      });
+    }
+    return result;
+  }
+
+  private async getCommunityMemberReplyCounts(
+    profileIds: number[],
+  ): Promise<Map<number, { total: number; hidden: number }>> {
+    const result = new Map<number, { total: number; hidden: number }>();
+    if (profileIds.length === 0) return result;
+
+    const replyRepository =
+      this.replyRepository ?? this.dataSource.getRepository(Reply);
+    const rows = await replyRepository
+      .createQueryBuilder('member_reply')
+      .select('member_reply.community_profile_id', 'profileId')
+      .addSelect('COUNT(member_reply.id)', 'total')
+      .addSelect(
+        'COUNT(*) FILTER (WHERE member_reply.is_hidden = true)',
+        'hidden',
+      )
+      .where('member_reply.community_profile_id IN (:...profileIds)', {
+        profileIds,
+      })
+      .groupBy('member_reply.community_profile_id')
+      .getRawMany<{
+        profileId: number | string;
+        total: string;
+        hidden: string;
+      }>();
+
+    for (const row of rows) {
+      result.set(Number(row.profileId), {
+        total: Number(row.total),
+        hidden: Number(row.hidden),
+      });
+    }
+    return result;
+  }
+
   async addModerator(
     communityId: number,
     profileId: number,
   ): Promise<CommunityProfile> {
-    await this.ensureCommunityExists(communityId);
+    const community = await this.communityRepository.findOne({
+      where: { id: communityId },
+    });
+    if (!community) {
+      throw new NotFoundException('Comunidad no encontrada');
+    }
 
     const profile = await this.communityProfileRepository.findOne({
       where: { communityProfileId: profileId, communityId },
     });
 
     if (!profile) {
+      throw new NotFoundException('El perfil no existe en esta comunidad');
+    }
+
+    if (profile.removedAt !== null && profile.removedAt !== undefined) {
       throw new NotFoundException('El perfil no existe en esta comunidad');
     }
 
@@ -720,21 +877,328 @@ export class CommunityService {
     }
 
     profile.role = CommunityProfileRole.MODERATOR;
-    // moderator es un badge derivado del rol: no se guarda, no hay evento.
-    return this.communityProfileRepository.save(profile);
+    // El cambio explícito de rol sí genera notification; transfer/kick/ban no
+    // pasan por este método y no la disparan.
+    const savedProfile = await this.communityProfileRepository.save(profile);
+    await this.notifyModeratorRoleChange(
+      NotificationType.COMMUNITY_MODERATOR_ADDED,
+      savedProfile.userId,
+      community,
+    );
+    return savedProfile;
+  }
+
+  async transferCommunityOwnership(
+    communityId: number,
+    targetProfileId: number,
+    actorUserId: string,
+  ): Promise<{ message: string }> {
+    if (!this.moderationActionsService) {
+      throw new InternalServerErrorException(
+        'La auditoría de moderación no está configurada',
+      );
+    }
+
+    await this.dataSource.transaction(async (manager) => {
+      const communityRepository = manager.getRepository(Community);
+      const profileRepository = manager.getRepository(CommunityProfile);
+      const userRepository = manager.getRepository(User);
+      const banRepository = this.communityBanRepository
+        ? manager.getRepository(CommunityBan)
+        : undefined;
+
+      const community = await communityRepository.findOne({
+        where: { id: communityId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!community) {
+        throw new NotFoundException('Comunidad no encontrada');
+      }
+
+      const actor = await userRepository.findOne({
+        where: { id: actorUserId },
+      });
+      if (!actor || actor.deletedAt || !actor.isActive) {
+        throw new ForbiddenException(
+          'No tienes permisos para transferir la propiedad',
+        );
+      }
+
+      const currentOwner = await profileRepository.findOne({
+        where: {
+          userId: actorUserId,
+          communityId,
+          role: CommunityProfileRole.OWNER,
+          removedAt: IsNull(),
+        },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!currentOwner) {
+        throw new ForbiddenException(
+          'Solo el propietario activo puede transferir la comunidad',
+        );
+      }
+
+      const activeOwners = await profileRepository.find({
+        where: {
+          communityId,
+          role: CommunityProfileRole.OWNER,
+          removedAt: IsNull(),
+        },
+      });
+      if (
+        activeOwners.length !== 1 ||
+        activeOwners[0].communityProfileId !== currentOwner.communityProfileId
+      ) {
+        throw new ConflictException(
+          'La comunidad tiene un estado de propiedad inconsistente',
+        );
+      }
+
+      const target = await profileRepository.findOne({
+        where: { communityProfileId: targetProfileId, communityId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!target || target.communityId !== communityId || target.removedAt) {
+        throw new NotFoundException(
+          'El perfil destino no existe como miembro activo de esta comunidad',
+        );
+      }
+
+      if (
+        target.communityProfileId === currentOwner.communityProfileId ||
+        target.userId === actorUserId
+      ) {
+        throw new ConflictException(
+          'No puedes transferir la propiedad a ti mismo',
+        );
+      }
+
+      if (target.role === CommunityProfileRole.OWNER) {
+        throw new ConflictException(
+          'El perfil destino ya es propietario de la comunidad',
+        );
+      }
+      if (
+        target.role !== CommunityProfileRole.MEMBER &&
+        target.role !== CommunityProfileRole.MODERATOR
+      ) {
+        throw new ConflictException('El perfil destino no tiene un rol válido');
+      }
+
+      const targetUser = await userRepository.findOne({
+        where: { id: target.userId },
+        withDeleted: true,
+      });
+      if (!targetUser || targetUser.deletedAt) {
+        throw new NotFoundException('El usuario destino no existe');
+      }
+      if (!targetUser.isActive) {
+        throw new ConflictException(
+          'No se puede transferir la propiedad a un usuario inactivo',
+        );
+      }
+
+      if (banRepository) {
+        const activeBan = await banRepository.findOne({
+          where: {
+            communityId,
+            userId: target.userId,
+            isActive: true,
+          },
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (activeBan) {
+          throw new ConflictException(
+            'No se puede transferir la propiedad a un usuario bloqueado',
+          );
+        }
+      }
+
+      currentOwner.role = CommunityProfileRole.MODERATOR;
+      target.role = CommunityProfileRole.OWNER;
+      await profileRepository.save(currentOwner);
+      await profileRepository.save(target);
+
+      await this.moderationActionsService!.record(
+        {
+          actorUserId: currentOwner.userId,
+          targetType: MODERATION_TARGET_TYPES.COMMUNITY,
+          targetId: String(communityId),
+          action: MODERATION_ACTIONS.COMMUNITY_OWNERSHIP_TRANSFERRED,
+          reason: null,
+          communityId,
+        },
+        manager,
+      );
+    });
+
+    return {
+      message: 'Propiedad de la comunidad transferida correctamente',
+    };
+  }
+
+  async removeCommunityMember(
+    communityId: number,
+    profileId: number,
+    actorUserId: string,
+    reason: string,
+  ): Promise<{ message: string }> {
+    if (!this.moderationActionsService || !this.notificationsService) {
+      throw new InternalServerErrorException(
+        'La moderación de miembros no está configurada',
+      );
+    }
+
+    let targetUserId = '';
+    let communityName = '';
+    let communitySlug = '';
+    let changed = false;
+
+    await this.dataSource.transaction(async (manager) => {
+      const communityRepository = manager.getRepository(Community);
+      const profileRepository = manager.getRepository(CommunityProfile);
+      const userRepository = manager.getRepository(User);
+      const requestRepository = manager.getRepository(CommunityJoinRequest);
+
+      const community = await communityRepository.findOne({
+        where: { id: communityId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!community) {
+        throw new NotFoundException('Comunidad no encontrada');
+      }
+
+      const actor = await userRepository.findOne({
+        where: { id: actorUserId },
+      });
+      if (!actor) {
+        throw new ForbiddenException('Usuario no encontrado');
+      }
+
+      const target = await profileRepository.findOne({
+        where: { communityProfileId: profileId, communityId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (
+        !target ||
+        (target.removedAt !== null && target.removedAt !== undefined)
+      ) {
+        throw new NotFoundException('El perfil no existe en esta comunidad');
+      }
+
+      const targetUser = await userRepository.findOne({
+        where: { id: target.userId },
+        withDeleted: true,
+      });
+      if (!targetUser || targetUser.deletedAt) {
+        throw new NotFoundException('El usuario no existe');
+      }
+      if (target.userId === actorUserId) {
+        throw new ConflictException(
+          'No puedes expulsarte a ti mismo; utiliza el endpoint para salir',
+        );
+      }
+      if (target.role === CommunityProfileRole.OWNER) {
+        throw new ConflictException(
+          'El propietario no puede ser expulsado desde este endpoint',
+        );
+      }
+
+      let actorProfile: CommunityProfile | null = null;
+      if (actor.role !== UserRole.SUPERADMIN) {
+        actorProfile = await profileRepository.findOne({
+          where: { userId: actorUserId, communityId },
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (!actorProfile || actorProfile.removedAt) {
+          throw new ForbiddenException(
+            'No tienes permisos para administrar esta comunidad',
+          );
+        }
+        if (
+          actorProfile.role === CommunityProfileRole.MODERATOR &&
+          target.role !== CommunityProfileRole.MEMBER
+        ) {
+          throw new ForbiddenException(
+            'Los moderadores solo pueden expulsar miembros',
+          );
+        }
+        if (
+          actorProfile.role !== CommunityProfileRole.OWNER &&
+          actorProfile.role !== CommunityProfileRole.MODERATOR
+        ) {
+          throw new ForbiddenException(
+            'No tienes permisos para administrar esta comunidad',
+          );
+        }
+      }
+
+      target.removedAt = new Date();
+      target.role = CommunityProfileRole.MEMBER;
+      await profileRepository.save(target);
+      await requestRepository.delete({
+        userId: target.userId,
+        communityId,
+        status: CommunityJoinRequestStatus.PENDING,
+      });
+      await this.moderationActionsService!.record(
+        {
+          actorUserId,
+          targetType: MODERATION_TARGET_TYPES.COMMUNITY_PROFILE,
+          targetId: profileId,
+          action: MODERATION_ACTIONS.COMMUNITY_MEMBER_REMOVED,
+          reason,
+          communityId,
+        },
+        manager,
+      );
+
+      targetUserId = target.userId;
+      communityName = community.name;
+      communitySlug = community.slug;
+      changed = true;
+    });
+
+    if (changed) {
+      try {
+        await this.notificationsService.notify([
+          {
+            userId: targetUserId,
+            type: NotificationType.COMMUNITY_MEMBER_REMOVED,
+            data: { communityId, communityName, communitySlug, reason },
+            message: `Has sido expulsado de ${communityName}`,
+          },
+        ]);
+      } catch {
+        // La expulsión y la auditoría ya están confirmadas; una falla de
+        // notificación no debe revertir la operación.
+      }
+    }
+
+    return { message: 'Miembro expulsado correctamente' };
   }
 
   async removeModerator(
     communityId: number,
     profileId: number,
   ): Promise<CommunityProfile> {
-    await this.ensureCommunityExists(communityId);
+    const community = await this.communityRepository.findOne({
+      where: { id: communityId },
+    });
+    if (!community) {
+      throw new NotFoundException('Comunidad no encontrada');
+    }
 
     const profile = await this.communityProfileRepository.findOne({
       where: { communityProfileId: profileId, communityId },
     });
 
     if (!profile) {
+      throw new NotFoundException('El perfil no existe en esta comunidad');
+    }
+
+    if (profile.removedAt !== null && profile.removedAt !== undefined) {
       throw new NotFoundException('El perfil no existe en esta comunidad');
     }
 
@@ -749,7 +1213,355 @@ export class CommunityService {
     }
 
     profile.role = CommunityProfileRole.MEMBER;
-    return this.communityProfileRepository.save(profile);
+    const savedProfile = await this.communityProfileRepository.save(profile);
+    await this.notifyModeratorRoleChange(
+      NotificationType.COMMUNITY_MODERATOR_REMOVED,
+      savedProfile.userId,
+      community,
+    );
+    return savedProfile;
+  }
+
+  private async notifyModeratorRoleChange(
+    type: NotificationType,
+    userId: string,
+    community: Community,
+  ): Promise<void> {
+    if (!this.notificationsService) return;
+
+    try {
+      await this.notificationsService.notify([
+        {
+          userId,
+          type,
+          data: {
+            communityId: community.id,
+            communityName: community.name,
+            communitySlug: community.slug,
+          },
+          message:
+            type === NotificationType.COMMUNITY_MODERATOR_ADDED
+              ? 'Has sido nombrado moderador de esta comunidad.'
+              : 'Ya no eres moderador de esta comunidad.',
+        },
+      ]);
+    } catch {
+      // El cambio de rol ya fue confirmado; una falla de notificación no lo
+      // revierte.
+    }
+  }
+
+  async createCommunityBan(
+    communityId: number,
+    dto: CreateCommunityBanDto,
+    actorUserId: string,
+  ): Promise<{ message: string }> {
+    if (!this.communityBanRepository || !this.moderationActionsService) {
+      throw new InternalServerErrorException(
+        'El sistema de bloqueos no está configurado',
+      );
+    }
+
+    const reason = dto.reason.trim();
+
+    try {
+      await this.dataSource.transaction(async (manager) => {
+        const communityRepository = manager.getRepository(Community);
+        const profileRepository = manager.getRepository(CommunityProfile);
+        const userRepository = manager.getRepository(User);
+        const requestRepository = manager.getRepository(CommunityJoinRequest);
+        const banRepository = manager.getRepository(CommunityBan);
+
+        const community = await communityRepository.findOne({
+          where: { id: communityId },
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (!community) {
+          throw new NotFoundException('Comunidad no encontrada');
+        }
+
+        const actor = await userRepository.findOne({
+          where: { id: actorUserId },
+        });
+        if (!actor) {
+          throw new ForbiddenException('Usuario no encontrado');
+        }
+
+        const target = await userRepository.findOne({
+          where: { id: dto.userId },
+          withDeleted: true,
+        });
+        if (!target || target.deletedAt) {
+          throw new NotFoundException('El usuario no existe');
+        }
+        if (target.id === actorUserId) {
+          throw new ConflictException(
+            'No puedes bloquearte a ti mismo en la comunidad',
+          );
+        }
+
+        const targetProfile = await profileRepository.findOne({
+          where: { userId: target.id, communityId },
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (targetProfile?.role === CommunityProfileRole.OWNER) {
+          throw new ConflictException(
+            'El propietario no puede ser bloqueado desde este endpoint',
+          );
+        }
+
+        if (actor.role !== UserRole.SUPERADMIN) {
+          const actorProfile = await profileRepository.findOne({
+            where: { userId: actorUserId, communityId },
+            lock: { mode: 'pessimistic_write' },
+          });
+          if (!actorProfile || actorProfile.removedAt) {
+            throw new ForbiddenException(
+              'No tienes permisos para administrar esta comunidad',
+            );
+          }
+          if (
+            actorProfile.role !== CommunityProfileRole.OWNER &&
+            actorProfile.role !== CommunityProfileRole.MODERATOR
+          ) {
+            throw new ForbiddenException(
+              'No tienes permisos para administrar esta comunidad',
+            );
+          }
+          if (
+            actorProfile.role === CommunityProfileRole.MODERATOR &&
+            targetProfile &&
+            !targetProfile.removedAt &&
+            targetProfile.role !== CommunityProfileRole.MEMBER
+          ) {
+            throw new ForbiddenException(
+              'Los moderadores solo pueden bloquear miembros',
+            );
+          }
+        }
+
+        const existingBan = await banRepository.findOne({
+          where: { communityId, userId: target.id },
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (existingBan?.isActive) {
+          throw new ConflictException(
+            'El usuario ya está bloqueado en esta comunidad',
+          );
+        }
+
+        const now = new Date();
+        const ban =
+          existingBan ??
+          banRepository.create({
+            communityId,
+            userId: target.id,
+            bannedByUserId: actorUserId,
+            reason,
+            isActive: true,
+            createdAt: now,
+          });
+        if (existingBan) {
+          ban.isActive = true;
+          ban.reason = reason;
+          ban.bannedByUserId = actorUserId;
+          ban.createdAt = now;
+        }
+        await banRepository.save(ban);
+
+        if (targetProfile && !targetProfile.removedAt) {
+          targetProfile.removedAt = now;
+          targetProfile.role = CommunityProfileRole.MEMBER;
+          await profileRepository.save(targetProfile);
+        }
+
+        await requestRepository.delete({
+          userId: target.id,
+          communityId,
+          status: CommunityJoinRequestStatus.PENDING,
+        });
+
+        await this.moderationActionsService!.record(
+          {
+            actorUserId,
+            targetType: MODERATION_TARGET_TYPES.USER,
+            targetId: target.id,
+            action: MODERATION_ACTIONS.COMMUNITY_MEMBER_BANNED,
+            reason,
+            communityId,
+          },
+          manager,
+        );
+      });
+    } catch (error: unknown) {
+      if (
+        error instanceof QueryFailedError &&
+        (error.driverError as PostgresError).code === '23505'
+      ) {
+        throw new ConflictException(
+          'El usuario ya está bloqueado en esta comunidad',
+        );
+      }
+      throw error;
+    }
+
+    return { message: 'Usuario bloqueado correctamente' };
+  }
+
+  async findCommunityBans(
+    communityId: number,
+    query: GetCommunityBansQueryDto,
+  ) {
+    await this.ensureCommunityExists(communityId);
+    if (!this.communityBanRepository) {
+      throw new InternalServerErrorException(
+        'El sistema de bloqueos no está configurado',
+      );
+    }
+
+    const search = query.search?.trim();
+    const bansQuery = this.communityBanRepository
+      .createQueryBuilder('ban')
+      .innerJoinAndSelect('ban.user', 'user', 'user.deleted_at IS NULL')
+      .leftJoinAndSelect('ban.bannedBy', 'bannedBy')
+      .leftJoin(
+        CommunityProfile,
+        'profile',
+        'profile.user_id = ban.user_id AND profile.community_id = ban.community_id',
+      )
+      .where('ban.community_id = :communityId', { communityId })
+      .andWhere('ban.is_active = :isActive', { isActive: true })
+      .orderBy('ban.created_at', 'DESC')
+      .addOrderBy('ban.id', 'DESC')
+      .skip((query.page - 1) * query.limit)
+      .take(query.limit);
+
+    if (search) {
+      bansQuery.andWhere(
+        '(user.username ILIKE :search OR profile.display_name ILIKE :search)',
+        { search: `%${escapeLike(search)}%` },
+      );
+    }
+
+    const [bans, total] = await bansQuery.getManyAndCount();
+    const userIds = bans.map((ban) => ban.userId);
+    const profiles = userIds.length
+      ? await this.communityProfileRepository.find({
+          where: { communityId, userId: In(userIds) },
+          select: { userId: true, displayName: true },
+        })
+      : [];
+    const displayNames = new Map(
+      profiles.map((profile) => [profile.userId, profile.displayName]),
+    );
+
+    return {
+      data: bans.map((ban) => ({
+        banId: ban.id,
+        userId: ban.userId,
+        username: ban.user?.username ?? null,
+        displayName: displayNames.get(ban.userId) ?? null,
+        photoUrl: ban.user?.photoUrl ?? null,
+        reason: ban.reason,
+        bannedAt: ban.createdAt,
+        bannedBy: {
+          userId: ban.bannedByUserId,
+          username: ban.bannedBy?.username ?? null,
+        },
+      })),
+      pagination: {
+        page: query.page,
+        limit: query.limit,
+        total,
+        totalPages: Math.ceil(total / query.limit),
+      },
+    };
+  }
+
+  async removeCommunityBan(
+    communityId: number,
+    targetUserId: string,
+    actorUserId: string,
+  ): Promise<{ message: string }> {
+    if (!this.communityBanRepository || !this.moderationActionsService) {
+      throw new InternalServerErrorException(
+        'El sistema de bloqueos no está configurado',
+      );
+    }
+
+    await this.dataSource.transaction(async (manager) => {
+      const communityRepository = manager.getRepository(Community);
+      const profileRepository = manager.getRepository(CommunityProfile);
+      const userRepository = manager.getRepository(User);
+      const banRepository = manager.getRepository(CommunityBan);
+
+      const community = await communityRepository.findOne({
+        where: { id: communityId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!community) {
+        throw new NotFoundException('Comunidad no encontrada');
+      }
+
+      const actor = await userRepository.findOne({
+        where: { id: actorUserId },
+      });
+      if (!actor) {
+        throw new ForbiddenException('Usuario no encontrado');
+      }
+
+      const ban = await banRepository.findOne({
+        where: { communityId, userId: targetUserId, isActive: true },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!ban) {
+        throw new NotFoundException('El bloqueo no existe en esta comunidad');
+      }
+
+      if (actor.role !== UserRole.SUPERADMIN) {
+        const actorProfile = await profileRepository.findOne({
+          where: { userId: actorUserId, communityId },
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (!actorProfile || actorProfile.removedAt) {
+          throw new ForbiddenException(
+            'No tienes permisos para administrar esta comunidad',
+          );
+        }
+        if (
+          actorProfile.role !== CommunityProfileRole.OWNER &&
+          actorProfile.role !== CommunityProfileRole.MODERATOR
+        ) {
+          throw new ForbiddenException(
+            'No tienes permisos para administrar esta comunidad',
+          );
+        }
+        if (
+          actorProfile.role === CommunityProfileRole.MODERATOR &&
+          ban.bannedByUserId !== actorUserId
+        ) {
+          throw new ForbiddenException(
+            'Los moderadores solo pueden quitar sus propios bloqueos',
+          );
+        }
+      }
+
+      ban.isActive = false;
+      await banRepository.save(ban);
+      await this.moderationActionsService!.record(
+        {
+          actorUserId,
+          targetType: MODERATION_TARGET_TYPES.USER,
+          targetId: targetUserId,
+          action: MODERATION_ACTIONS.COMMUNITY_MEMBER_UNBANNED,
+          reason: null,
+          communityId,
+        },
+        manager,
+      );
+    });
+
+    return { message: 'Bloqueo eliminado correctamente' };
   }
 
   async findJoinRequests(communityId: number): Promise<CommunityJoinRequest[]> {
@@ -778,14 +1590,40 @@ export class CommunityService {
 
     const accepted = await this.dataSource.transaction(async (manager) => {
       const user = await this.usersService.findById(request.userId);
-      const profile = manager.create(CommunityProfile, {
-        userId: request.userId,
-        communityId,
-        role: CommunityProfileRole.MEMBER,
-        displayName: user.username,
-        bio: '',
+      if (this.communityBanRepository) {
+        const activeBan = await manager.getRepository(CommunityBan).findOne({
+          where: {
+            communityId,
+            userId: request.userId,
+            isActive: true,
+          },
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (activeBan) {
+          throw new ForbiddenException(
+            'No puedes aceptar esta solicitud porque el usuario está bloqueado en la comunidad',
+          );
+        }
+      }
+      const profile = await manager.findOne(CommunityProfile, {
+        where: { userId: request.userId, communityId },
+        lock: { mode: 'pessimistic_write' },
       });
-      const savedProfile = await manager.save(CommunityProfile, profile);
+      const activeProfile =
+        profile ??
+        manager.create(CommunityProfile, {
+          userId: request.userId,
+          communityId,
+          role: CommunityProfileRole.MEMBER,
+          displayName: user.username,
+          bio: '',
+        });
+      activeProfile.removedAt = null;
+      activeProfile.joinedAt = new Date();
+      activeProfile.role = CommunityProfileRole.MEMBER;
+      activeProfile.displayName = activeProfile.displayName || user.username;
+      activeProfile.bio = activeProfile.bio ?? '';
+      const savedProfile = await manager.save(CommunityProfile, activeProfile);
 
       request.status = CommunityJoinRequestStatus.ACCEPTED;
       request.resolvedAt = new Date();
@@ -928,6 +1766,7 @@ export class CommunityService {
           SELECT 1 FROM community_profile viewer_profile
           WHERE viewer_profile.user_id = :userId
             AND viewer_profile.community_id = :communityId
+            AND viewer_profile.removed_at IS NULL
             AND viewer_profile.role IN ('moderator', 'owner')
         ))`,
         { userId, communityId },
@@ -947,6 +1786,7 @@ export class CommunityService {
       .select('COUNT(*)')
       .from(CommunityProfile, 'member_count_profile')
       .where('member_count_profile.community_id = community.id')
+      .andWhere('member_count_profile.removed_at IS NULL')
       .getQuery();
 
     const recentPostCountSubquery = this.communityRepository
@@ -977,7 +1817,7 @@ export class CommunityService {
       queryBuilder.innerJoin(
         'community.communityProfiles',
         'membership',
-        'membership.user_id = :userId',
+        'membership.user_id = :userId AND membership.removed_at IS NULL',
         { userId },
       );
       queryBuilder.addSelect('membership.role', 'membership_role');
@@ -1017,6 +1857,8 @@ export class CommunityService {
       .select('COUNT(*)')
       .from(CommunityProfile, 'admin_member_profile')
       .where('admin_member_profile.community_id = community.id')
+      .andWhere('admin_member_profile.removed_at IS NULL')
+      .andWhere('admin_member_profile.removed_at IS NULL')
       .getQuery();
 
     const productCountSubquery = this.communityRepository

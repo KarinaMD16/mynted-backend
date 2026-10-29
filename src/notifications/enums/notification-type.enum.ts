@@ -6,6 +6,11 @@ export enum NotificationType {
   // Pagos.
   PURCHASE_COMPLETED = 'purchase_completed',
   SALE_COMPLETED = 'sale_completed',
+  ORDER_SHIPPED = 'order_shipped',
+  ORDER_DELIVERED = 'order_delivered',
+  ORDER_CANCELLED = 'order_cancelled',
+  PAYMENT_REFUNDED = 'payment_refunded',
+  PAYMENT_DISPUTE_CLOSED = 'payment_dispute_closed',
   // Reseñas y badges.
   REVIEW_RECEIVED = 'review_received',
   BADGE_AWARDED = 'badge_awarded',
@@ -18,6 +23,9 @@ export enum NotificationType {
   COMMUNITY_MADE_PUBLIC = 'community_made_public',
   COMMUNITY_MADE_PRIVATE = 'community_made_private',
   COMMUNITY_DELETED = 'community_deleted',
+  COMMUNITY_MEMBER_REMOVED = 'community_member_removed',
+  COMMUNITY_MODERATOR_ADDED = 'community_moderator_added',
+  COMMUNITY_MODERATOR_REMOVED = 'community_moderator_removed',
   // Solicitud de vendedor.
   SELLER_REQUEST_APPROVED = 'seller_request_approved',
   SELLER_REQUEST_REJECTED = 'seller_request_rejected',

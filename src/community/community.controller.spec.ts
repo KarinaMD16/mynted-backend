@@ -107,6 +107,65 @@ describe('CommunityController', () => {
     expect(communityService.getStats).toHaveBeenCalledWith(7);
   });
 
+  it('protects the community members endpoint with community roles', async () => {
+    const communityService = {
+      findCommunityMembers: jest.fn().mockResolvedValue({ data: [] }),
+    };
+    const controller = new CommunityController(
+      communityService as never,
+      {} as never,
+    );
+    const method = Object.getOwnPropertyDescriptor(
+      CommunityController.prototype,
+      'findCommunityMembers',
+    )?.value as (...args: never[]) => unknown;
+    const guards = Reflect.getMetadata(GUARDS_METADATA, method) as unknown[];
+
+    await controller.findCommunityMembers(2, { page: 1, limit: 20 });
+
+    expect(guards).toEqual(
+      expect.arrayContaining([JwtAuthGuard, CommunityRoleGuard]),
+    );
+    expect(communityService.findCommunityMembers).toHaveBeenCalledWith(2, {
+      page: 1,
+      limit: 20,
+    });
+  });
+
+  it('protects the member removal endpoint and passes the reason and actor', async () => {
+    const communityService = {
+      removeCommunityMember: jest.fn().mockResolvedValue({
+        message: 'Miembro expulsado correctamente',
+      }),
+    };
+    const controller = new CommunityController(
+      communityService as never,
+      {} as never,
+    );
+    const method = Object.getOwnPropertyDescriptor(
+      CommunityController.prototype,
+      'removeCommunityMember',
+    )?.value as (...args: never[]) => unknown;
+    const guards = Reflect.getMetadata(GUARDS_METADATA, method) as unknown[];
+
+    await controller.removeCommunityMember(
+      2,
+      18,
+      { reason: 'Incumplimiento de reglas' },
+      { user: { userId: 'actor-id' } } as never,
+    );
+
+    expect(guards).toEqual(
+      expect.arrayContaining([JwtAuthGuard, CommunityRoleGuard]),
+    );
+    expect(communityService.removeCommunityMember).toHaveBeenCalledWith(
+      2,
+      18,
+      'actor-id',
+      'Incumplimiento de reglas',
+    );
+  });
+
   it.each([
     'update',
     'deactivate',

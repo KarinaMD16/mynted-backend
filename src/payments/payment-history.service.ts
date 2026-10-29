@@ -72,8 +72,8 @@ export class PaymentHistoryService {
         'transaction.cardHolderName',
       ])
       .where('transaction.buyer_id = :userId', { userId })
-      .andWhere('transaction.status = :status', {
-        status: TransactionStatus.COMPLETED,
+      .andWhere('transaction.status IN (:...statuses)', {
+        statuses: [TransactionStatus.COMPLETED, TransactionStatus.REFUNDED],
       })
       .orderBy('transaction.completedAt', 'DESC')
       .addOrderBy('transaction.createdAt', 'DESC')
@@ -120,8 +120,8 @@ export class PaymentHistoryService {
       .where('transaction.seller_id = :sellerId', {
         sellerId: seller.sellerId,
       })
-      .andWhere('transaction.status = :status', {
-        status: TransactionStatus.COMPLETED,
+      .andWhere('transaction.status IN (:...statuses)', {
+        statuses: [TransactionStatus.COMPLETED, TransactionStatus.REFUNDED],
       })
       .orderBy('transaction.completedAt', 'DESC')
       .addOrderBy('transaction.createdAt', 'DESC')
@@ -224,6 +224,12 @@ export class PaymentHistoryService {
         'transaction.failureReason',
         'transaction.cardBrand',
         'transaction.cardHolderName',
+        'transaction.shippingAddress',
+        'transaction.shippingStatus',
+        'transaction.trackingNumber',
+        'transaction.carrier',
+        'transaction.shippedAt',
+        'transaction.deliveredAt',
         'product.id',
         'product.title',
         'product.imageUrl',
@@ -262,6 +268,12 @@ export class PaymentHistoryService {
       cardLast4: transaction.cardLast4,
       gatewayReference: transaction.gatewayReference,
       failureReason: transaction.failureReason,
+      shippingAddress: transaction.shippingAddress ?? null,
+      shippingStatus: transaction.shippingStatus ?? null,
+      trackingNumber: transaction.trackingNumber ?? null,
+      carrier: transaction.carrier ?? null,
+      shippedAt: transaction.shippedAt ?? null,
+      deliveredAt: transaction.deliveredAt ?? null,
     };
     // El nombre del titular es dato personal del comprador: el vendedor no
     // lo recibe.
@@ -305,6 +317,7 @@ export class PaymentHistoryService {
       'transaction.gatewayReference',
       'transaction.createdAt',
       'transaction.completedAt',
+      'transaction.shippingStatus',
     ];
   }
 
@@ -340,6 +353,7 @@ export class PaymentHistoryService {
       }) === null;
     return {
       id: transaction.id,
+      paymentStatus: transaction.status,
       product: {
         id: transaction.product.id,
         title: transaction.product.title,
@@ -355,6 +369,7 @@ export class PaymentHistoryService {
       cardLast4: transaction.cardLast4,
       cardHolderName: transaction.cardHolderName ?? null,
       gatewayReference: transaction.gatewayReference,
+      shippingStatus: transaction.shippingStatus ?? null,
       // El detalle de un producto borrado da 404: el frontend no debe enlazarlo.
       productDeleted: transaction.product.deletedAt != null,
       canReview,
@@ -366,6 +381,7 @@ export class PaymentHistoryService {
   private toSale(transaction: PaymentTransaction): PaymentSaleItemDto {
     return {
       id: transaction.id,
+      paymentStatus: transaction.status,
       completedAt: transaction.completedAt,
       product: {
         id: transaction.product.id,
@@ -386,6 +402,7 @@ export class PaymentHistoryService {
       commissionRate: transaction.commissionRate,
       commissionAmount: transaction.commissionAmount,
       sellerNet: transaction.sellerNet,
+      shippingStatus: transaction.shippingStatus ?? null,
     };
   }
 

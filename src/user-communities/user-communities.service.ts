@@ -1,5 +1,6 @@
 import {
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
   Optional,
@@ -22,6 +23,7 @@ import {
   CommunityJoinRequest,
   CommunityJoinRequestStatus,
 } from '../community/entities/community-join-request.entity';
+import { CommunityBan } from '../community/entities/community-ban.entity';
 import { Post } from '../community/entities/post.entity';
 import { UserTag } from '../user-tags/entities/user-tag.entity';
 import { UsersService } from '../users/users.service';
@@ -59,6 +61,9 @@ export class UserCommunitiesService {
     private readonly communityService: CommunityService,
     @Optional()
     private readonly eventEmitter?: EventEmitter2,
+    @Optional()
+    @InjectRepository(CommunityBan)
+    private readonly communityBanRepository?: Repository<CommunityBan>,
   ) {}
 
   /**
@@ -121,11 +126,25 @@ export class UserCommunitiesService {
   ): Promise<JoinCommunityResult> {
     const communityId = community.id;
 
+    const activeBan = this.communityBanRepository
+      ? await this.communityBanRepository.findOne({
+          where: { communityId, userId, isActive: true },
+        })
+      : null;
+    if (activeBan) {
+      throw new ForbiddenException(
+        'No puedes unirte a esta comunidad porque has sido bloqueado',
+      );
+    }
+
     const existingProfile = await this.communityProfileRepository.findOne({
       where: { userId, communityId },
     });
 
-    if (existingProfile) {
+    if (
+      existingProfile?.removedAt === null ||
+      existingProfile?.removedAt === undefined
+    ) {
       return { communityId, result: 'already_member' };
     }
 
@@ -170,13 +189,20 @@ export class UserCommunitiesService {
     }
 
     const user = await this.usersService.findById(userId);
-    const profile = this.communityProfileRepository.create({
-      userId,
-      communityId,
-      role: CommunityProfileRole.MEMBER,
-      displayName: user.username,
-      bio: '',
-    });
+    const profile =
+      existingProfile ??
+      this.communityProfileRepository.create({
+        userId,
+        communityId,
+        role: CommunityProfileRole.MEMBER,
+        displayName: user.username,
+        bio: '',
+      });
+    profile.removedAt = null;
+    profile.joinedAt = new Date();
+    profile.role = CommunityProfileRole.MEMBER;
+    profile.displayName = profile.displayName || user.username;
+    profile.bio = profile.bio ?? '';
 
     try {
       const savedProfile = await this.communityProfileRepository.save(profile);
@@ -257,6 +283,7 @@ export class UserCommunitiesService {
       .select('COUNT(*)')
       .from(CommunityProfile, 'onboarding_member_count_profile')
       .where('onboarding_member_count_profile.community_id = community.id')
+      .andWhere('onboarding_member_count_profile.removed_at IS NULL')
       .getQuery();
 
     const recentPostCountSubquery = this.communityRepository
@@ -288,6 +315,7 @@ export class UserCommunitiesService {
           FROM community_profile onboarding_membership
           WHERE onboarding_membership.community_id = community.id
             AND onboarding_membership.user_id = :userId
+            AND onboarding_membership.removed_at IS NULL
         )`,
       )
       .setParameters({ tagIds, userId })
@@ -333,14 +361,19 @@ export class UserCommunitiesService {
       where: { userId, communityId },
     });
 
-    if (profile) {
+    if (
+      profile &&
+      (profile.removedAt === null || profile.removedAt === undefined)
+    ) {
       if (profile.role === CommunityProfileRole.OWNER) {
         throw new ConflictException(
           'El propietario de la comunidad no puede abandonarla sin transferir la propiedad',
         );
       }
 
-      await this.communityProfileRepository.remove(profile);
+      profile.removedAt = new Date();
+      profile.role = CommunityProfileRole.MEMBER;
+      await this.communityProfileRepository.save(profile);
       return { message: 'Has abandonado la comunidad correctamente' };
     }
 

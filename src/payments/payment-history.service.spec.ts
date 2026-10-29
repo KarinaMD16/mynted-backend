@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { PaymentHistoryService } from './payment-history.service';
 import { TransactionStatus } from './enums/transaction-status.enum';
+import { ShippingStatus } from './enums/shipping-status.enum';
 
 describe('PaymentHistoryService', () => {
   const seller = { sellerId: 7, userId: 'seller-1' } as never;
@@ -24,6 +25,22 @@ describe('PaymentHistoryService', () => {
     cardLast4: '4242',
     cardHolderName: 'María José Núñez',
     gatewayReference: 'SIM-A1B2C3',
+    shippingAddress: {
+      fullName: 'María López',
+      phone: '88888888',
+      country: 'CR',
+      province: 'San José',
+      city: 'San José',
+      line1: 'Avenida Central',
+      line2: null,
+      postalCode: null,
+      notes: null,
+    },
+    shippingStatus: ShippingStatus.SHIPPED,
+    trackingNumber: 'ABC123',
+    carrier: 'Correos',
+    shippedAt: new Date('2026-10-20T15:00:00.000Z'),
+    deliveredAt: null,
     createdAt: new Date('2026-10-19T15:00:00.000Z'),
     completedAt: new Date('2026-10-19T16:00:00.000Z'),
     product: { id: 10, title: 'Producto', imageUrl: '/image.jpg' },
@@ -82,9 +99,12 @@ describe('PaymentHistoryService', () => {
     expect(h.qb.where).toHaveBeenCalledWith('transaction.buyer_id = :userId', {
       userId: 'buyer-1',
     });
-    expect(h.qb.andWhere).toHaveBeenCalledWith('transaction.status = :status', {
-      status: TransactionStatus.COMPLETED,
-    });
+    expect(h.qb.andWhere).toHaveBeenCalledWith(
+      'transaction.status IN (:...statuses)',
+      {
+        statuses: [TransactionStatus.COMPLETED, TransactionStatus.REFUNDED],
+      },
+    );
     expect(h.qb.select).toHaveBeenCalledWith(
       expect.arrayContaining([
         'transaction.completedAt',
@@ -113,6 +133,7 @@ describe('PaymentHistoryService', () => {
         cardLast4: '4242',
         cardHolderName: 'María José Núñez',
         gatewayReference: 'SIM-A1B2C3',
+        shippingStatus: ShippingStatus.SHIPPED,
       }),
     );
     expect(h.qb.addSelect).toHaveBeenCalledWith(
@@ -152,6 +173,7 @@ describe('PaymentHistoryService', () => {
     expect(result.data[0]).toEqual(
       expect.objectContaining({ commissionAmount: 3, sellerNet: 97 }),
     );
+    expect(result.data[0].shippingStatus).toBe(ShippingStatus.SHIPPED);
     expect(result.data[0].buyer).toEqual({
       id: 'buyer-1',
       username: 'buyer',
@@ -255,9 +277,21 @@ describe('PaymentHistoryService', () => {
     const h = createHarness();
     const buyerReceipt = await h.service.receipt('buyer-1', 'tx-1');
     expect(buyerReceipt).not.toHaveProperty('commission');
+    expect(buyerReceipt.shippingAddress).toEqual(
+      expect.objectContaining({ country: 'CR', line1: 'Avenida Central' }),
+    );
+    expect(buyerReceipt).toMatchObject({
+      shippingStatus: ShippingStatus.SHIPPED,
+      trackingNumber: 'ABC123',
+      carrier: 'Correos',
+      deliveredAt: null,
+    });
     const sellerReceipt = await h.service.receipt('seller-1', 'tx-1');
     expect(sellerReceipt.commission).toEqual(
       expect.objectContaining({ commissionAmount: 3, sellerNet: 97 }),
+    );
+    expect(sellerReceipt.shippingAddress).toEqual(
+      expect.objectContaining({ country: 'CR', line1: 'Avenida Central' }),
     );
     expect(sellerReceipt).not.toHaveProperty('idempotencyKey');
   });

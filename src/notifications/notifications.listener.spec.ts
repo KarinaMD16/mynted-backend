@@ -1,3 +1,5 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment */
+
 import { DataSource } from 'typeorm';
 import { NotificationType } from './enums/notification-type.enum';
 import { NotificationsListener } from './notifications.listener';
@@ -143,6 +145,105 @@ describe('NotificationsListener', () => {
       ).resolves.toBeUndefined();
       expect(notify).not.toHaveBeenCalled();
       expect(logError).toHaveBeenCalled();
+    });
+  });
+
+  describe('payment shipping events', () => {
+    it('notifica al comprador sin exponer tracking ni dirección al enviar', async () => {
+      query.mockResolvedValue([{ product_title: 'Goku' }]);
+
+      await listener.onOrderShipped({
+        transactionId: 'tx-1',
+        productId: 22,
+        buyerId: 'buyer-id',
+      });
+
+      expect(notify).toHaveBeenCalledWith([
+        {
+          userId: 'buyer-id',
+          type: NotificationType.ORDER_SHIPPED,
+          data: {
+            transactionId: 'tx-1',
+            productId: 22,
+            productTitle: 'Goku',
+          },
+          message: expect.any(String),
+        },
+      ]);
+    });
+
+    it('notifica al usuario vendedor al entregar y usa el seller_id de la venta', async () => {
+      query.mockResolvedValue([
+        { product_title: 'Goku', seller_user_id: 'seller-user' },
+      ]);
+
+      await listener.onOrderDelivered({
+        transactionId: 'tx-1',
+        productId: 22,
+        sellerId: 4,
+      });
+
+      expect(query).toHaveBeenCalledWith(expect.any(String), [22, 4]);
+      expect(notify).toHaveBeenCalledWith([
+        expect.objectContaining({
+          userId: 'seller-user',
+          type: NotificationType.ORDER_DELIVERED,
+          data: {
+            transactionId: 'tx-1',
+            productId: 22,
+            productTitle: 'Goku',
+          },
+        }),
+      ]);
+    });
+
+    it('notifica una cancelación únicamente al comprador', async () => {
+      query.mockResolvedValue([{ product_title: 'Goku' }]);
+
+      await listener.onOrderCancelled({
+        transactionId: 'tx-1',
+        productId: 22,
+        buyerId: 'buyer-id',
+      });
+
+      expect(notify).toHaveBeenCalledWith([
+        expect.objectContaining({
+          userId: 'buyer-id',
+          type: NotificationType.ORDER_CANCELLED,
+          data: {
+            transactionId: 'tx-1',
+            productId: 22,
+            productTitle: 'Goku',
+          },
+        }),
+      ]);
+    });
+
+    it('notifica la resolución de un dispute sin datos privados', async () => {
+      query.mockResolvedValue([{ product_title: 'Goku' }]);
+
+      await listener.onPaymentDisputeResolved({
+        disputeId: 'dispute-1',
+        transactionId: 'tx-1',
+        productId: 22,
+        buyerId: 'buyer-id',
+        sellerUserId: 'seller-user',
+        action: 'refund',
+      });
+
+      expect(notify).toHaveBeenCalledWith([
+        expect.objectContaining({
+          userId: 'buyer-id',
+          type: NotificationType.PAYMENT_REFUNDED,
+        }),
+        expect.objectContaining({
+          userId: 'seller-user',
+          type: NotificationType.PAYMENT_REFUNDED,
+        }),
+      ]);
+      expect(JSON.stringify(notify.mock.calls[0])).not.toContain(
+        'shippingAddress',
+      );
     });
   });
 

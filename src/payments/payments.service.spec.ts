@@ -16,6 +16,7 @@ import { Seller } from '../sellers/entities/seller.entity';
 import { SellerRequestStatus, User } from '../users/entities/user.entity';
 import { PaymentTransaction } from './entities/payment-transaction.entity';
 import { TransactionStatus } from './enums/transaction-status.enum';
+import { ShippingStatus } from './enums/shipping-status.enum';
 import {
   PaymentCardValidationCode,
   PaymentCardValidationError,
@@ -25,6 +26,17 @@ import { PaymentsService } from './payments.service';
 
 describe('PaymentsService', () => {
   const buyerId = 'buyer-id';
+  const shippingAddress = {
+    fullName: 'María López',
+    phone: '88888888',
+    country: 'CR',
+    province: 'San José',
+    city: 'San José',
+    line1: 'Avenida Central',
+    line2: null,
+    postalCode: null,
+    notes: null,
+  };
   const card = {
     cardNumber: '4242424242424242',
     expiryMonth: 12,
@@ -42,6 +54,7 @@ describe('PaymentsService', () => {
       type: ProductType.SALE,
       status: ProductStatus.ACTIVE,
       quantity: 1,
+      shipsTo: ['CR'],
       ...(overrides.product as object | undefined),
     } as Product;
     const seller = {
@@ -176,6 +189,7 @@ describe('PaymentsService', () => {
   const dto = (productId = 7): CheckoutDto => ({
     productId,
     card,
+    shippingAddress,
   });
 
   it('creates pending before charging and atomically completes the sale', async () => {
@@ -224,6 +238,132 @@ describe('PaymentsService', () => {
       exchangeRate: null,
       normalizedAmountCrc: null,
     });
+    expect(result.shippingAddress).toEqual(shippingAddress);
+    expect(result.shippingStatus).toBe(ShippingStatus.PAID);
+    expect(h.txRepo.save).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        shippingAddress,
+        shippingStatus: ShippingStatus.PAID,
+      }),
+    );
+  });
+
+  it('rejects a country outside shipsTo before charging or mutating stock', async () => {
+    const h = createHarness({ product: { shipsTo: ['CR'] } });
+    const beforeSales = h.seller.completedSalesCount;
+
+    await expect(
+      h.service.checkout(
+        { ...dto(), shippingAddress: { ...shippingAddress, country: 'US' } },
+        buyerId,
+        'ships-to-key-1',
+      ),
+    ).rejects.toThrow('no está disponible para envío al país indicado');
+
+    expect(h.paymentGateway.charge).not.toHaveBeenCalled();
+    expect(h.txRepo.create).not.toHaveBeenCalled();
+    expect(h.product.quantity).toBe(1);
+    expect(h.seller.completedSalesCount).toBe(beforeSales);
+    expect(h.eventEmitter.emit).not.toHaveBeenCalled();
+  });
+
+  it.each(['CR', 'cr', ' Cr '])(
+    'allows the normalized country %s when shipsTo contains CR',
+    async (country) => {
+      const h = createHarness({ product: { shipsTo: ['CR'], quantity: 2 } });
+
+      await expect(
+        h.service.checkout(
+          { ...dto(), shippingAddress: { ...shippingAddress, country } },
+          buyerId,
+          `ships-to-${country.trim()}-key`,
+        ),
+      ).resolves.toMatchObject({ status: TransactionStatus.COMPLETED });
+    },
+  );
+
+  it('treats an empty shipsTo list as no allowed destination', async () => {
+    const h = createHarness({ product: { shipsTo: [] } });
+
+    await expect(
+      h.service.checkout(dto(), buyerId, 'ships-to-empty'),
+    ).rejects.toThrow('no está disponible para envío al país indicado');
+    expect(h.paymentGateway.charge).not.toHaveBeenCalled();
+  });
+
+  it('treats a null shipsTo value as no allowed destination', async () => {
+    const h = createHarness({ product: { shipsTo: null } });
+
+    await expect(
+      h.service.checkout(dto(), buyerId, 'ships-to-null'),
+    ).rejects.toThrow('no está disponible para envío al país indicado');
+    expect(h.paymentGateway.charge).not.toHaveBeenCalled();
+  });
+
+  it('persists a normalized shipping snapshot and keeps it on failed payments', async () => {
+    const h = createHarness();
+    h.paymentGateway.charge.mockResolvedValue({
+      approved: false,
+      failureReason: 'card_declined',
+    });
+
+    const address = {
+      ...shippingAddress,
+      fullName: '  María   López ',
+      country: 'cr',
+      line2: '  Apartamento 2 ',
+      postalCode: ' 10101 ',
+      notes: '',
+    };
+    const normalizedAddress = {
+      ...shippingAddress,
+      fullName: 'María   López',
+      country: 'CR',
+      line2: 'Apartamento 2',
+      postalCode: '10101',
+      notes: null,
+    };
+
+    await expect(
+      h.service.checkout(
+        { ...dto(), shippingAddress: address },
+        buyerId,
+        'address-failed',
+      ),
+    ).rejects.toMatchObject({ status: 402 });
+
+    // El DTO real ya normaliza estos valores; este caso confirma que el
+    // snapshot persistido no depende de una referencia mutable al DTO.
+    expect(h.txRepo.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        shippingAddress: normalizedAddress,
+        shippingStatus: null,
+      }),
+    );
+    expect(address).not.toBe(h.txRepo.save.mock.calls[0][0].shippingAddress);
+  });
+
+  it('rejects the same idempotency key when the shipping address changes', async () => {
+    const h = createHarness();
+    h.txRepo.findOne.mockResolvedValue({
+      id: 'existing',
+      productId: 7,
+      buyerId,
+      shippingAddress,
+      status: TransactionStatus.COMPLETED,
+    });
+
+    await expect(
+      h.service.checkout(
+        {
+          ...dto(),
+          shippingAddress: { ...shippingAddress, line1: 'Otra dirección' },
+        },
+        buyerId,
+        'address-key',
+      ),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(h.paymentGateway.charge).not.toHaveBeenCalled();
   });
 
   it('persists a rejected payment and maps it to HTTP 402 after commit', async () => {
@@ -274,6 +414,7 @@ describe('PaymentsService', () => {
       id: 'existing',
       productId: 7,
       buyerId,
+      shippingAddress,
       amount: 120000,
       currency: 'CRC',
       status: TransactionStatus.COMPLETED,
@@ -352,6 +493,7 @@ describe('PaymentsService', () => {
       id: 'winner',
       productId: 7,
       buyerId,
+      shippingAddress,
       amount: 120000,
       currency: 'CRC',
       status: TransactionStatus.COMPLETED,
@@ -446,6 +588,7 @@ describe('PaymentsService', () => {
         id: 'existing',
         productId: 7,
         buyerId,
+        shippingAddress,
         status,
         failureReason:
           status === TransactionStatus.FAILED ? 'card_declined' : null,
@@ -526,6 +669,7 @@ describe('PaymentsService', () => {
       const result = await h.service.checkout(
         {
           productId: 7,
+          shippingAddress,
           card: { ...card, cardHolderName: '  María   José Núñez ' },
         },
         buyerId,
@@ -578,6 +722,7 @@ describe('PaymentsService', () => {
         id: 'existing',
         productId: 7,
         buyerId,
+        shippingAddress,
         status: TransactionStatus.COMPLETED,
         cardBrand: 'visa',
         cardLast4: '4242',
@@ -588,7 +733,11 @@ describe('PaymentsService', () => {
       // reintento devuelve la transacción guardada tal cual.
       await expect(
         h.service.checkout(
-          { productId: 7, card: { ...card, cardHolderName: 'Otro Nombre' } },
+          {
+            productId: 7,
+            shippingAddress,
+            card: { ...card, cardHolderName: 'Otro Nombre' },
+          },
           buyerId,
           'checkout-holder-3',
         ),
@@ -599,7 +748,7 @@ describe('PaymentsService', () => {
       expect(h.paymentGateway.charge).not.toHaveBeenCalled();
     });
 
-    it('returns null for transactions created before the field existed', async () => {
+    it('rejects reusing a key for a legacy transaction without address', async () => {
       const h = createHarness();
       h.txRepo.findOne.mockResolvedValue({
         id: 'legacy',
@@ -613,7 +762,7 @@ describe('PaymentsService', () => {
 
       await expect(
         h.service.checkout(dto(), buyerId, 'checkout-holder-4'),
-      ).resolves.toMatchObject({ id: 'legacy', cardHolderName: null });
+      ).rejects.toBeInstanceOf(ConflictException);
     });
   });
 

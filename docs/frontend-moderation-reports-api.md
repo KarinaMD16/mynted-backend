@@ -6,22 +6,22 @@ Documentación de integración para frontend basada en el código actual de Mynt
 
 Los endpoints protegidos usan:
 
-~~~http
+```http
 Authorization: Bearer <access_token>
-~~~
+```
 
 Hay dos niveles:
 
 - Moderación comunitaria: OWNER y MODERATOR mediante CommunityRoleGuard.
 - Administración global: SUPERADMIN mediante SuperAdminGuard.
 
-| Funcionalidad | Usuario | Member | Moderator | Owner | SUPERADMIN |
-|---|---:|---:|---:|---:|---:|
-| Crear reportes | Sí | Sí | Sí | Sí | Sí |
-| Ver/resolver reportes comunitarios | No | No | Sí | Sí | Según guard comunitario |
-| Reportes globales | No | No | No | No | Sí |
-| Moderation log | No | No | No | No | Sí |
-| Administración global | No | No | No | No | Sí |
+| Funcionalidad                      | Usuario | Member | Moderator | Owner |              SUPERADMIN |
+| ---------------------------------- | ------: | -----: | --------: | ----: | ----------------------: |
+| Crear reportes                     |      Sí |     Sí |        Sí |    Sí |                      Sí |
+| Ver/resolver reportes comunitarios |      No |     No |        Sí |    Sí | Según guard comunitario |
+| Reportes globales                  |      No |     No |        No |    No |                      Sí |
+| Moderation log                     |      No |     No |        No |    No |                      Sí |
+| Administración global              |      No |     No |        No |    No |                      Sí |
 
 Errores habituales: 400 datos o acción inválida, 401 sin autenticación, 403 sin permiso, 404 objetivo inexistente/no disponible y 409 conflicto o duplicado.
 
@@ -35,32 +35,32 @@ OWNER, MODERATOR y SUPERADMIN reciben los reportes sin identidad del reportante.
 
 ReportItemType:
 
-~~~text
+```text
 post
 reply
 product
 conversation
 community
-~~~
+```
 
 ReportReason:
 
-~~~text
+```text
 spam
 fake_product
 offensive_language
 harassment
 inappropriate_content
 other
-~~~
+```
 
 ReportStatus:
 
-~~~text
+```text
 pending
 resolved
 dismissed
-~~~
+```
 
 ## Crear reportes
 
@@ -68,36 +68,36 @@ dismissed
 
 Guard: JwtAuthGuard. Respuesta exitosa: 201.
 
-~~~json
+```json
 {
   "itemType": "post",
   "itemId": 3,
   "reason": "spam",
   "description": "Contenido repetido"
 }
-~~~
+```
 
 Campos:
 
-| Campo | Tipo | Requerido | Notas |
-|---|---|---:|---|
-| itemType | enum | Sí | Uno de los cinco valores. |
-| itemId | integer positivo | Sí | ID del objetivo. |
-| reason | enum | Sí | Un valor de ReportReason. |
-| description | string | No | Máximo 2000 caracteres; no puede quedar vacío. |
+| Campo       | Tipo             | Requerido | Notas                                          |
+| ----------- | ---------------- | --------: | ---------------------------------------------- |
+| itemType    | enum             |        Sí | Uno de los cinco valores.                      |
+| itemId      | integer positivo |        Sí | ID del objetivo.                               |
+| reason      | enum             |        Sí | Un valor de ReportReason.                      |
+| description | string           |        No | Máximo 2000 caracteres; no puede quedar vacío. |
 
 ### Reportar una comunidad
 
 No existe endpoint separado:
 
-~~~json
+```json
 {
   "itemType": "community",
   "itemId": 2,
   "reason": "spam",
   "description": "Revisión necesaria"
 }
-~~~
+```
 
 Se guarda itemId = community.id y communityId = community.id.
 
@@ -125,15 +125,15 @@ Guards: JWT + CommunityRoleGuard; roles MODERATOR u OWNER.
 
 Query:
 
-| Parámetro | Default | Restricciones |
-|---|---:|---|
-| status | — | pending, resolved, dismissed |
-| page | 1 | mínimo 1 |
-| limit | 20 | 1–100 |
+| Parámetro | Default | Restricciones                |
+| --------- | ------: | ---------------------------- |
+| status    |       — | pending, resolved, dismissed |
+| page      |       1 | mínimo 1                     |
+| limit     |      20 | 1–100                        |
 
 Orden: createdAt DESC, luego id DESC.
 
-~~~json
+```json
 {
   "data": [
     {
@@ -150,7 +150,7 @@ Orden: createdAt DESC, luego id DESC.
   "pagination": { "page": 1, "limit": 20, "total": 1, "totalPages": 1 },
   "counts": { "pending": 1, "resolved": 0, "dismissed": 0 }
 }
-~~~
+```
 
 counts contiene totales por estado de la comunidad. Los reports cuyo itemType es community no aparecen en este listado ni en sus counts; este panel solo muestra contenido que OWNER/MODERATOR pueden gestionar.
 
@@ -160,7 +160,7 @@ Mismos guards y roles. Devuelve description, estado, resolución y content, sin 
 
 Para una comunidad, content puede ser:
 
-~~~json
+```json
 {
   "id": 2,
   "name": "Comunidad",
@@ -170,19 +170,19 @@ Para una comunidad, content puede ser:
   "isPrivate": false,
   "deletedAt": null
 }
-~~~
+```
 
 También pueden venir resolvedAt, resolvedByUser, resolutionAction, resolutionNote, createdAt y updatedAt.
 
 ## Excerpt y contenido no disponible
 
-| Tipo | title | text |
-|---|---|---|
-| post | título | cuerpo truncado |
-| reply | null | cuerpo truncado |
-| product | título | descripción truncada |
+| Tipo         | title    | text                      |
+| ------------ | -------- | ------------------------- |
+| post         | título   | cuerpo truncado           |
+| reply        | null     | cuerpo truncado           |
+| product      | título   | descripción truncada      |
 | conversation | producto | último mensaje o [Imagen] |
-| community | nombre | descripción truncada |
+| community    | nombre   | descripción truncada      |
 
 El truncado actual es aproximadamente de 160 caracteres.
 
@@ -194,23 +194,23 @@ contentUnavailable true indica que el target ya no pudo cargarse. El reporte no 
 
 Guards: JWT + CommunityRoleGuard; roles MODERATOR y OWNER.
 
-~~~json
+```json
 {
   "hideContent": false,
   "warnAuthor": false,
   "note": "Revisión administrativa realizada"
 }
-~~~
+```
 
 Debe existir al menos una acción real.
 
-| itemType | hideContent | warnAuthor | note | dismiss |
-|---|---:|---:|---:|---:|
-| post | Sí | Sí | Sí | Sí |
-| reply | Sí | Sí | Sí | Sí |
-| product | Sí | Sí | Sí | Sí |
-| conversation | No | Según target | Sí | Sí |
-| community | No | No | Sí | Sí |
+| itemType     | hideContent |   warnAuthor | note | dismiss |
+| ------------ | ----------: | -----------: | ---: | ------: |
+| post         |          Sí |           Sí |   Sí |      Sí |
+| reply        |          Sí |           Sí |   Sí |      Sí |
+| product      |          Sí |           Sí |   Sí |      Sí |
+| conversation |          No | Según target |   Sí |      Sí |
+| community    |          No |           No |   Sí |      Sí |
 
 Para community solo mostrar resolver con nota y descartar. hideContent true, warnAuthor true y combinaciones con note producen 400. No se busca owner como sustituto de autor ni se modifica la comunidad.
 
@@ -237,14 +237,14 @@ Un report ya resuelto o descartado produce 409.
 
 JWT + moderator/owner.
 
-~~~json
+```json
 {
   "pendingReports": 0,
   "resolvedToday": 0,
   "activeMembers": 0,
   "activeModerators": 0
 }
-~~~
+```
 
 pendingReports incluye reportes de la comunidad, incluidos los de tipo community.
 
@@ -268,12 +268,12 @@ Query: status, itemType, communityId, page y limit.
 
 Ejemplos:
 
-~~~http
+```http
 GET /reports?status=pending
 GET /reports?itemType=community
 GET /reports?communityId=2
 GET /reports?status=pending&itemType=community&page=1&limit=20
-~~~
+```
 
 Orden: createdAt DESC, id DESC.
 
@@ -304,32 +304,32 @@ JWT + SuperAdminGuard.
 
 Query: todos los filtros son opcionales y combinables con lógica AND. `page` default 1, `limit` default 20 y máximo 100. Orden: createdAt DESC, id DESC.
 
-| Parámetro | Tipo | Uso |
-|---|---|---|
-| action | string/enum | Acción auditada. |
-| targetType | string/enum | Tipo de objetivo. |
-| targetId | string | ID exacto del objetivo; acepta números o UUID. |
-| communityId | integer positivo | Comunidad relacionada. |
-| actorUserId | UUID | Usuario que ejecutó la acción. |
-| from | ISO date-time | `createdAt >= from`. |
-| to | ISO date-time | `createdAt <= to`. |
-| page | integer | Página, mínimo 1. |
-| limit | integer | Tamaño, entre 1 y 100. |
+| Parámetro   | Tipo             | Uso                                            |
+| ----------- | ---------------- | ---------------------------------------------- |
+| action      | string/enum      | Acción auditada.                               |
+| targetType  | string/enum      | Tipo de objetivo.                              |
+| targetId    | string           | ID exacto del objetivo; acepta números o UUID. |
+| communityId | integer positivo | Comunidad relacionada.                         |
+| actorUserId | UUID             | Usuario que ejecutó la acción.                 |
+| from        | ISO date-time    | `createdAt >= from`.                           |
+| to          | ISO date-time    | `createdAt <= to`.                             |
+| page        | integer          | Página, mínimo 1.                              |
+| limit       | integer          | Tamaño, entre 1 y 100.                         |
 
 Ejemplos:
 
-~~~http
+```http
 GET /moderation-log?action=report_resolved
 GET /moderation-log?targetType=community
 GET /moderation-log?communityId=2
 GET /moderation-log?actorUserId=<uuid>
 GET /moderation-log?from=2026-10-01T00:00:00.000Z&to=2026-10-31T23:59:59.999Z
 GET /moderation-log?action=report_resolved&communityId=2&page=1&limit=20
-~~~
+```
 
 `from` y `to` son inclusivos; `from` no puede ser posterior a `to`. Los valores inválidos devuelven 400.
 
-~~~json
+```json
 {
   "data": [
     {
@@ -350,37 +350,37 @@ GET /moderation-log?action=report_resolved&communityId=2&page=1&limit=20
   ],
   "pagination": { "page": 1, "limit": 20, "total": 1, "totalPages": 1 }
 }
-~~~
+```
 
 Acciones definidas actualmente:
 
-~~~text
+```text
 content_hidden, content_restored, report_resolved, report_dismissed,
 author_warned, user_deactivated, user_reactivated, user_soft_deleted,
 seller_revoked, seller_restored, product_deactivated, product_activated,
 product_soft_deleted, community_deactivated, community_activated,
 community_made_public, community_made_private, community_soft_deleted
-~~~
+```
 
 El log es histórico y append-only. targetId llega como string. El actor no expone email, password ni tokens.
 
 ## Administración de usuarios
 
-| Método | Endpoint | Permiso | Uso |
-|---|---|---|---|
-| GET | /users | SUPERADMIN | Listado y filtro sellerStatus. |
-| GET | /users/:id | JWT | Detalle de usuario. |
-| PATCH | /users/:id/deactivate | SUPERADMIN | Desactivar usuario. |
-| PATCH | /users/:id/activate | SUPERADMIN | Reactivar usuario. |
-| DELETE | /users/:id | SUPERADMIN | Soft delete de usuario. |
-| GET | /users/stats | SUPERADMIN | Estadísticas globales. |
+| Método | Endpoint              | Permiso    | Uso                            |
+| ------ | --------------------- | ---------- | ------------------------------ |
+| GET    | /users                | SUPERADMIN | Listado y filtro sellerStatus. |
+| GET    | /users/:id            | JWT        | Detalle de usuario.            |
+| PATCH  | /users/:id/deactivate | SUPERADMIN | Desactivar usuario.            |
+| PATCH  | /users/:id/activate   | SUPERADMIN | Reactivar usuario.             |
+| DELETE | /users/:id            | SUPERADMIN | Soft delete de usuario.        |
+| GET    | /users/stats          | SUPERADMIN | Estadísticas globales.         |
 
 GET /users admite sellerStatus: none, pending, approved, rejected, revoked.
 
 En las respuestas administrativas de `GET /users` y `GET /users/:id` cuando
 consulta un SUPERADMIN, un usuario con Seller incluye:
 
-~~~json
+```json
 {
   "seller": {
     "sellerId": 1,
@@ -393,15 +393,15 @@ consulta un SUPERADMIN, un usuario con Seller incluye:
     "reportsReceivedCount": 0
   }
 }
-~~~
+```
 
 `location` no forma parte del Seller del perfil público.
 
 Desactivar y eliminar requieren:
 
-~~~json
+```json
 { "reason": "Incumplimiento de normas" }
-~~~
+```
 
 El motivo se recorta y admite máximo 500 caracteres. Desactivar devuelve isActive false; activar devuelve isActive true. Soft delete devuelve deletedAt y no es eliminación física.
 
@@ -426,35 +426,35 @@ Al restaurar:
 
 Rutas adicionales:
 
-~~~text
+```text
 GET /users/seller-requests
 GET /users/seller-request/:id
-~~~
+```
 
 ## Administración de productos
 
-| Método | Endpoint | Permiso |
-|---|---|---|
-| PATCH | /products/:id/deactivate | SUPERADMIN |
-| PATCH | /products/:id/activate | SUPERADMIN |
-| DELETE | /products/:id | JWT, propietario |
-| PATCH | /products/:id/status | JWT, propietario |
+| Método | Endpoint                 | Permiso          |
+| ------ | ------------------------ | ---------------- |
+| PATCH  | /products/:id/deactivate | SUPERADMIN       |
+| PATCH  | /products/:id/activate   | SUPERADMIN       |
+| DELETE | /products/:id            | JWT, propietario |
+| PATCH  | /products/:id/status     | JWT, propietario |
 
 Las acciones administrativas requieren:
 
-~~~json
+```json
 { "reason": "Incumplimiento de políticas comerciales" }
-~~~
+```
 
 El motivo es obligatorio y admite máximo 500 caracteres.
 
-| Campo | Significado |
-|---|---|
-| status | draft, active, sold o inactive; estado comercial. |
-| isDeactivated | Bloqueo administrativo. |
-| isHidden | Ocultamiento por moderación. |
-| isVisible | Visibilidad configurada. |
-| deletedAt | Soft delete. |
+| Campo         | Significado                                       |
+| ------------- | ------------------------------------------------- |
+| status        | draft, active, sold o inactive; estado comercial. |
+| isDeactivated | Bloqueo administrativo.                           |
+| isHidden      | Ocultamiento por moderación.                      |
+| isVisible     | Visibilidad configurada.                          |
+| deletedAt     | Soft delete.                                      |
 
 Desactivar pone isDeactivated true, no equivale necesariamente a cambiar status, isHidden o isVisible, y registra product_deactivated. Activar retira la desactivación y no publica automáticamente un producto.
 
@@ -466,18 +466,74 @@ JWT + SuperAdminGuard.
 
 Query:
 
-~~~text
+```text
 search
 categoryId, entero positivo
 isActive, boolean
 isPrivate, boolean
 page, default 1
 limit, default 10, máximo 100
-~~~
+```
 
 Incluye activas, inactivas, públicas, privadas y soft-deleted según filtros. Devuelve memberCount, productCount, pendingReportsCount y deletedAt.
 
 Una community sin perfiles aparece con memberCount 0. Una community creada por SUPERADMIN sin owner es válida.
+
+### GET /communities/:communityId/members
+
+Disponible para OWNER, MODERATOR y SUPERADMIN. Los miembros comunes y usuarios
+sin perfil en la community reciben 403.
+
+Query opcional:
+
+```text
+page, default 1
+limit, default 20, mÃ¡ximo 100
+role, member | moderator | owner
+search, bÃºsqueda parcial por username o displayName
+```
+
+Los filtros se combinan con lÃ³gica AND. El orden es `joinedAt DESC` y luego
+`communityProfileId DESC`.
+
+```json
+{
+  "data": [
+    {
+      "communityProfileId": 12,
+      "userId": "uuid",
+      "username": "usuario",
+      "displayName": "Nombre visible",
+      "photoUrl": null,
+      "role": "member",
+      "joinedAt": "2026-10-28T12:00:00.000Z",
+      "postCount": 3,
+      "replyCount": 5,
+      "hiddenContentCount": 1
+    }
+  ],
+  "pagination": { "page": 1, "limit": 20, "total": 1, "totalPages": 1 }
+}
+```
+
+`communityProfileId` es el `profileId` que se utiliza en los endpoints para
+agregar o quitar moderadores. `postCount` y `replyCount` incluyen contenido
+histÃ³rico, incluso oculto; `hiddenContentCount` suma posts y replies ocultos.
+Los usuarios soft-deleted se excluyen, mientras que los usuarios inactivos se
+mantienen visibles para administraciÃ³n.
+
+### DELETE /communities/:communityId/members/:profileId
+
+JWT y rol OWNER, MODERATOR o SUPERADMIN. Body obligatorio:
+
+```json
+{ "reason": "Incumplimiento de las reglas" }
+```
+
+La respuesta es `{ "message": "Miembro expulsado correctamente" }`. La
+expulsión finaliza la membresía (`removedAt`) sin borrar el perfil, posts ni
+replies; no es un ban y el usuario puede volver a unirse. OWNER no puede ser
+expulsado; MODERATOR solo puede expulsar miembros.
 
 ### POST /communities
 
@@ -491,13 +547,13 @@ Requeridos: name, description, slug, isPrivate, categoryId, tagIds y rules. Opci
 
 ### Acciones
 
-| Método | Endpoint | Permiso |
-|---|---|---|
-| PATCH | /communities/:communityId/deactivate | Owner |
-| PATCH | /communities/:communityId/activate | Owner |
-| PATCH | /communities/:communityId/public | Owner |
-| PATCH | /communities/:communityId/private | Owner |
-| DELETE | /communities/:id | SUPERADMIN |
+| Método | Endpoint                             | Permiso    |
+| ------ | ------------------------------------ | ---------- |
+| PATCH  | /communities/:communityId/deactivate | Owner      |
+| PATCH  | /communities/:communityId/activate   | Owner      |
+| PATCH  | /communities/:communityId/public     | Owner      |
+| PATCH  | /communities/:communityId/private    | Owner      |
+| DELETE | /communities/:id                     | SUPERADMIN |
 
 Las primeras cuatro usan JWT + CommunityRoleGuard y requieren OWNER. Delete usa JWT + SuperAdminGuard y body con reason. Es un soft delete y conserva historia.
 
@@ -507,7 +563,7 @@ Las primeras cuatro usan JWT + CommunityRoleGuard y requieren OWNER. Delete usa 
 
 JWT + SuperAdminGuard.
 
-~~~json
+```json
 {
   "totalUsers": 0,
   "approvedSellers": 0,
@@ -515,7 +571,7 @@ JWT + SuperAdminGuard.
   "activeProducts": 0,
   "pendingReports": 0
 }
-~~~
+```
 
 - totalUsers: usuarios no soft-deleted, incluidos inactivos.
 - approvedSellers: seller verificado, rol seller, solicitud aprobada, usuario activo/no eliminado.
@@ -527,7 +583,7 @@ JWT + SuperAdminGuard.
 
 Valores confirmados relacionados:
 
-~~~text
+```text
 content_hidden
 content_restored
 moderation_warning
@@ -542,19 +598,19 @@ community_activated
 community_made_public
 community_made_private
 community_deleted
-~~~
+```
 
 Resolver con nota o descartar un report no genera notificación adicional de community. Una notificación no es por sí sola un sistema de strikes.
 
 ## Estados, nulabilidad y soft delete
 
-| Recurso | Campos | Significado |
-|---|---|---|
-| User | isActive, deletedAt | Inactividad y soft delete distintos. |
-| Product | status, isDeactivated, isHidden, isVisible, deletedAt | Estado comercial, bloqueo, moderación, visibilidad y borrado independientes. |
-| Community | isActive, isPrivate, deletedAt | Actividad, privacidad y soft delete independientes. |
-| Report | status | pending/resolved/dismissed. |
-| Seller | sellerRequestStatus, isVerified | Estado de solicitud y verificación. |
+| Recurso   | Campos                                                | Significado                                                                  |
+| --------- | ----------------------------------------------------- | ---------------------------------------------------------------------------- |
+| User      | isActive, deletedAt                                   | Inactividad y soft delete distintos.                                         |
+| Product   | status, isDeactivated, isHidden, isVisible, deletedAt | Estado comercial, bloqueo, moderación, visibilidad y borrado independientes. |
+| Community | isActive, isPrivate, deletedAt                        | Actividad, privacidad y soft delete independientes.                          |
+| Report    | status                                                | pending/resolved/dismissed.                                                  |
+| Seller    | sellerRequestStatus, isVerified                       | Estado de solicitud y verificación.                                          |
 
 Aceptar null en communityId, community, excerpt, resolvedAt, resolvedByUser, resolutionAction, resolutionNote y deletedAt.
 
@@ -592,49 +648,48 @@ Defaults de paginación:
 
 ## Ejemplos curl
 
-~~~bash
+```bash
 curl -X POST http://localhost:3000/reports \\
   -H "Authorization: Bearer <access_token>" \\
   -H "Content-Type: application/json" \\
   -d '{"itemType":"community","itemId":2,"reason":"spam","description":"Revisión necesaria"}'
-~~~
+```
 
-~~~bash
+```bash
 curl "http://localhost:3000/communities/2/reports?page=1&limit=20&status=pending" \\
   -H "Authorization: Bearer <access_token>"
-~~~
+```
 
-~~~bash
+```bash
 curl -X PATCH http://localhost:3000/reports/10/resolve \\
   -H "Authorization: Bearer <superadmin_token>" \\
   -H "Content-Type: application/json" \\
   -d '{"hideContent":false,"warnAuthor":false,"note":"Revisión administrativa"}'
-~~~
+```
 
 ## Referencia compacta
 
-| Método | Endpoint | Permiso | Uso |
-|---|---|---|---|
-| POST | /reports | JWT | Crear reportes. |
-| GET | /communities/:id/reports | moderator/owner | Reportes comunitarios. |
-| GET | /communities/:id/reports/:reportId | moderator/owner | Detalle. |
-| PATCH | /communities/:id/reports/:reportId/resolve | moderator/owner | Resolver. |
-| PATCH | /communities/:id/reports/:reportId/dismiss | moderator/owner | Descartar. |
-| GET | /reports | SUPERADMIN | Reportes globales. |
-| PATCH | /reports/:id/resolve | SUPERADMIN | Resolver globalmente. |
-| PATCH | /reports/:id/dismiss | SUPERADMIN | Descartar globalmente. |
-| GET | /communities/:id/moderation/stats | moderator/owner | Estadísticas. |
-| PATCH | /communities/:id/moderation/:itemType/:itemId/restore | moderator/owner | Restaurar contenido. |
-| GET | /moderation-log | SUPERADMIN | Auditoría. |
-| GET/PATCH/DELETE | /users/... | Según ruta | Usuarios. |
-| PATCH | /users/:id/seller-status | SUPERADMIN | Seller. |
-| PATCH/DELETE | /products/:id/... | Según ruta | Productos. |
-| GET | /communities/all | SUPERADMIN | Comunidades administrativas. |
-| POST | /communities | JWT | Crear community. |
-| PATCH/DELETE | /communities/:id/... | Según ruta | Administración comunitaria. |
-| GET | /users/stats | SUPERADMIN | Resumen global. |
+| Método           | Endpoint                                              | Permiso         | Uso                          |
+| ---------------- | ----------------------------------------------------- | --------------- | ---------------------------- |
+| POST             | /reports                                              | JWT             | Crear reportes.              |
+| GET              | /communities/:id/reports                              | moderator/owner | Reportes comunitarios.       |
+| GET              | /communities/:id/reports/:reportId                    | moderator/owner | Detalle.                     |
+| PATCH            | /communities/:id/reports/:reportId/resolve            | moderator/owner | Resolver.                    |
+| PATCH            | /communities/:id/reports/:reportId/dismiss            | moderator/owner | Descartar.                   |
+| GET              | /reports                                              | SUPERADMIN      | Reportes globales.           |
+| PATCH            | /reports/:id/resolve                                  | SUPERADMIN      | Resolver globalmente.        |
+| PATCH            | /reports/:id/dismiss                                  | SUPERADMIN      | Descartar globalmente.       |
+| GET              | /communities/:id/moderation/stats                     | moderator/owner | Estadísticas.                |
+| PATCH            | /communities/:id/moderation/:itemType/:itemId/restore | moderator/owner | Restaurar contenido.         |
+| GET              | /moderation-log                                       | SUPERADMIN      | Auditoría.                   |
+| GET/PATCH/DELETE | /users/...                                            | Según ruta      | Usuarios.                    |
+| PATCH            | /users/:id/seller-status                              | SUPERADMIN      | Seller.                      |
+| PATCH/DELETE     | /products/:id/...                                     | Según ruta      | Productos.                   |
+| GET              | /communities/all                                      | SUPERADMIN      | Comunidades administrativas. |
+| POST             | /communities                                          | JWT             | Crear community.             |
+| PATCH/DELETE     | /communities/:id/...                                  | Según ruta      | Administración comunitaria.  |
+| GET              | /users/stats                                          | SUPERADMIN      | Resumen global.              |
 
 ## Validación
 
 La documentación se basó en controllers, DTOs, enums, entities, services, guards y tests actuales. No modifica código productivo, no crea migrations, no modifica frontend y no realiza commit ni push.
-
