@@ -54,6 +54,7 @@ describe('PaymentsService', () => {
       type: ProductType.SALE,
       status: ProductStatus.ACTIVE,
       quantity: 1,
+      shipsTo: ['CR'],
       ...(overrides.product as object | undefined),
     } as Product;
     const seller = {
@@ -245,6 +246,58 @@ describe('PaymentsService', () => {
         shippingStatus: ShippingStatus.PAID,
       }),
     );
+  });
+
+  it('rejects a country outside shipsTo before charging or mutating stock', async () => {
+    const h = createHarness({ product: { shipsTo: ['CR'] } });
+    const beforeSales = h.seller.completedSalesCount;
+
+    await expect(
+      h.service.checkout(
+        { ...dto(), shippingAddress: { ...shippingAddress, country: 'US' } },
+        buyerId,
+        'ships-to-key-1',
+      ),
+    ).rejects.toThrow('no está disponible para envío al país indicado');
+
+    expect(h.paymentGateway.charge).not.toHaveBeenCalled();
+    expect(h.txRepo.create).not.toHaveBeenCalled();
+    expect(h.product.quantity).toBe(1);
+    expect(h.seller.completedSalesCount).toBe(beforeSales);
+    expect(h.eventEmitter.emit).not.toHaveBeenCalled();
+  });
+
+  it.each(['CR', 'cr', ' Cr '])(
+    'allows the normalized country %s when shipsTo contains CR',
+    async (country) => {
+      const h = createHarness({ product: { shipsTo: ['CR'], quantity: 2 } });
+
+      await expect(
+        h.service.checkout(
+          { ...dto(), shippingAddress: { ...shippingAddress, country } },
+          buyerId,
+          `ships-to-${country.trim()}-key`,
+        ),
+      ).resolves.toMatchObject({ status: TransactionStatus.COMPLETED });
+    },
+  );
+
+  it('treats an empty shipsTo list as no allowed destination', async () => {
+    const h = createHarness({ product: { shipsTo: [] } });
+
+    await expect(
+      h.service.checkout(dto(), buyerId, 'ships-to-empty'),
+    ).rejects.toThrow('no está disponible para envío al país indicado');
+    expect(h.paymentGateway.charge).not.toHaveBeenCalled();
+  });
+
+  it('treats a null shipsTo value as no allowed destination', async () => {
+    const h = createHarness({ product: { shipsTo: null } });
+
+    await expect(
+      h.service.checkout(dto(), buyerId, 'ships-to-null'),
+    ).rejects.toThrow('no está disponible para envío al país indicado');
+    expect(h.paymentGateway.charge).not.toHaveBeenCalled();
   });
 
   it('persists a normalized shipping snapshot and keeps it on failed payments', async () => {

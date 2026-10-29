@@ -86,6 +86,16 @@ autorizado. `GET /payments/me/purchases` y `GET /payments/me/sales` no incluyen
 la dirección completa en sus listados. Las notificaciones de compra/venta
 tampoco contienen datos de envío.
 
+### Países permitidos para el envío
+
+El campo `shipsTo` del producto contiene códigos ISO 3166-1 alpha-2, por
+ejemplo `["CR", "US"]`. Durante `POST /payments/checkout`,
+`shippingAddress.country` se normaliza con `trim` y mayúsculas y debe estar
+incluido en `shipsTo`. Si no está permitido, el checkout responde `409` con
+`El producto no está disponible para envío al país indicado`; no cobra, no
+crea una compra exitosa, no descuenta stock y no incrementa las métricas del
+vendedor. Un `shipsTo` vacío no permite destinos.
+
 ## Estados de envío de compras
 
 El estado del pago y el estado del envío son independientes. Una compra

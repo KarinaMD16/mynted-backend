@@ -451,6 +451,7 @@ export class PaymentsService {
         'Solo se pueden comprar productos de venta',
       );
     }
+    this.assertShipsToCountry(product, shippingAddress.country);
     if (
       product.price === null ||
       !Number.isFinite(product.price) ||
@@ -822,6 +823,22 @@ export class PaymentsService {
       product.price <= 0
     ) {
       throw new BadRequestException('El precio del producto es inválido');
+    }
+  }
+
+  private assertShipsToCountry(product: Product, country: string): void {
+    const normalizedCountry = country.trim().toUpperCase();
+    const allowed = Array.isArray(product.shipsTo)
+      ? product.shipsTo.some(
+          (value) =>
+            typeof value === 'string' &&
+            value.trim().toUpperCase() === normalizedCountry,
+        )
+      : false;
+    if (!allowed) {
+      throw new ConflictException(
+        'El producto no está disponible para envío al país indicado',
+      );
     }
   }
 

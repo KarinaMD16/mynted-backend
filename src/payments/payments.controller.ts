@@ -174,6 +174,11 @@ export class PaymentsController {
     description: 'Clave única de la operación, entre 8 y 128 caracteres',
   })
   @ApiOperation({ summary: 'Procesar el checkout de un producto de venta' })
+  @ApiResponse({
+    status: 409,
+    description:
+      'El producto no estÃ¡ disponible para envÃ­o al paÃ­s indicado',
+  })
   checkout(
     @Body() dto: CheckoutDto,
     @Headers('Idempotency-Key') idempotencyKey: string | undefined,
