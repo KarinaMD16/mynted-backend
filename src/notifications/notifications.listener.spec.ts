@@ -196,6 +196,55 @@ describe('NotificationsListener', () => {
         }),
       ]);
     });
+
+    it('notifica una cancelación únicamente al comprador', async () => {
+      query.mockResolvedValue([{ product_title: 'Goku' }]);
+
+      await listener.onOrderCancelled({
+        transactionId: 'tx-1',
+        productId: 22,
+        buyerId: 'buyer-id',
+      });
+
+      expect(notify).toHaveBeenCalledWith([
+        expect.objectContaining({
+          userId: 'buyer-id',
+          type: NotificationType.ORDER_CANCELLED,
+          data: {
+            transactionId: 'tx-1',
+            productId: 22,
+            productTitle: 'Goku',
+          },
+        }),
+      ]);
+    });
+
+    it('notifica la resolución de un dispute sin datos privados', async () => {
+      query.mockResolvedValue([{ product_title: 'Goku' }]);
+
+      await listener.onPaymentDisputeResolved({
+        disputeId: 'dispute-1',
+        transactionId: 'tx-1',
+        productId: 22,
+        buyerId: 'buyer-id',
+        sellerUserId: 'seller-user',
+        action: 'refund',
+      });
+
+      expect(notify).toHaveBeenCalledWith([
+        expect.objectContaining({
+          userId: 'buyer-id',
+          type: NotificationType.PAYMENT_REFUNDED,
+        }),
+        expect.objectContaining({
+          userId: 'seller-user',
+          type: NotificationType.PAYMENT_REFUNDED,
+        }),
+      ]);
+      expect(JSON.stringify(notify.mock.calls[0])).not.toContain(
+        'shippingAddress',
+      );
+    });
   });
 
   describe('product.price.changed', () => {

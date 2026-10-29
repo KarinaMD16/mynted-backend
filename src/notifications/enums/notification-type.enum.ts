@@ -8,6 +8,9 @@ export enum NotificationType {
   SALE_COMPLETED = 'sale_completed',
   ORDER_SHIPPED = 'order_shipped',
   ORDER_DELIVERED = 'order_delivered',
+  ORDER_CANCELLED = 'order_cancelled',
+  PAYMENT_REFUNDED = 'payment_refunded',
+  PAYMENT_DISPUTE_CLOSED = 'payment_dispute_closed',
   // Reseñas y badges.
   REVIEW_RECEIVED = 'review_received',
   BADGE_AWARDED = 'badge_awarded',

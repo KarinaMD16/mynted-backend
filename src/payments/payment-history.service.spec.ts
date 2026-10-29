@@ -99,9 +99,12 @@ describe('PaymentHistoryService', () => {
     expect(h.qb.where).toHaveBeenCalledWith('transaction.buyer_id = :userId', {
       userId: 'buyer-1',
     });
-    expect(h.qb.andWhere).toHaveBeenCalledWith('transaction.status = :status', {
-      status: TransactionStatus.COMPLETED,
-    });
+    expect(h.qb.andWhere).toHaveBeenCalledWith(
+      'transaction.status IN (:...statuses)',
+      {
+        statuses: [TransactionStatus.COMPLETED, TransactionStatus.REFUNDED],
+      },
+    );
     expect(h.qb.select).toHaveBeenCalledWith(
       expect.arrayContaining([
         'transaction.completedAt',

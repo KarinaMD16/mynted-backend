@@ -38,6 +38,7 @@ import { QuoteResponseDto } from './dto/quote-response.dto';
 import { ExchangeRateService } from './exchange-rate/exchange-rate.service';
 import {
   CheckoutCompletedEvent,
+  OrderCancelledEvent,
   OrderDeliveredEvent,
   OrderShippedEvent,
   PaymentEvents,
@@ -46,6 +47,8 @@ import { ShippingAddressSnapshot } from './types/shipping-address-snapshot';
 import { ShippingStatus } from './enums/shipping-status.enum';
 import { ShipPaymentDto } from './dto/ship-payment.dto';
 import { PaymentShippingResponseDto } from './dto/payment-shipping-response.dto';
+import { CancelPaymentDto } from './dto/cancel-payment.dto';
+import { PaymentCancelResponseDto } from './dto/payment-cancel-response.dto';
 
 // isNew: el pago se aprobó en esta llamada (no es la repetición de una clave
 // de idempotencia ya usada).
@@ -158,6 +161,86 @@ export class PaymentsService {
       };
     }
     return response;
+  }
+
+  async cancel(
+    transactionId: string,
+    userId: string,
+    dto: CancelPaymentDto,
+  ): Promise<PaymentCancelResponseDto> {
+    const result = await this.dataSource.transaction(async (manager) => {
+      const transaction = await manager
+        .getRepository(PaymentTransaction)
+        .findOne({
+          where: { id: transactionId },
+          relations: { seller: true },
+          lock: { mode: 'pessimistic_write' },
+        });
+      if (!transaction)
+        throw new NotFoundException('Transacción no encontrada');
+      if (transaction.seller?.userId !== userId) {
+        throw new ForbiddenException(
+          'No tienes permiso para cancelar esta transacción',
+        );
+      }
+      if (
+        transaction.status !== TransactionStatus.COMPLETED ||
+        transaction.shippingStatus !== ShippingStatus.PAID ||
+        transaction.shippingAddress === null ||
+        transaction.shippingAddress === undefined
+      ) {
+        throw new ConflictException(
+          'La transacción no puede cancelarse en su estado actual',
+        );
+      }
+
+      const product = await manager.getRepository(Product).findOne({
+        where: { id: transaction.productId },
+        withDeleted: true,
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!product) throw new NotFoundException('Producto no encontrado');
+
+      const seller = await manager.getRepository(Seller).findOne({
+        where: { sellerId: transaction.sellerId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!seller) throw new NotFoundException('Vendedor no encontrado');
+
+      product.quantity += transaction.quantity;
+      if (
+        product.status === ProductStatus.SOLD &&
+        product.quantity > 0 &&
+        !product.deletedAt &&
+        !product.isHidden &&
+        !product.isDeactivated
+      ) {
+        product.status = ProductStatus.ACTIVE;
+      }
+      seller.completedSalesCount = Math.max(0, seller.completedSalesCount - 1);
+      transaction.status = TransactionStatus.REFUNDED;
+      transaction.cancellationReason = dto.reason ?? null;
+
+      await manager.getRepository(Product).save(product);
+      await manager.getRepository(Seller).save(seller);
+      await manager.getRepository(PaymentTransaction).save(transaction);
+
+      return {
+        response: {
+          transactionId: transaction.id,
+          paymentStatus: transaction.status,
+          shippingStatus: transaction.shippingStatus,
+        },
+        event: {
+          transactionId: transaction.id,
+          productId: transaction.productId,
+          buyerId: transaction.buyerId,
+        } satisfies OrderCancelledEvent,
+      };
+    });
+
+    this.eventEmitter?.emit(PaymentEvents.ORDER_CANCELLED, result.event);
+    return result.response;
   }
 
   async ship(

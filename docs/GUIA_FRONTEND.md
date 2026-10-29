@@ -123,6 +123,49 @@ Las transacciones históricas pueden devolver esos campos como `null`; no se
 infiere `paid` automáticamente. Las notificaciones `order_shipped` llegan al
 comprador y `order_delivered` al vendedor, sin incluir dirección ni tracking.
 
+## Cancelaciones y reclamos de compras
+
+El vendedor puede cancelar una compra pagada antes de marcarla como enviada:
+
+```http
+POST /payments/:id/cancel
+```
+
+Body opcional:
+
+```json
+{ "reason": "Motivo de la cancelación" }
+```
+
+La cancelación cambia el pago a `refunded`, conserva el historial de envío,
+restaura la cantidad comprada al stock y notifica al comprador mediante
+`order_cancelled`. Solo el vendedor dueño de la transacción puede ejecutarla.
+
+El comprador puede abrir un reclamo únicamente cuando el pedido está
+`delivered`:
+
+```http
+POST /payments/:id/dispute
+```
+
+```json
+{ "reason": "El producto llegó dañado" }
+```
+
+Los SUPERADMIN consultan y resuelven reclamos con:
+
+```http
+GET /payments/disputes?page=1&limit=20
+GET /payments/disputes/:id
+PATCH /payments/disputes/:id/resolve
+```
+
+La resolución acepta `action: "refund"` o `action: "close"` y requiere una
+`resolution`. `refund` cambia el pago a `refunded` sin restaurar stock;
+`close` conserva el pago como `completed`. Los estados de reclamo son
+`open`, `resolved_refund` y `resolved_closed`. Las listas de compras y ventas
+incluyen `paymentStatus` además de `shippingStatus`.
+
 ## 0. Convenciones generales
 
 | Tema                                           | Detalle                                                                                                                                                                                                                                                |

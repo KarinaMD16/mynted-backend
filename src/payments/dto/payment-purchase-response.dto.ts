@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { ShippingStatus } from '../enums/shipping-status.enum';
+import { TransactionStatus } from '../enums/transaction-status.enum';
 
 export class PaymentHistoryPaginationDto {
   page!: number;
@@ -21,6 +22,8 @@ export class PaymentPurchaseSellerDto {
 
 export class PaymentPurchaseItemDto {
   id!: string;
+  @ApiProperty({ enum: TransactionStatus })
+  paymentStatus!: TransactionStatus;
   product!: PaymentPurchaseProductDto;
   seller!: PaymentPurchaseSellerDto;
   amount!: number;

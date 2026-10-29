@@ -15,6 +15,8 @@ import {
 } from '../community/community-events';
 import {
   CheckoutCompletedEvent,
+  OrderCancelledEvent,
+  PaymentDisputeResolvedEvent,
   OrderDeliveredEvent,
   OrderShippedEvent,
   PaymentEvents,
@@ -161,6 +163,69 @@ export class NotificationsListener {
             productTitle: row.product_title,
           },
           message: `Tu pedido "${row.product_title}" fue entregado`,
+        },
+      ]);
+    });
+  }
+
+  @OnEvent(PaymentEvents.ORDER_CANCELLED, { async: true })
+  onOrderCancelled(event: OrderCancelledEvent) {
+    return this.safely(PaymentEvents.ORDER_CANCELLED, async () => {
+      const [row] = await this.dataSource.query<{ product_title: string }[]>(
+        'SELECT title AS product_title FROM product WHERE id = $1',
+        [event.productId],
+      );
+      if (!row) return;
+      await this.notificationsService.notify([
+        {
+          userId: event.buyerId,
+          type: NotificationType.ORDER_CANCELLED,
+          data: {
+            transactionId: event.transactionId,
+            productId: event.productId,
+            productTitle: row.product_title,
+          },
+          message: `Tu pedido "${row.product_title}" fue cancelado`,
+        },
+      ]);
+    });
+  }
+
+  @OnEvent(PaymentEvents.PAYMENT_DISPUTE_RESOLVED, { async: true })
+  onPaymentDisputeResolved(event: PaymentDisputeResolvedEvent) {
+    return this.safely(PaymentEvents.PAYMENT_DISPUTE_RESOLVED, async () => {
+      const [row] = await this.dataSource.query<{ product_title: string }[]>(
+        'SELECT title AS product_title FROM product WHERE id = $1',
+        [event.productId],
+      );
+      if (!row) return;
+      const type =
+        event.action === 'refund'
+          ? NotificationType.PAYMENT_REFUNDED
+          : NotificationType.PAYMENT_DISPUTE_CLOSED;
+      const data = {
+        transactionId: event.transactionId,
+        productId: event.productId,
+        productTitle: row.product_title,
+      };
+      await this.notificationsService.notify([
+        {
+          userId: event.buyerId,
+          type,
+          data,
+          message:
+            event.action === 'refund'
+              ? `Tu pago de "${row.product_title}" fue reembolsado`
+              : `Tu reclamo sobre "${row.product_title}" fue cerrado`,
+        },
+        {
+          userId: event.sellerUserId,
+          type,
+          data,
+          message:
+            event.action === 'refund'
+              ? `La venta de "${row.product_title}" fue reembolsada`
+              : `El reclamo sobre "${row.product_title}" fue cerrado`,
         },
       ]);
     });

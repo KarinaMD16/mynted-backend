@@ -176,6 +176,9 @@ export class PaymentTransaction {
   @Column({ name: 'shipping_address', type: 'jsonb', nullable: true })
   shippingAddress!: ShippingAddressSnapshot | null;
 
+  @Column({ name: 'cancellation_reason', type: 'text', nullable: true })
+  cancellationReason!: string | null;
+
   @Column({
     name: 'shipping_status',
     type: 'enum',

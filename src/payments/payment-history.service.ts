@@ -72,8 +72,8 @@ export class PaymentHistoryService {
         'transaction.cardHolderName',
       ])
       .where('transaction.buyer_id = :userId', { userId })
-      .andWhere('transaction.status = :status', {
-        status: TransactionStatus.COMPLETED,
+      .andWhere('transaction.status IN (:...statuses)', {
+        statuses: [TransactionStatus.COMPLETED, TransactionStatus.REFUNDED],
       })
       .orderBy('transaction.completedAt', 'DESC')
       .addOrderBy('transaction.createdAt', 'DESC')
@@ -120,8 +120,8 @@ export class PaymentHistoryService {
       .where('transaction.seller_id = :sellerId', {
         sellerId: seller.sellerId,
       })
-      .andWhere('transaction.status = :status', {
-        status: TransactionStatus.COMPLETED,
+      .andWhere('transaction.status IN (:...statuses)', {
+        statuses: [TransactionStatus.COMPLETED, TransactionStatus.REFUNDED],
       })
       .orderBy('transaction.completedAt', 'DESC')
       .addOrderBy('transaction.createdAt', 'DESC')
@@ -353,6 +353,7 @@ export class PaymentHistoryService {
       }) === null;
     return {
       id: transaction.id,
+      paymentStatus: transaction.status,
       product: {
         id: transaction.product.id,
         title: transaction.product.title,
@@ -380,6 +381,7 @@ export class PaymentHistoryService {
   private toSale(transaction: PaymentTransaction): PaymentSaleItemDto {
     return {
       id: transaction.id,
+      paymentStatus: transaction.status,
       completedAt: transaction.completedAt,
       product: {
         id: transaction.product.id,
