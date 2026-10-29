@@ -3,6 +3,57 @@
 Resumen de los endpoints nuevos o cambiados del backend y cómo consumirlos.
 Swagger completo en `http://localhost:3000/api`.
 
+## Transferencia de propiedad de una comunidad
+
+`POST /communities/:communityId/transfer` requiere sesión y el usuario debe ser
+el OWNER activo de esa comunidad. Un SUPERADMIN sin perfil OWNER comunitario
+también recibe `403`.
+
+Body:
+
+```json
+{ "profileId": 123 }
+```
+
+`profileId` debe pertenecer a un miembro activo de la comunidad. Puede ser
+`MEMBER` o `MODERATOR`. Después de transferir, el OWNER anterior queda como
+`MODERATOR` y el perfil destino queda como `OWNER`; no se recrean perfiles ni
+se modifican publicaciones, respuestas o fechas de membresía.
+
+Respuesta exitosa:
+
+```json
+{ "message": "Propiedad de la comunidad transferida correctamente" }
+```
+
+Errores principales: `400` por `profileId` inválido, `403` si el actor no es
+OWNER, `404` si la comunidad o el perfil no existen/están removidos, y `409`
+si el destino está inactivo, baneado o es el mismo OWNER.
+
+## Notificaciones de moderadores
+
+Estas notificaciones se generan únicamente mediante los endpoints
+administrativos explícitos del OWNER:
+
+- `POST /communities/:communityId/moderators/:profileId` genera
+  `community_moderator_added`.
+- `DELETE /communities/:communityId/moderators/:profileId` genera
+  `community_moderator_removed`.
+
+Solo se notifica al usuario afectado. La data tiene este formato:
+
+```json
+{
+  "communityId": 1,
+  "communityName": "Nombre de la comunidad",
+  "communitySlug": "slug"
+}
+```
+
+La transferencia de ownership, kick, ban, unban y leave no generan estas
+notificaciones. Un fallo al guardar la notificación no revierte el cambio de
+rol.
+
 ## 0. Convenciones generales
 
 | Tema | Detalle |

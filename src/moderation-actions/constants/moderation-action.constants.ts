@@ -35,6 +35,7 @@ export const MODERATION_ACTIONS = {
   COMMUNITY_MEMBER_REMOVED: 'community_member_removed',
   COMMUNITY_MEMBER_BANNED: 'community_member_banned',
   COMMUNITY_MEMBER_UNBANNED: 'community_member_unbanned',
+  COMMUNITY_OWNERSHIP_TRANSFERRED: 'community_ownership_transferred',
 } as const;
 
 export type ModerationActionType =

@@ -845,7 +845,12 @@ export class CommunityService {
     communityId: number,
     profileId: number,
   ): Promise<CommunityProfile> {
-    await this.ensureCommunityExists(communityId);
+    const community = await this.communityRepository.findOne({
+      where: { id: communityId },
+    });
+    if (!community) {
+      throw new NotFoundException('Comunidad no encontrada');
+    }
 
     const profile = await this.communityProfileRepository.findOne({
       where: { communityProfileId: profileId, communityId },
@@ -872,8 +877,165 @@ export class CommunityService {
     }
 
     profile.role = CommunityProfileRole.MODERATOR;
-    // moderator es un badge derivado del rol: no se guarda, no hay evento.
-    return this.communityProfileRepository.save(profile);
+    // El cambio explícito de rol sí genera notification; transfer/kick/ban no
+    // pasan por este método y no la disparan.
+    const savedProfile = await this.communityProfileRepository.save(profile);
+    await this.notifyModeratorRoleChange(
+      NotificationType.COMMUNITY_MODERATOR_ADDED,
+      savedProfile.userId,
+      community,
+    );
+    return savedProfile;
+  }
+
+  async transferCommunityOwnership(
+    communityId: number,
+    targetProfileId: number,
+    actorUserId: string,
+  ): Promise<{ message: string }> {
+    if (!this.moderationActionsService) {
+      throw new InternalServerErrorException(
+        'La auditoría de moderación no está configurada',
+      );
+    }
+
+    await this.dataSource.transaction(async (manager) => {
+      const communityRepository = manager.getRepository(Community);
+      const profileRepository = manager.getRepository(CommunityProfile);
+      const userRepository = manager.getRepository(User);
+      const banRepository = this.communityBanRepository
+        ? manager.getRepository(CommunityBan)
+        : undefined;
+
+      const community = await communityRepository.findOne({
+        where: { id: communityId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!community) {
+        throw new NotFoundException('Comunidad no encontrada');
+      }
+
+      const actor = await userRepository.findOne({
+        where: { id: actorUserId },
+      });
+      if (!actor || actor.deletedAt || !actor.isActive) {
+        throw new ForbiddenException(
+          'No tienes permisos para transferir la propiedad',
+        );
+      }
+
+      const currentOwner = await profileRepository.findOne({
+        where: {
+          userId: actorUserId,
+          communityId,
+          role: CommunityProfileRole.OWNER,
+          removedAt: IsNull(),
+        },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!currentOwner) {
+        throw new ForbiddenException(
+          'Solo el propietario activo puede transferir la comunidad',
+        );
+      }
+
+      const activeOwners = await profileRepository.find({
+        where: {
+          communityId,
+          role: CommunityProfileRole.OWNER,
+          removedAt: IsNull(),
+        },
+      });
+      if (
+        activeOwners.length !== 1 ||
+        activeOwners[0].communityProfileId !== currentOwner.communityProfileId
+      ) {
+        throw new ConflictException(
+          'La comunidad tiene un estado de propiedad inconsistente',
+        );
+      }
+
+      const target = await profileRepository.findOne({
+        where: { communityProfileId: targetProfileId, communityId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!target || target.communityId !== communityId || target.removedAt) {
+        throw new NotFoundException(
+          'El perfil destino no existe como miembro activo de esta comunidad',
+        );
+      }
+
+      if (
+        target.communityProfileId === currentOwner.communityProfileId ||
+        target.userId === actorUserId
+      ) {
+        throw new ConflictException(
+          'No puedes transferir la propiedad a ti mismo',
+        );
+      }
+
+      if (target.role === CommunityProfileRole.OWNER) {
+        throw new ConflictException(
+          'El perfil destino ya es propietario de la comunidad',
+        );
+      }
+      if (
+        target.role !== CommunityProfileRole.MEMBER &&
+        target.role !== CommunityProfileRole.MODERATOR
+      ) {
+        throw new ConflictException('El perfil destino no tiene un rol válido');
+      }
+
+      const targetUser = await userRepository.findOne({
+        where: { id: target.userId },
+        withDeleted: true,
+      });
+      if (!targetUser || targetUser.deletedAt) {
+        throw new NotFoundException('El usuario destino no existe');
+      }
+      if (!targetUser.isActive) {
+        throw new ConflictException(
+          'No se puede transferir la propiedad a un usuario inactivo',
+        );
+      }
+
+      if (banRepository) {
+        const activeBan = await banRepository.findOne({
+          where: {
+            communityId,
+            userId: target.userId,
+            isActive: true,
+          },
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (activeBan) {
+          throw new ConflictException(
+            'No se puede transferir la propiedad a un usuario bloqueado',
+          );
+        }
+      }
+
+      currentOwner.role = CommunityProfileRole.MODERATOR;
+      target.role = CommunityProfileRole.OWNER;
+      await profileRepository.save(currentOwner);
+      await profileRepository.save(target);
+
+      await this.moderationActionsService!.record(
+        {
+          actorUserId: currentOwner.userId,
+          targetType: MODERATION_TARGET_TYPES.COMMUNITY,
+          targetId: String(communityId),
+          action: MODERATION_ACTIONS.COMMUNITY_OWNERSHIP_TRANSFERRED,
+          reason: null,
+          communityId,
+        },
+        manager,
+      );
+    });
+
+    return {
+      message: 'Propiedad de la comunidad transferida correctamente',
+    };
   }
 
   async removeCommunityMember(
@@ -1021,7 +1183,12 @@ export class CommunityService {
     communityId: number,
     profileId: number,
   ): Promise<CommunityProfile> {
-    await this.ensureCommunityExists(communityId);
+    const community = await this.communityRepository.findOne({
+      where: { id: communityId },
+    });
+    if (!community) {
+      throw new NotFoundException('Comunidad no encontrada');
+    }
 
     const profile = await this.communityProfileRepository.findOne({
       where: { communityProfileId: profileId, communityId },
@@ -1046,7 +1213,42 @@ export class CommunityService {
     }
 
     profile.role = CommunityProfileRole.MEMBER;
-    return this.communityProfileRepository.save(profile);
+    const savedProfile = await this.communityProfileRepository.save(profile);
+    await this.notifyModeratorRoleChange(
+      NotificationType.COMMUNITY_MODERATOR_REMOVED,
+      savedProfile.userId,
+      community,
+    );
+    return savedProfile;
+  }
+
+  private async notifyModeratorRoleChange(
+    type: NotificationType,
+    userId: string,
+    community: Community,
+  ): Promise<void> {
+    if (!this.notificationsService) return;
+
+    try {
+      await this.notificationsService.notify([
+        {
+          userId,
+          type,
+          data: {
+            communityId: community.id,
+            communityName: community.name,
+            communitySlug: community.slug,
+          },
+          message:
+            type === NotificationType.COMMUNITY_MODERATOR_ADDED
+              ? 'Has sido nombrado moderador de esta comunidad.'
+              : 'Ya no eres moderador de esta comunidad.',
+        },
+      ]);
+    } catch {
+      // El cambio de rol ya fue confirmado; una falla de notificación no lo
+      // revierte.
+    }
   }
 
   async createCommunityBan(

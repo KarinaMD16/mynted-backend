@@ -46,6 +46,7 @@ import { GetAdminCommunitiesQueryDto } from './dto/get-admin-communities-query.d
 import { GetCommunityMembersQueryDto } from './dto/get-community-members-query.dto';
 import { CreateCommunityBanDto } from './dto/create-community-ban.dto';
 import { GetCommunityBansQueryDto } from './dto/get-community-bans-query.dto';
+import { TransferCommunityOwnershipDto } from './dto/transfer-community-ownership.dto';
 import { RemoveCommunityMemberDto } from './dto/remove-community-member.dto';
 import { UpdateCommunityDto } from './dto/update-community.dto';
 import { UpdateCommunityRuleDto } from './dto/update-community-rule.dto';
@@ -756,6 +757,45 @@ export class CommunityController {
     @Param('profileId', ParseIntPipe) profileId: number,
   ) {
     return this.communityService.removeModerator(communityId, profileId);
+  }
+
+  @Post('communities/:communityId/transfer')
+  @UseGuards(JwtAuthGuard, CommunityRoleGuard)
+  @RequireCommunityRole(CommunityProfileRole.OWNER)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Transferir la propiedad de una comunidad' })
+  @ApiParam({ name: 'communityId', type: Number, example: 2 })
+  @ApiBody({ type: TransferCommunityOwnershipDto })
+  @ApiCreatedResponse({
+    schema: {
+      example: {
+        message: 'Propiedad de la comunidad transferida correctamente',
+      },
+    },
+  })
+  @ApiBadRequestResponse({ description: 'profileId inválido' })
+  @ApiForbiddenResponse({ description: 'Solo el OWNER puede transferir' })
+  @ApiNotFoundResponse({ description: 'Comunidad o perfil no encontrado' })
+  @ApiConflictResponse({
+    description: 'Target inválido, inactivo, baneado o transferencia propia',
+  })
+  transferCommunityOwnership(
+    @Param('communityId', ParseIntPipe) communityId: number,
+    @Body(
+      new ValidationPipe({
+        transform: true,
+        whitelist: true,
+        forbidNonWhitelisted: true,
+      }),
+    )
+    dto: TransferCommunityOwnershipDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.communityService.transferCommunityOwnership(
+      communityId,
+      dto.profileId,
+      request.user.userId,
+    );
   }
 
   @Delete('communities/:communityId/members/:profileId')
