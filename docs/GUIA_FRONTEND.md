@@ -176,12 +176,17 @@ La resolución acepta `action: "refund"` o `action: "close"` y requiere una
 `open`, `resolved_refund` y `resolved_closed`. Las listas de compras y ventas
 incluyen `paymentStatus` además de `shippingStatus`.
 
-## Conversación previa a cotizar y comprar
+## Comprar vs. contactar al vendedor
 
-Antes de usar `GET /payments/quote/:productId` o `POST /payments/checkout`,
-el vendedor debe haber enviado al menos un mensaje en la conversación para
-ese producto. Sin respuesta del vendedor, el backend devuelve `403` con:
-`Primero conversa con el vendedor antes de comprar este producto`.
+La ficha del producto muestra dos botones:
+
+- **Comprar:** compra directa. Inicia el flujo de cotización
+  (`GET /payments/quote/:productId`: unidades, disponibilidad, comisión) y
+  checkout (`POST /payments/checkout`: envío y pago). No requiere conversación
+  previa; el backend ya no devuelve el `403` "Primero conversa con el vendedor".
+- **Contactar vendedor:** `POST /conversations`, igual que antes. En el chat,
+  muestra el botón "Comprar" solo si `viewerRole === 'buyer'` y
+  `sellerHasReplied === true` (campos del contexto de la conversación).
 
 ## 0. Convenciones generales
 
@@ -530,11 +535,39 @@ Un producto **sin comunidad** aparece en shop, `/products`, búsqueda, perfil de
   "productTags": [
     { "tagId": 1, "tag": { "tagId": 1, "name": "Coleccionismo" } }
   ],
-  "isSaved": false
+  "isSaved": false,
+  "ratingAverage": 4.3,
+  "reviewsCount": 3
 }
 ```
 
-(`communityId` puede ser `null`.)
+(`communityId` puede ser `null`. `ratingAverage` es `null` y `reviewsCount` es `0` si el producto no tiene reseñas.)
+
+### Rating del producto en las tarjetas
+
+**Todas** las tarjetas de producto traen, a nivel de la tarjeta, `ratingAverage` y `reviewsCount`, con el mismo significado y formato que en `GET /products/:id`, para pintar las estrellas con el mismo componente del detalle:
+
+| Campo           | Tipo             | Significado                                                                                          |
+| --------------- | ---------------- | ---------------------------------------------------------------------------------------------------- |
+| `ratingAverage` | `number \| null` | Promedio de las reseñas **del producto**, con 1 decimal (`4.3`). `null` si no tiene reseñas.         |
+| `reviewsCount`  | `number`         | Cantidad de reseñas del producto. `0` si no tiene.                                                   |
+
+Dónde vienen: `GET /products`, `/products/shop`, `/products/recommended`, `/products/:id/related`, `/sellers/:sellerId/products`, `GET /products/me` (panel del vendedor), `GET /search?type=products` (y `/search` sin `type`), `GET /users/:id/products`, y las tarjetas de producto de `GET /favorites/me`, `GET /posts/me` y los demás listados mixtos de posts y productos. El contexto de producto del chat es un resumen y no los trae.
+
+```json
+{
+  "id": 27,
+  "title": "Funko Pop Batman",
+  "finalPrice": 30,
+  "isSaved": false,
+  "ratingAverage": 4.3,
+  "reviewsCount": 3
+}
+```
+
+- **Sin reseñas:** `ratingAverage: null` y `reviewsCount: 0`. No muestres `0` ni estrellas vacías con un número: oculta las estrellas o muestra "Sin reseñas".
+- **No confundir con el vendedor:** `seller.ratingAverage` / `seller.reviewsCount` (donde existe un objeto `seller`, p. ej. en el detalle) es el rating **del vendedor** (todas las reseñas de todos sus productos). Los campos de la tarjeta son los **del producto**. Las tarjetas del Shop traen `seller{...}` sin rating; el del vendedor sigue donde estaba.
+- Los valores son los mismos que devuelve `GET /products/:id` para ese producto.
 
 **`GET /products/:id`** – detalle:
 
@@ -614,7 +647,7 @@ Query: `page` (1) y `limit` (3, máx. 20) → **secciones** por página · `prod
 - Un producto aparece **una sola vez** (en la primera sección cuyo tag tenga).
 - "Show all": `GET /products?tag=<tagId>`.
 
-`TagProductCard`: `id, title, price, discountPercent, finalPrice, currency, imageUrl, type, condition, isSaved, tags[], seller{sellerId, userId, displayName, photoUrl, isVerified}`.
+`TagProductCard`: `id, title, price, discountPercent, finalPrice, currency, imageUrl, type, condition, isSaved, ratingAverage, reviewsCount, tags[], seller{sellerId, userId, displayName, photoUrl, isVerified}`.
 
 ---
 
@@ -626,7 +659,7 @@ Requiere rol `seller`.
 Query: `status` (`draft|active|inactive|sold`), `q` (busca por título), `type`, `condition`, `priceMin`, `priceMax`, `tagId` (solo la sección de ese tag, para "Show all"), `page`/`limit` (secciones, def. 3), `productsPage`/`productsLimit` (productos por sección, def. 8, máx. 50).
 → `{ totalProducts, sections: [{tag, totalProducts, products: MyProductCard[], pagination}], pagination }`
 
-`MyProductCard`: `id, title, price, discountPercent, finalPrice, currency, imageUrl, status, isVisible, publishedAt, type, condition, tags[], community{id,name} | null`. (No trae `isSaved`.)
+`MyProductCard`: `id, title, price, discountPercent, finalPrice, currency, imageUrl, status, isVisible, publishedAt, type, condition, tags[], community{id,name} | null, featuredEnabled, isFeatured, ratingAverage, reviewsCount`. (No trae `isSaved`.) `ratingAverage`/`reviewsCount` son los del producto (ver "Rating del producto en las tarjetas").
 
 **`GET /products/me/stats`** → `{ total, draft, active, sold, inactive }`.
 

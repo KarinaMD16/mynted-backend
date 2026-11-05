@@ -71,7 +71,7 @@ Nunca trae datos de pago ni el correo.
 
 ## 3. `GET /sellers/:sellerId/products` — productos de la tienda
 
-Misma forma de respuesta que `GET /products`: `{ data: ProductListItem[], pagination }`. Cada producto trae `price`, `finalPrice` y `currency` originales, y también `displayPrice`, `displayFinalPrice`, `displayCurrency` e `isConverted` (ver [GUIA_MONEDA_FRONTEND.md](GUIA_MONEDA_FRONTEND.md)).
+Misma forma de respuesta que `GET /products`: `{ data: ProductListItem[], pagination }`. Cada tarjeta trae `ratingAverage` (1 decimal, `null` si no tiene reseñas) y `reviewsCount` (`0` si no tiene): son los **del producto**, no los de la tienda (ver "Rating del producto en las tarjetas" en [GUIA_FRONTEND.md](GUIA_FRONTEND.md)). Cada producto trae `price`, `finalPrice` y `currency` originales, y también `displayPrice`, `displayFinalPrice`, `displayCurrency` e `isConverted` (ver [GUIA_MONEDA_FRONTEND.md](GUIA_MONEDA_FRONTEND.md)).
 
 | Query | Valores |
 |---|---|
