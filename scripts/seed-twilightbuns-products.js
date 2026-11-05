@@ -243,7 +243,8 @@ async function createAccount(c) {
       )
     ).rows[0];
     await c.query(
-      'insert into seller (display_name, description, location, user_id, payment_id) values ($1,$2,$3,$4,$5)',
+      // is_verified + approved_at: la tienda solo es pública para vendedores aprobados (GET /sellers/:id).
+      'insert into seller (display_name, description, location, user_id, payment_id, is_verified, approved_at) values ($1,$2,$3,$4,$5, true, now())',
       [a.seller.displayName, a.seller.description, a.seller.location, user.id, pay.payment_info_id],
     );
     const tag = (await c.query(`select tag_id from tag where lower(name) = 'my little pony'`)).rows[0];
