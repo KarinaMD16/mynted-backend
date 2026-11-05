@@ -1,98 +1,132 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# Mynted · Backend
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+API REST y WebSockets de **Mynted**, el marketplace y foro para coleccionistas de nicho. Proyecto final del curso EIF-409 Aplicaciones Informáticas Globales (UNA, II ciclo 2026).
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+Frontend: <https://github.com/KarinaMD16/mynted>
 
-## Description
+## Tecnologías
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+- NestJS 11 + TypeScript
+- TypeORM + PostgreSQL
+- JWT en cookies `httpOnly` (acceso y refresh), contraseñas con bcrypt
+- Socket.IO (chat y notificaciones en tiempo real)
+- Swagger (documentación de la API)
+- Cloudinary (imágenes), Nodemailer (correos)
+- Tipos de cambio: BCCR y Frankfurter
+- Jest (pruebas unitarias y e2e)
 
-## Project setup
+## Requisitos
+
+- Node.js 20 o superior y npm
+- PostgreSQL 14 o superior
+- Cuenta de Cloudinary (gratis) para subir imágenes
+- Opcional: cuenta SMTP (por ejemplo Gmail con contraseña de aplicación) para los correos de recuperación de contraseña
+
+## Instalación y ejecución
 
 ```bash
-$ npm install
+# 1. Instalar dependencias
+npm install
+
+# 2. Crear la base de datos vacía (las tablas se crean solas al arrancar)
+createdb -U postgres mynted_db
+#   o desde psql:  CREATE DATABASE mynted_db;
+
+# 3. Configurar las variables de entorno
+cp .env.example .env        # en Windows: copy .env.example .env
+#   Edita .env con tus propios valores (ver la tabla de abajo)
+
+# 4. Levantar el backend en modo desarrollo
+npm run start:dev
 ```
 
-## Compile and run the project
+El backend queda en **http://localhost:3000** y la documentación Swagger en **http://localhost:3000/api**.
+
+> El CORS solo acepta el frontend en `http://localhost:5173`. Levanta el frontend en ese puerto (es el valor por defecto de Vite).
+
+Al arrancar, se cargan automáticamente los catálogos iniciales: categorías, etiquetas, insignias, cosméticos de Mynted Pro y niveles de comisión. El esquema se sincroniza desde las entidades (`synchronize: true`), por lo que no hay migraciones; esto es solo para desarrollo.
+
+## Variables de entorno
+
+Todas están en `.env.example`. Las mínimas para correr el proyecto:
+
+| Variable | Para qué sirve |
+|---|---|
+| `DB_HOST`, `DB_PORT`, `DB_USERNAME`, `DB_PASSWORD`, `DB_NAME` | Conexión a PostgreSQL |
+| `JWT_SECRET`, `JWT_REFRESH_SECRET` | Secretos de los tokens (deben ser distintos y largos) |
+| `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` | Subida de imágenes |
+| `FRONTEND_URL` | URL del frontend (`http://localhost:5173`) |
+
+Opcionales:
+
+| Variable | Efecto si se deja vacía |
+|---|---|
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` | No se envían correos (recuperación de contraseña, cambio de correo) |
+| `GOOGLE_CLIENT_ID`, `FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET` | Se desactiva ese inicio de sesión social |
+| `BCCR_TOKEN` | Los tipos de cambio se obtienen solo de Frankfurter |
+| `COMMISSION_BASE_RATE`, `COMMISSION_MIN_RATE` | Comisión base 5 % y mínimo 2 % |
+
+Para generar un secreto aleatorio:
 
 ```bash
-# development
-$ npm run start
-
-# watch mode
-$ npm run start:dev
-
-# production mode
-$ npm run start:prod
+node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"
 ```
 
-## Run tests
+**Nunca subas tu `.env` ni contraseñas reales al repositorio.**
+
+## Datos de ejemplo para la demostración
+
+Los seeds llenan la base local con usuarios, comunidades, publicaciones, hilos y productos con fotos. No se ejecutan solos. Con el backend corriendo (y Cloudinary configurado), desde la raíz del repo y en este orden:
 
 ```bash
-# unit tests
-$ npm run test
-
-# e2e tests
-$ npm run test:e2e
-
-# test coverage
-$ npm run test:cov
+node scripts/seed-twilightbuns-products.js    # vendedor twilightbuns, comunidad My Little Pony Latam y 11 productos
+node scripts/seed-community-users.js          # usuarios, posts, hilos, votos y comunidad de Minecraft
+node scripts/seed-forum-test-data.js          # opcional: feeds de foro para Home y Explorar
 ```
 
-## Deployment
+- Contraseña de todos los usuarios sembrados: `Test1234` (por ejemplo `twilightbuns`, `lunadreamer`, `creeperqueen` o cualquier `seed_*`).
+- Cada script acepta `--clean` para borrar lo que sembró.
+- Más detalle en [`docs/SEEDS.md`](docs/SEEDS.md). Son solo para desarrollo local; no los ejecutes contra una base de producción.
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+### Cuenta de superadministrador
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+Para probar el panel de administración, registra un usuario normal y cámbiale el rol en la base de datos:
+
+```sql
+UPDATE users SET role = 'superadmin' WHERE username = 'tu_usuario';
+```
+
+## Pruebas
 
 ```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+npm run test        # pruebas unitarias (Jest)
+npm run test:cov    # con cobertura
+npm run test:e2e    # pruebas de integración (requieren la base de datos configurada)
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+## Estructura
 
-## Resources
+```
+src/
+  auth/ users/ user-tags/ user-communities/    Cuentas, sesión e intereses
+  community/ moderation/ reports/              Comunidades, foro y moderación
+  products/ search/ sellers/ reputation/       Marketplace, búsqueda y reseñas
+  conversations/ notifications/                Chat 1 a 1 y notificaciones (WebSockets)
+  payments/ pricing/ subscriptions/            Pasarela simulada, comisión y Mynted Pro
+  badges/ cosmetics/                           Insignias y cosméticos de perfil
+scripts/                                       Seeds de datos de ejemplo
+docs/                                          Guías técnicas (API, pagos, moneda, chat, Pro, etc.)
+test/                                          Pruebas e2e
+```
 
-Check out a few resources that may come in handy when working with NestJS:
+## Documentación adicional
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+Las guías de la carpeta [`docs/`](docs/) explican los endpoints y flujos: `GUIA_FRONTEND.md`, `FLUJO_COMPRAS_PAGOS.md`, `GUIA_MONEDA_FRONTEND.md`, `GUIA_CHAT.md`, `GUIA_NOTIFICACIONES_FRONTEND.md`, `GUIA_PRO_FRONTEND.md`, entre otras.
 
-## Support
+## Pagos simulados
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+La pasarela **no cobra dinero real**. En el checkout, la tarjeta `4242 4242 4242 4242` aprueba el pago; otros números de prueba simulan rechazos.
 
-## Stay in touch
+## Autoría
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
-
-## License
-
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+Karina Moreno, Elein Rodríguez, Orlando Baltodano y Axel Badilla, 2026.
