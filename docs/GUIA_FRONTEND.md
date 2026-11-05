@@ -176,12 +176,17 @@ La resolución acepta `action: "refund"` o `action: "close"` y requiere una
 `open`, `resolved_refund` y `resolved_closed`. Las listas de compras y ventas
 incluyen `paymentStatus` además de `shippingStatus`.
 
-## Conversación previa a cotizar y comprar
+## Comprar vs. contactar al vendedor
 
-Antes de usar `GET /payments/quote/:productId` o `POST /payments/checkout`,
-el vendedor debe haber enviado al menos un mensaje en la conversación para
-ese producto. Sin respuesta del vendedor, el backend devuelve `403` con:
-`Primero conversa con el vendedor antes de comprar este producto`.
+La ficha del producto muestra dos botones:
+
+- **Comprar:** compra directa. Inicia el flujo de cotización
+  (`GET /payments/quote/:productId`: unidades, disponibilidad, comisión) y
+  checkout (`POST /payments/checkout`: envío y pago). No requiere conversación
+  previa; el backend ya no devuelve el `403` "Primero conversa con el vendedor".
+- **Contactar vendedor:** `POST /conversations`, igual que antes. En el chat,
+  muestra el botón "Comprar" solo si `viewerRole === 'buyer'` y
+  `sellerHasReplied === true` (campos del contexto de la conversación).
 
 ## 0. Convenciones generales
 
