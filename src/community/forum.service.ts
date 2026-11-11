@@ -21,6 +21,7 @@ import {
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
 import { PriceDisplayService } from '../pricing/price-display.service';
 import { Product, ProductStatus } from '../products/entities/product.entity';
+import { ReviewsService } from '../products/reviews.service';
 import { escapeLike } from '../common/escape-like';
 import { PostEvents } from './post-events';
 import {
@@ -119,6 +120,7 @@ export class ForumService {
     private readonly dataSource: DataSource,
     private readonly cloudinaryService: CloudinaryService,
     private readonly priceDisplay: PriceDisplayService,
+    private readonly reviewsService: ReviewsService,
     @Optional()
     @InjectRepository(UserTag)
     private readonly userTagRepository?: Repository<UserTag>,
@@ -1676,7 +1678,7 @@ export class ForumService {
   ) {
     if (productIds.length === 0) return [];
 
-    const [products, favorites] = await Promise.all([
+    const [products, favorites, ratings] = await Promise.all([
       this.productRepository.find({
         where: { id: In(productIds) },
         relations: {
@@ -1692,6 +1694,7 @@ export class ForumService {
           itemId: In(productIds),
         },
       }),
+      this.reviewsService.getProductRatings(productIds),
     ]);
     const favoriteById = new Map(
       favorites.map((favorite) => [favorite.itemId, favorite]),
@@ -1729,6 +1732,9 @@ export class ForumService {
           isVerified: product.seller.isVerified,
         },
         isSaved: favoriteById.has(product.id),
+        // Rating del producto (no el del vendedor).
+        ratingAverage: ratings.get(product.id)?.ratingAverage ?? null,
+        reviewsCount: ratings.get(product.id)?.reviewsCount ?? 0,
         // Avisos de quien mira (false si no lo guardó).
         notifyPrice: favoriteById.get(product.id)?.notifyPrice ?? false,
         notifyAvailability:

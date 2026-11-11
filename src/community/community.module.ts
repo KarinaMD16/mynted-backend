@@ -34,6 +34,7 @@ import { ModerationModule } from '../moderation/moderation.module';
 import { Report } from '../reports/entities/report.entity';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { ModerationActionsModule } from '../moderation-actions/moderation-actions.module';
+import { ProductsModule } from '../products/products.module';
 
 @Module({
   imports: [
@@ -64,6 +65,7 @@ import { ModerationActionsModule } from '../moderation-actions/moderation-action
     ModerationModule,
     NotificationsModule,
     ModerationActionsModule,
+    ProductsModule,
   ],
   controllers: [CommunityController, ForumController, PublicProfileController],
   providers: [

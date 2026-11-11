@@ -53,6 +53,6 @@ import { NotificationsModule } from '../notifications/notifications.module';
   ],
   controllers: [ProductsController, ReviewsController],
   providers: [ProductsService, ReviewsService, SellerGuard],
-  exports: [ProductsService],
+  exports: [ProductsService, ReviewsService],
 })
 export class ProductsModule {}

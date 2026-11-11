@@ -519,7 +519,8 @@ async function createUsers(c, tags) {
         [u.seller.owner, u.seller.bank, `${PAYMENT_PREFIX}CR${String(Math.floor(rand() * 1e12)).padStart(12, '0')}`],
       );
       await c.query(
-        `insert into seller (display_name, description, location, user_id, payment_id) values ($1,$2,$3,$4,$5)`,
+        // is_verified + approved_at: la tienda solo es pública para vendedores aprobados (GET /sellers/:id).
+        `insert into seller (display_name, description, location, user_id, payment_id, is_verified, approved_at) values ($1,$2,$3,$4,$5, true, now())`,
         [u.seller.displayName, u.seller.description, u.seller.location, user.id, pay.rows[0].payment_info_id],
       );
     }

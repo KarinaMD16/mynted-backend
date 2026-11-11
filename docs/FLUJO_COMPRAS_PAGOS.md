@@ -81,12 +81,15 @@ La clave de idempotencia reutiliza el resultado de una operación compatible.
 Una operación con la misma clave pero distinto comprador, producto, cantidad o
 dirección responde `409 Conflict`.
 
-### Conversación previa a cotizar y comprar
+### Dos caminos de compra
 
-Antes de cotizar o comprar, el vendedor debe haber enviado al menos un
-mensaje en la conversación del comprador para ese producto. Si no existe esa
-respuesta, `GET /payments/quote/:productId` y `POST /payments/checkout`
-responden `403` con: `Primero conversa con el vendedor antes de comprar este producto`.
+- **Compra directa:** el botón "Comprar" de la ficha del producto va directo a
+  `GET /payments/quote/:productId` y `POST /payments/checkout`, sin necesidad
+  de conversación previa. El backend ya no exige que el vendedor haya escrito.
+- **Contactar al vendedor:** el botón "Contactar vendedor" abre el chat. Dentro
+  del chat, el botón "Comprar" solo se muestra si `viewerRole === 'buyer'` y
+  `sellerHasReplied === true` (contexto de la conversación). Esa condición es
+  solo de interfaz; el backend no la vuelve a validar al cotizar o comprar.
 
 ## 4. ShippingAddress
 

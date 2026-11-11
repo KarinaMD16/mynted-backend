@@ -72,7 +72,6 @@ describe('PaymentsService cancellation', () => {
       {} as never,
       {} as never,
       {} as never,
-      { hasSellerMessageForProduct: jest.fn() } as never,
       eventEmitter as never,
     );
     return {
