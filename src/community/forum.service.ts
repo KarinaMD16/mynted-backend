@@ -1305,13 +1305,16 @@ export class ForumService {
 
     const posts = await this.postRepository.find({
       where: {
+        // isHidden es del POST, no del perfil de comunidad. Anidado dentro de
+        // communityProfile, TypeORM tira EntityPropertyNotFoundError en tiempo
+        // de ejecución (el tipo no lo detecta porque el objeto se arma con spread).
+        ...(publicOnly ? { isHidden: false } : {}),
         communityProfile: {
           userId: ownerId,
           community: {
             isActive: true,
             ...(publicOnly ? { isPrivate: false } : {}),
           },
-          ...(publicOnly ? { isHidden: false } : {}),
         },
       },
       select: { id: true, postedAt: true },
